@@ -1,0 +1,7 @@
+# 忽略数据集和预训练模型
+/checkpoints/
+/dataset/
+/data/
+*.pth
+*.pt
+__pycache__/
