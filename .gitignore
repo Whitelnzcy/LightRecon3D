@@ -1,7 +1,20 @@
-# 忽略数据集和预训练模型
-/checkpoints/
-/dataset/
+# 1. 忽略海量数据集和预训练权重 (绝对禁止上传)
 /data/
+/dataset/
+/checkpoints/
+/weights/
 *.pth
 *.pt
+*.ckpt
+
+# 2. 忽略 Python 运行缓存 (保持仓库干净)
 __pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 3. 忽略 IDE 配置文件和系统垃圾
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
