@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class LightReconModel(nn.Module):
-    def __init__(self, dust3r_backbone, patch_size=16, hidden_dim=1024, num_planes=20):
+    def __init__(self, dust3r_backbone, patch_size=16, hidden_dim=768, num_planes=20):
         """
         :param dust3r_backbone: 经过结构适配修改的预训练 DUSt3R 骨干网络
         :param patch_size: Vision Transformer 的 Patch 尺寸（DUSt3R 默认值为 16）
@@ -18,7 +18,7 @@ class LightReconModel(nn.Module):
         # 轻量级 CNN 结构，输出单通道进行二分类（结构线/非结构线）
         self.line_head = nn.Sequential(
             nn.Conv2d(hidden_dim, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
+            nn.GroupNorm(16,256),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 128, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
@@ -29,7 +29,7 @@ class LightReconModel(nn.Module):
         # 输出 num_planes 个通道进行多分类
         self.plane_head = nn.Sequential(
             nn.Conv2d(hidden_dim, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
+            nn.GroupNorm(16,256),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 128, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
@@ -55,7 +55,7 @@ class LightReconModel(nn.Module):
 
         # 4. 序列到图像的空间重排：(B, S, D) -> (B, D, H_feat, W_feat)
         # 保证内存连续性并重构维度，以适配卷积层的输入格式
-        feat_cnn = features.contiguous().view(B, H_feat, W_feat, D).permute(0, 3, 1, 2)
+        feat_cnn = features.transpose(1, 2).contiguous().view(B, D, H_feat, W_feat)
 
         # 5. 输入预测分支进行特征映射
         # 输出特征形状分别为 (B, 1, H_feat, W_feat) 与 (B, num_planes, H_feat, W_feat)
