@@ -420,6 +420,47 @@ def compute_loss_wrapper(res, batch, args):
     )
 
 
+def average_loss_dicts(loss_dicts):
+    """
+    Average scalar logging dictionaries from multiple supervised outputs.
+    """
+    if not loss_dicts:
+        return {}
+
+    keys = set()
+    for loss_dict in loss_dicts:
+        keys.update(loss_dict.keys())
+
+    averaged = {}
+    for key in keys:
+        values = []
+        for loss_dict in loss_dicts:
+            if key in loss_dict:
+                values.append(to_float(loss_dict[key]))
+
+        if values:
+            averaged[key] = sum(values) / len(values)
+
+    return averaged
+
+
+def compute_two_view_loss(res1, res2, batch, args):
+    """
+    Supervise both DUSt3R outputs.
+
+    Current training uses pseudo-pairs, so both outputs share the same target.
+    Keeping both in the loss makes the path ready for real paired views later.
+    """
+    loss1, loss_dict1 = compute_loss_wrapper(res1, batch, args)
+    loss2, loss_dict2 = compute_loss_wrapper(res2, batch, args)
+
+    loss_total = 0.5 * (loss1 + loss2)
+    loss_dict = average_loss_dicts([loss_dict1, loss_dict2])
+    loss_dict["loss_total"] = to_float(loss_total)
+
+    return loss_total, loss_dict
+
+
 def add_to_meters(meters, loss_dict):
     for key, value in loss_dict.items():
         try:
@@ -460,7 +501,13 @@ def train_one_epoch(
 
         res1, res2 = model(view1, view2)
 
-        loss_total, loss_dict = compute_loss_wrapper(res1, batch, args)
+        loss_total, loss_dict = compute_two_view_loss(res1, res2, batch, args)
+        if epoch == 1 and batch_idx == 1:
+            print("[Debug] loss_dict keys:", sorted(loss_dict.keys()))
+            if "loss_coplanarity" in loss_dict:
+                print("[Debug] loss_coplanarity:", to_float(loss_dict["loss_coplanarity"]))
+            if "num_geo_planes" in loss_dict:
+                print("[Debug] num_geo_planes:", to_float(loss_dict["num_geo_planes"]))
 
         if not torch.isfinite(loss_total):
             print(
@@ -472,13 +519,33 @@ def train_one_epoch(
             continue
 
         optimizer.zero_grad(set_to_none=True)
+
         loss_total.backward()
 
+        trainable_params = [p for p in model.parameters() if p.requires_grad]
+
         if args.grad_clip is not None and args.grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(
-                [p for p in model.parameters() if p.requires_grad],
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                trainable_params,
                 max_norm=args.grad_clip,
             )
+        else:
+            grad_norm = torch.norm(
+                torch.stack([
+                    p.grad.detach().norm()
+                    for p in trainable_params
+                    if p.grad is not None
+                ])
+            )
+
+        if not torch.isfinite(grad_norm):
+            print(
+                f"[Warning] non-finite grad norm at "
+                f"epoch={epoch}, batch={batch_idx}: {to_float(grad_norm)}"
+            )
+            optimizer.zero_grad(set_to_none=True)
+            skipped_batches += 1
+            continue
 
         optimizer.step()
 
@@ -523,7 +590,9 @@ def train_one_epoch(
                 f"[Train] batch {batch_idx}/{len(loader)} | "
                 f"total={to_float(loss_total):.4f}, "
                 f"line={to_float(loss_dict.get('loss_line', 0.0)):.4f}, "
-                f"plane={to_float(loss_dict.get('loss_plane', 0.0)):.4f}"
+                f"plane={to_float(loss_dict.get('loss_plane', 0.0)):.4f}, "
+                f"geo={to_float(loss_dict.get('loss_coplanarity', 0.0)):.6f}, "
+                f"num_geo={to_float(loss_dict.get('num_geo_planes', 0.0)):.1f}"
             )
 
     stats = average_meters(meters, valid_batches)
@@ -541,6 +610,8 @@ def train_one_epoch(
         f"Train | total: {stats.get('loss_total', float('nan')):.4f}, "
         f"line: {stats.get('loss_line', float('nan')):.4f}, "
         f"plane: {stats.get('loss_plane', float('nan')):.4f}, "
+        f"geo: {stats.get('loss_coplanarity', 0.0):.6f}, "
+        f"num_geo: {stats.get('num_geo_planes', 0.0):.1f}, "
         f"skipped: {skipped_batches}"
     )
 
@@ -593,7 +664,7 @@ def validate_one_epoch(
 
         res1, res2 = model(view1, view2)
 
-        loss_total, loss_dict = compute_loss_wrapper(res1, batch, args)
+        loss_total, loss_dict = compute_two_view_loss(res1, res2, batch, args)
 
         if not torch.isfinite(loss_total):
             print(
@@ -658,10 +729,12 @@ def validate_one_epoch(
     stats["skipped_batches"] = skipped_batches
 
     print(
-        f"Val   | total: {stats.get('loss_total', float('nan')):.4f}, "
-        f"line: {stats.get('loss_line', float('nan')):.4f}, "
-        f"plane: {stats.get('loss_plane', float('nan')):.4f}, "
-        f"skipped: {skipped_batches}"
+        f"[Val] batch {batch_idx}/{len(loader)} | "
+        f"total={to_float(loss_total):.4f}, "
+        f"line={to_float(loss_dict.get('loss_line', 0.0)):.4f}, "
+        f"plane={to_float(loss_dict.get('loss_plane', 0.0)):.4f}, "
+        f"geo={to_float(loss_dict.get('loss_coplanarity', 0.0)):.6f}, "
+        f"num_geo={to_float(loss_dict.get('num_geo_planes', 0.0)):.1f}"
     )
 
     epoch_metrics = {

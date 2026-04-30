@@ -52,6 +52,11 @@ def parse_args():
     parser.add_argument("--plane_embed_dim", type=int, default=16)
 
     parser.add_argument("--line_threshold", type=float, default=0.3)
+    parser.add_argument(
+        "--allow_partial_load",
+        action="store_true",
+        help="Allow loading only shape-compatible checkpoint tensors.",
+    )
 
     parser.add_argument(
         "--save_path",
@@ -98,12 +103,17 @@ def safe_load_checkpoint(path, device):
         return torch.load(path, map_location=device)
 
 
-def load_state_dict_flexible(model, ckpt):
+def load_state_dict_for_visualization(model, ckpt, allow_partial=False):
     """
     只加载 shape 对得上的参数。
     这样旧 checkpoint / 新模型部分不一致时不会直接炸。
     """
     state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+
+    if not allow_partial:
+        model.load_state_dict(state_dict, strict=True)
+        return [], [], []
+
     model_dict = model.state_dict()
 
     filtered = {}
@@ -263,7 +273,11 @@ def main():
 
     ckpt = safe_load_checkpoint(args.ckpt_path, device)
 
-    missing, unexpected, skipped = load_state_dict_flexible(model, ckpt)
+    missing, unexpected, skipped = load_state_dict_for_visualization(
+        model,
+        ckpt,
+        allow_partial=args.allow_partial_load,
+    )
 
     epoch = ckpt.get("epoch", "unknown") if isinstance(ckpt, dict) else "unknown"
     print(f"Loaded checkpoint epoch: {epoch}")

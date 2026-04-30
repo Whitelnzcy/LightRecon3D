@@ -106,7 +106,7 @@ def compute_losses(
         raise KeyError("batch does not contain gt_plane")
 
     pred_line = res["pred_line"]
-    pred_plane_embedding = res["pred_plane"]
+    pred_plane_embedding = res.get("pred_plane_lowres", res["pred_plane"])
 
     gt_line = batch["gt_line"]
     gt_plane = batch["gt_plane"]

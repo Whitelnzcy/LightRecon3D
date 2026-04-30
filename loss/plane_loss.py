@@ -419,35 +419,83 @@ def _sample_points(points, max_points):
 
 def coplanarity_loss_single_plane(
     points,
-    eps=1e-6,
     normalize=True,
+    eps=1e-6,
 ):
     """
-    PCA-based coplanarity loss for one plane.
+    Robust coplanarity loss for one plane region.
 
-    points:
-        [N, 3]
+    points: [N, 3]
+
+    This version estimates the plane normal with PCA under no_grad,
+    then backpropagates only through point-to-plane distances.
+    This avoids unstable gradients through eigen decomposition.
     """
-    valid = torch.isfinite(points).all(dim=1)
-    points = points[valid]
+    if points.ndim != 2 or points.shape[-1] != 3:
+        return points.sum() * 0.0
 
     if points.shape[0] < 3:
-        return None
+        return points.sum() * 0.0
+
+    # Keep only finite points.
+    finite_mask = torch.isfinite(points).all(dim=1)
+    points = points[finite_mask]
+
+    if points.shape[0] < 3:
+        return points.sum() * 0.0
+
+    # Optional safety: remove absurdly large coordinates.
+    # This protects the covariance from rare extreme pointmap values.
+    coord_ok = points.abs().amax(dim=1) < 1e4
+    points = points[coord_ok]
+
+    if points.shape[0] < 3:
+        return points.sum() * 0.0
 
     center = points.mean(dim=0, keepdim=True)
     x = points - center
 
-    cov = x.transpose(0, 1) @ x / (points.shape[0] + eps)
+    if not torch.isfinite(x).all():
+        return points.sum() * 0.0
 
-    eigvals = torch.linalg.eigvalsh(cov)
-    eigvals = torch.clamp(eigvals, min=0.0)
+    # Estimate plane normal without gradient through eigendecomposition.
+    with torch.no_grad():
+        x_detached = x.detach()
+        cov = x_detached.transpose(0, 1) @ x_detached / (x_detached.shape[0] + eps)
 
-    smallest = eigvals[0]
+        # Make covariance exactly symmetric and add diagonal jitter.
+        cov = 0.5 * (cov + cov.transpose(0, 1))
+        eye = torch.eye(3, device=cov.device, dtype=cov.dtype)
+        cov = cov + eps * eye
+
+        cov = torch.nan_to_num(cov, nan=0.0, posinf=1e4, neginf=-1e4)
+
+        try:
+            eigvals, eigvecs = torch.linalg.eigh(cov.float())
+        except RuntimeError:
+            return points.sum() * 0.0
+
+        normal = eigvecs[:, 0].to(device=points.device, dtype=points.dtype)
+
+        if not torch.isfinite(normal).all():
+            return points.sum() * 0.0
+
+        normal = normal / (normal.norm() + eps)
+
+    # Point-to-plane residual.
+    # The normal is detached, but x still has gradient.
+    dist = x @ normal
+    loss = dist.square().mean()
 
     if normalize:
-        return smallest / (eigvals.sum() + eps)
+        # Detach denominator to avoid unstable scale gradients.
+        denom = x.square().sum(dim=1).mean().detach().clamp_min(eps)
+        loss = loss / denom
 
-    return smallest
+    if not torch.isfinite(loss):
+        return points.sum() * 0.0
+
+    return loss
 
 
 def coplanarity_loss_from_gt_plane(

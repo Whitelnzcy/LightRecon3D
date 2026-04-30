@@ -16,7 +16,11 @@ class LightReconModel(nn.Module):
         [B, 1, H, W], line logits
 
     pred_plane:
-        [B, plane_embed_dim, H, W], plane embedding map
+        [B, plane_embed_dim, H, W], full-resolution plane embedding map
+
+    pred_plane_lowres:
+        [B, plane_embed_dim, H/patch_size, W/patch_size], embedding map used
+        for training loss to avoid supervising interpolated boundary mixtures.
 
     Important:
         pred_plane is no longer:
@@ -168,6 +172,7 @@ class LightReconModel(nn.Module):
         # pred_plane now means plane embedding.
         res["pred_plane"] = pred_plane
         res["pred_plane_embedding"] = pred_plane
+        res["pred_plane_lowres"] = pred_plane_lowres
 
         return res
 
