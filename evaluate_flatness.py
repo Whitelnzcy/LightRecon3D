@@ -391,6 +391,7 @@ def make_dataset(args):
         image_size=(args.image_size, args.image_size),
         input_mode=args.input_mode,
         pair_strategy=args.pair_strategy,
+        pair_max_view_id_gap=args.pair_max_view_id_gap,
     )
 
     if args.num_samples is not None and args.num_samples > 0:
@@ -402,6 +403,34 @@ def make_dataset(args):
 
 def is_valid_number(x: float) -> bool:
     return x == x
+
+
+def average_eval_stats(stats_list: List[Dict[str, float]]) -> Dict[str, float]:
+    valid_stats = [
+        stats for stats in stats_list
+        if stats.get("num_valid_planes", 0) > 0
+    ]
+
+    if not valid_stats:
+        return stats_list[0] if stats_list else {}
+
+    averaged = {}
+    keys = valid_stats[0].keys()
+
+    for key in keys:
+        values = [
+            stats[key] for stats in valid_stats
+            if key in stats and is_valid_number(float(stats[key]))
+        ]
+
+        if not values:
+            averaged[key] = float("nan")
+        elif key == "num_valid_planes":
+            averaged[key] = int(sum(values))
+        else:
+            averaged[key] = float(sum(values) / len(values))
+
+    return averaged
 
 
 @torch.no_grad()
@@ -417,6 +446,7 @@ def run_eval(args):
     print(f"baseline ckpt: {args.baseline_ckpt}")
     print(f"geo ckpt     : {args.geo_ckpt}")
     print(f"normalize    : {args.normalize}")
+    print(f"eval_views   : {args.eval_views}")
     print("=" * 80)
 
     dataset = make_dataset(args)
@@ -478,26 +508,53 @@ def run_eval(args):
 
         view1, view2 = build_views_from_batch(batch, prefix=f"{args.split}_{idx}")
 
-        res_base_1, _ = baseline_model(view1, view2)
-        res_geo_1, _ = geo_model(view1, view2)
+        res_base_1, res_base_2 = baseline_model(view1, view2)
+        res_geo_1, res_geo_2 = geo_model(view1, view2)
 
-        base_stats = evaluate_one_output(
-            res=res_base_1,
-            gt_plane=batch["gt_plane"],
-            min_points=args.min_points,
-            max_points_per_plane=args.max_points_per_plane,
-            max_planes_per_image=args.max_planes_per_image,
-            normalize=args.normalize,
-        )
+        base_stats_list = []
+        geo_stats_list = []
 
-        geo_stats = evaluate_one_output(
-            res=res_geo_1,
-            gt_plane=batch["gt_plane"],
-            min_points=args.min_points,
-            max_points_per_plane=args.max_points_per_plane,
-            max_planes_per_image=args.max_planes_per_image,
-            normalize=args.normalize,
-        )
+        if args.eval_views in ["view1", "both"]:
+            base_stats_list.append(evaluate_one_output(
+                res=res_base_1,
+                gt_plane=batch.get("gt_plane1", batch["gt_plane"]),
+                min_points=args.min_points,
+                max_points_per_plane=args.max_points_per_plane,
+                max_planes_per_image=args.max_planes_per_image,
+                normalize=args.normalize,
+            ))
+            geo_stats_list.append(evaluate_one_output(
+                res=res_geo_1,
+                gt_plane=batch.get("gt_plane1", batch["gt_plane"]),
+                min_points=args.min_points,
+                max_points_per_plane=args.max_points_per_plane,
+                max_planes_per_image=args.max_planes_per_image,
+                normalize=args.normalize,
+            ))
+
+        if args.eval_views in ["view2", "both"]:
+            if "gt_plane2" not in batch:
+                raise KeyError("--eval_views includes view2, but batch does not contain gt_plane2")
+
+            base_stats_list.append(evaluate_one_output(
+                res=res_base_2,
+                gt_plane=batch["gt_plane2"],
+                min_points=args.min_points,
+                max_points_per_plane=args.max_points_per_plane,
+                max_planes_per_image=args.max_planes_per_image,
+                normalize=args.normalize,
+            ))
+            geo_stats_list.append(evaluate_one_output(
+                res=res_geo_2,
+                gt_plane=batch["gt_plane2"],
+                min_points=args.min_points,
+                max_points_per_plane=args.max_points_per_plane,
+                max_planes_per_image=args.max_planes_per_image,
+                normalize=args.normalize,
+            ))
+
+        base_stats = average_eval_stats(base_stats_list)
+        geo_stats = average_eval_stats(geo_stats_list)
 
         base_mean = base_stats["mean_flatness"]
         geo_mean = geo_stats["mean_flatness"]
@@ -544,6 +601,7 @@ def run_eval(args):
 
         row = {
             "sample_idx": idx,
+            "eval_views": args.eval_views,
 
             "baseline_mean_flatness": base_mean,
             "geo_mean_flatness": geo_mean,
@@ -732,6 +790,7 @@ def parse_args():
     parser.add_argument("--num_samples", type=int, default=64)
     parser.add_argument("--input_mode", type=str, default="pair", choices=["pair", "single"])
     parser.add_argument("--pair_strategy", type=str, default="adjacent", choices=["adjacent", "all"])
+    parser.add_argument("--pair_max_view_id_gap", type=int, default=0)
 
     parser.add_argument("--hidden_dim", type=int, default=768)
     parser.add_argument("--plane_embed_dim", type=int, default=16)
@@ -741,6 +800,16 @@ def parse_args():
     parser.add_argument("--max_planes_per_image", type=int, default=8)
 
     parser.add_argument("--normalize", action="store_true")
+    parser.add_argument(
+        "--eval_views",
+        type=str,
+        default="view1",
+        choices=["view1", "view2", "both"],
+        help=(
+            "Which DUSt3R output to evaluate. view1 uses res1+gt_plane1; "
+            "view2 uses res2+gt_plane2; both averages valid per-view stats."
+        ),
+    )
     parser.add_argument("--output_csv", type=str, default="/data/zhucy23u/logs/flatness_eval.csv")
 
     parser.add_argument("--log_every", type=int, default=10)

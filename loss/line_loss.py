@@ -41,12 +41,31 @@ def resize_binary_target_if_needed(target, pred):
     return target
 
 
+def dilate_binary_target(target, radius=0):
+    """
+    Convert a thin binary line target into a boundary band.
+    """
+    radius = int(radius or 0)
+
+    if radius <= 0:
+        return target
+
+    kernel_size = 2 * radius + 1
+    return F.max_pool2d(
+        target.float(),
+        kernel_size=kernel_size,
+        stride=1,
+        padding=radius,
+    )
+
+
 def bce_dice_line_loss(
     pred_line,
     gt_line,
     pos_weight=None,
     bce_weight=1.0,
     dice_weight=1.0,
+    target_dilate=0,
 ):
     """
     Line loss = BCEWithLogits + Dice.
@@ -62,6 +81,7 @@ def bce_dice_line_loss(
 
     gt_line = resize_binary_target_if_needed(gt_line, pred_line)
     gt_line = gt_line.float()
+    gt_line = dilate_binary_target(gt_line, radius=target_dilate)
 
     if pos_weight is not None:
         if not torch.is_tensor(pos_weight):
@@ -90,6 +110,7 @@ def bce_dice_line_loss(
         "loss_line": loss,
         "loss_line_bce": bce,
         "loss_line_dice": dice,
+        "line_target_positive_ratio": gt_line.mean(),
     }
 
     return loss, stats

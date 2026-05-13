@@ -87,6 +87,21 @@ def parse_args():
         choices=["adjacent", "all"],
         help="How to form two-view samples inside each Structured3D space.",
     )
+    parser.add_argument(
+        "--pair_max_view_id_gap",
+        type=int,
+        default=0,
+        help=(
+            "Optional max numeric render-id gap for pair filtering. "
+            "Set <=0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--print_pair_examples",
+        type=int,
+        default=0,
+        help="Print the first N dataset pairs for sanity checking.",
+    )
 
     # -------------------------
     # training
@@ -113,6 +128,7 @@ def parse_args():
     # -------------------------
     parser.add_argument("--hidden_dim", type=int, default=768)
     parser.add_argument("--plane_embed_dim", type=int, default=16)
+    parser.add_argument("--freeze_dust3r", action="store_true")
     parser.add_argument("--freeze_encoder", action="store_true")
 
     # -------------------------
@@ -161,6 +177,15 @@ def parse_args():
     parser.add_argument("--line_pos_weight", type=float, default=None)
     parser.add_argument("--line_bce_weight", type=float, default=1.0)
     parser.add_argument("--line_dice_weight", type=float, default=1.0)
+    parser.add_argument(
+        "--line_target_dilate",
+        type=int,
+        default=0,
+        help=(
+            "Dilate gt_line by this pixel radius before BCE+Dice. "
+            "Use >0 to train a boundary-risk band instead of a 1-pixel line."
+        ),
+    )
 
     # -------------------------
     # plane embedding loss params
@@ -345,6 +370,18 @@ def freeze_dust3r_encoder(model):
             frozen += param.numel()
 
     print(f"Frozen DUSt3R encoder params: {frozen:,} / {total:,}")
+
+
+def freeze_dust3r_backbone(model):
+    frozen = 0
+    total = 0
+
+    for param in model.backbone.parameters():
+        total += param.numel()
+        param.requires_grad = False
+        frozen += param.numel()
+
+    print(f"Frozen full DUSt3R backbone params: {frozen:,} / {total:,}")
 
 
 def init_swanlab(args):
@@ -535,6 +572,7 @@ def compute_loss_wrapper(res, batch, args):
         line_pos_weight=args.line_pos_weight,
         line_bce_weight=args.line_bce_weight,
         line_dice_weight=args.line_dice_weight,
+        line_target_dilate=args.line_target_dilate,
 
         plane_min_pixels=args.plane_min_pixels,
         plane_max_pixels_per_plane=args.plane_max_pixels_per_plane,
@@ -857,6 +895,7 @@ def train_one_epoch(
         extra_keys = [
             "loss_line_bce",
             "loss_line_dice",
+            "line_target_positive_ratio",
             "loss_plane_embedding",
             "loss_plane_var",
             "loss_plane_dist",
@@ -1003,6 +1042,7 @@ def validate_one_epoch(
         extra_keys = [
             "loss_line_bce",
             "loss_line_dice",
+            "line_target_positive_ratio",
             "loss_plane_embedding",
             "loss_plane_var",
             "loss_plane_dist",
@@ -1113,6 +1153,10 @@ def main():
     print(f"point_anchor_beta  : {args.point_anchor_beta}")
     print(f"input_mode  : {args.input_mode}")
     print(f"pair_strategy: {args.pair_strategy}")
+    print(f"pair_max_view_id_gap: {args.pair_max_view_id_gap}")
+    print(f"line_target_dilate: {args.line_target_dilate}")
+    print(f"freeze_dust3r: {args.freeze_dust3r}")
+    print(f"freeze_encoder: {args.freeze_encoder}")
     print("=" * 80)
 
     # -------------------------
@@ -1125,6 +1169,7 @@ def main():
         image_size=(args.image_size, args.image_size),
         input_mode=args.input_mode,
         pair_strategy=args.pair_strategy,
+        pair_max_view_id_gap=args.pair_max_view_id_gap,
     )
 
     val_dataset_full = Structured3DDataset(
@@ -1134,6 +1179,7 @@ def main():
         image_size=(args.image_size, args.image_size),
         input_mode=args.input_mode,
         pair_strategy=args.pair_strategy,
+        pair_max_view_id_gap=args.pair_max_view_id_gap,
     )
 
     print(f"Train scenes: {len(train_dataset_full.scenes)}")
@@ -1146,6 +1192,14 @@ def main():
 
     print(f"Used train samples: {len(train_dataset)}")
     print(f"Used val samples  : {len(val_dataset)}")
+
+    if args.print_pair_examples > 0:
+        print("=" * 80)
+        print("Pair examples")
+        print("=" * 80)
+        num_examples = min(args.print_pair_examples, len(train_dataset_full))
+        for idx in range(num_examples):
+            print(train_dataset_full.format_pair_sample(idx))
 
     train_loader = DataLoader(
         train_dataset,
@@ -1179,7 +1233,9 @@ def main():
         plane_embed_dim=args.plane_embed_dim,
     ).to(device)
 
-    if args.freeze_encoder:
+    if args.freeze_dust3r:
+        freeze_dust3r_backbone(model)
+    elif args.freeze_encoder:
         freeze_dust3r_encoder(model)
 
     count_parameters(model)

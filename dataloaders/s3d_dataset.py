@@ -17,6 +17,7 @@ class Structured3DDataset(Dataset):
         image_size=(512, 512),
         input_mode="pair",
         pair_strategy="adjacent",
+        pair_max_view_id_gap=None,
     ):
         """
         Structured3D dataset for LightRecon3D.
@@ -28,6 +29,11 @@ class Structured3DDataset(Dataset):
         pair_strategy:
             "adjacent" pairs neighboring renders in the same Structured3D space.
             "all" returns all unordered pairs inside each space.
+
+        pair_max_view_id_gap:
+            Optional numeric render-id gap filter. Structured3D does not store
+            camera poses in layout.json, so this is only a lightweight guard
+            based on the render directory name.
         """
         assert split in ["train", "val"], f"split must be 'train' or 'val', got {split}"
         assert input_mode in ["single", "pair"], (
@@ -43,6 +49,7 @@ class Structured3DDataset(Dataset):
         self.image_size = image_size
         self.input_mode = input_mode
         self.pair_strategy = pair_strategy
+        self.pair_max_view_id_gap = pair_max_view_id_gap
 
         self.all_scenes = self._discover_all_scenes()
         self.scenes = self._split_scenes(
@@ -111,6 +118,7 @@ class Structured3DDataset(Dataset):
                         "json_path": json_path,
                         "rgb_path": rgb_path,
                         "pair_group": self._get_pair_group(json_path),
+                        "view_id": self._get_view_id(json_path),
                     })
 
         if len(single_samples) == 0:
@@ -144,6 +152,35 @@ class Structured3DDataset(Dataset):
         empty_dir = os.path.dirname(view_dir)
         return empty_dir
 
+    def _get_view_id(self, json_path):
+        view_dir = os.path.basename(os.path.dirname(json_path))
+
+        try:
+            return int(view_dir)
+        except ValueError:
+            return view_dir
+
+    def _pair_sort_key(self, sample):
+        view_id = sample["view_id"]
+        if isinstance(view_id, int):
+            return (0, view_id)
+        return (1, str(view_id), sample["rgb_path"], sample["json_path"])
+
+    def _passes_view_id_gap(self, sample1, sample2):
+        if self.pair_max_view_id_gap is None:
+            return True
+
+        if self.pair_max_view_id_gap <= 0:
+            return True
+
+        view_id1 = sample1["view_id"]
+        view_id2 = sample2["view_id"]
+
+        if not isinstance(view_id1, int) or not isinstance(view_id2, int):
+            return True
+
+        return abs(view_id2 - view_id1) <= self.pair_max_view_id_gap
+
     def _build_pair_samples(self, single_samples):
         groups = {}
 
@@ -155,7 +192,7 @@ class Structured3DDataset(Dataset):
         for _, group_samples in sorted(groups.items()):
             group_samples = sorted(
                 group_samples,
-                key=lambda item: (item["rgb_path"], item["json_path"]),
+                key=self._pair_sort_key,
             )
 
             if len(group_samples) < 2:
@@ -173,6 +210,10 @@ class Structured3DDataset(Dataset):
             for i, j in index_pairs:
                 sample1 = group_samples[i]
                 sample2 = group_samples[j]
+
+                if not self._passes_view_id_gap(sample1, sample2):
+                    continue
+
                 pair_samples.append({
                     "scene_name": sample1["scene_name"],
                     "pair_group": sample1["pair_group"],
@@ -181,6 +222,25 @@ class Structured3DDataset(Dataset):
                 })
 
         return pair_samples
+
+    def format_pair_sample(self, idx):
+        sample = self.samples[idx]
+
+        if self.input_mode == "single":
+            return (
+                f"[{idx}] single scene={sample['scene_name']} "
+                f"view_id={sample['view_id']} rgb={sample['rgb_path']}"
+            )
+
+        view1 = sample["view1"]
+        view2 = sample["view2"]
+        return (
+            f"[{idx}] scene={sample['scene_name']} "
+            f"group={sample['pair_group']} "
+            f"view1={view1['view_id']} view2={view2['view_id']}\n"
+            f"    rgb_path1={view1['rgb_path']}\n"
+            f"    rgb_path2={view2['rgb_path']}"
+        )
 
     def generate_masks(self, json_data, height=720, width=1280):
         plane_mask = np.zeros((height, width), dtype=np.int32)
