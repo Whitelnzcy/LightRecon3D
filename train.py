@@ -70,6 +70,23 @@ def parse_args():
     parser.add_argument("--small_train_size", type=int, default=-1)
     parser.add_argument("--small_val_size", type=int, default=-1)
     parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument(
+        "--input_mode",
+        type=str,
+        default="pair",
+        choices=["pair", "single"],
+        help=(
+            "Use real Structured3D two-view pairs for DUSt3R by default. "
+            "Set to 'single' to keep the old pseudo-pair behavior."
+        ),
+    )
+    parser.add_argument(
+        "--pair_strategy",
+        type=str,
+        default="adjacent",
+        choices=["adjacent", "all"],
+        help="How to form two-view samples inside each Structured3D space.",
+    )
 
     # -------------------------
     # training
@@ -109,6 +126,33 @@ def parse_args():
         type=float,
         default=0.0,
         help="Weight of 3D coplanarity loss. Keep 0.0 during plane embedding stage.",
+    )
+
+    parser.add_argument(
+        "--teacher_ckpt",
+        type=str,
+        default=None,
+        help=(
+            "Optional frozen teacher checkpoint for pointmap anchor. "
+            "Usually set to the stable baseline checkpoint before geo training."
+        ),
+    )
+
+    parser.add_argument(
+        "--point_anchor_weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Weight for pointmap anchor loss. "
+            "If > 0, teacher_ckpt should be provided."
+        ),
+    )
+
+    parser.add_argument(
+        "--point_anchor_beta",
+        type=float,
+        default=0.05,
+        help="SmoothL1 beta for pointmap anchor loss.",
     )
 
     # -------------------------
@@ -195,25 +239,64 @@ def move_batch_to_device(batch, device):
 
 def build_views_from_batch(batch, prefix="train"):
     """
-    Current stage:
-    single-image pseudo-pair for DUSt3R interface.
+    Build DUSt3R-style view dictionaries from a dataloader batch.
 
-    view1 and view2 use the same image.
-    Later this should be replaced by real image pairs.
+    New paired batches contain img1/img2. Older single-view batches contain
+    only img; for those, keep the previous pseudo-pair behavior.
     """
-    batch_size = batch["img"].shape[0]
+    img1 = batch.get("img1", batch["img"])
+    img2 = batch.get("img2", batch["img"])
+    batch_size = img1.shape[0]
+    true_shape1 = torch.tensor(
+        img1.shape[-2:],
+        device=img1.device,
+        dtype=torch.long,
+    )[None].repeat(batch_size, 1)
+    true_shape2 = torch.tensor(
+        img2.shape[-2:],
+        device=img2.device,
+        dtype=torch.long,
+    )[None].repeat(batch_size, 1)
 
     view1 = {
-        "img": batch["img"],
-        "instance": [f"{prefix}_{i}" for i in range(batch_size)],
+        "img": img1,
+        "true_shape": true_shape1,
+        "instance": [f"{prefix}_{i}_view1" for i in range(batch_size)],
     }
 
     view2 = {
-        "img": batch["img"],
-        "instance": [f"{prefix}_{i}" for i in range(batch_size)],
+        "img": img2,
+        "true_shape": true_shape2,
+        "instance": [f"{prefix}_{i}_view2" for i in range(batch_size)],
     }
 
     return view1, view2
+
+
+def select_view_targets(batch, view_idx):
+    """
+    Return a batch-like target dict for one supervised view.
+
+    View-specific labels are used when present. This keeps compute_losses()
+    unchanged and preserves compatibility with older single-view batches.
+    """
+    if view_idx == 1:
+        line_key = "gt_line1"
+        plane_key = "gt_plane1"
+        img_key = "img1"
+    elif view_idx == 2:
+        line_key = "gt_line2"
+        plane_key = "gt_plane2"
+        img_key = "img2"
+    else:
+        raise ValueError(f"view_idx must be 1 or 2, got {view_idx}")
+
+    target_batch = dict(batch)
+    target_batch["img"] = batch.get(img_key, batch["img"])
+    target_batch["gt_line"] = batch.get(line_key, batch["gt_line"])
+    target_batch["gt_plane"] = batch.get(plane_key, batch["gt_plane"])
+
+    return target_batch
 
 
 def make_subset(dataset, size):
@@ -385,6 +468,56 @@ def load_checkpoint(path, model, optimizer=None, device="cpu"):
     return start_epoch, best_val
 
 
+def load_teacher_model(args, device):
+    """
+    Load a frozen teacher model from args.teacher_ckpt.
+
+    The teacher should usually be the stable baseline checkpoint before geo training.
+    """
+    if args.teacher_ckpt is None or args.point_anchor_weight <= 0:
+        return None
+
+    print("=" * 80)
+    print("Loading frozen teacher model for pointmap anchor")
+    print("=" * 80)
+    print(f"teacher_ckpt       : {args.teacher_ckpt}")
+    print(f"point_anchor_weight: {args.point_anchor_weight}")
+    print(f"point_anchor_beta  : {args.point_anchor_beta}")
+    print("=" * 80)
+
+    teacher_backbone = build_dust3r_backbone(args.weights_path, device=device)
+
+    teacher_model = LightReconModel(
+        dust3r_backbone=teacher_backbone,
+        hidden_dim=args.hidden_dim,
+        plane_embed_dim=args.plane_embed_dim,
+    ).to(device)
+
+    try:
+        ckpt = torch.load(args.teacher_ckpt, map_location=device, weights_only=False)
+    except TypeError:
+        ckpt = torch.load(args.teacher_ckpt, map_location=device)
+
+    state_dict = ckpt.get("model", ckpt)
+
+    missing, unexpected = teacher_model.load_state_dict(state_dict, strict=False)
+
+    print(f"[Teacher] missing keys   : {len(missing)}")
+    print(f"[Teacher] unexpected keys: {len(unexpected)}")
+
+    if len(missing) > 0:
+        print("[Teacher] first missing keys:", missing[:10])
+    if len(unexpected) > 0:
+        print("[Teacher] first unexpected keys:", unexpected[:10])
+
+    teacher_model.eval()
+
+    for p in teacher_model.parameters():
+        p.requires_grad_(False)
+
+    return teacher_model
+
+
 def compute_loss_wrapper(res, batch, args):
     """
     Only place that calls compute_losses.
@@ -448,14 +581,153 @@ def compute_two_view_loss(res1, res2, batch, args):
     """
     Supervise both DUSt3R outputs.
 
-    Current training uses pseudo-pairs, so both outputs share the same target.
-    Keeping both in the loss makes the path ready for real paired views later.
+    Paired batches use view-specific targets. Single-view batches fall back to
+    shared pseudo-pair targets through select_view_targets().
     """
-    loss1, loss_dict1 = compute_loss_wrapper(res1, batch, args)
-    loss2, loss_dict2 = compute_loss_wrapper(res2, batch, args)
+    batch1 = select_view_targets(batch, view_idx=1)
+    batch2 = select_view_targets(batch, view_idx=2)
+
+    loss1, loss_dict1 = compute_loss_wrapper(res1, batch1, args)
+    loss2, loss_dict2 = compute_loss_wrapper(res2, batch2, args)
 
     loss_total = 0.5 * (loss1 + loss2)
     loss_dict = average_loss_dicts([loss_dict1, loss_dict2])
+    loss_dict["loss_total"] = to_float(loss_total)
+
+    return loss_total, loss_dict
+
+
+def get_pts3d_from_res_for_anchor(res):
+    """
+    Extract pointmap from model output and return it as [B, H, W, 3].
+
+    This helper is intentionally local to train.py so that the anchor loss does
+    not depend on evaluation code.
+    """
+    candidate_keys = [
+        "pts3d",
+        "pts3d_in_other_view",
+        "pointmap",
+        "pred_pts3d",
+    ]
+
+    pts = None
+    used_key = None
+
+    for key in candidate_keys:
+        if key in res:
+            pts = res[key]
+            used_key = key
+            break
+
+    if pts is None:
+        raise KeyError(
+            f"Cannot find pointmap in model output for anchor loss. "
+            f"Available keys: {list(res.keys())}"
+        )
+
+    if pts.ndim != 4:
+        raise ValueError(
+            f"Expected 4D pointmap from key={used_key}, got shape={tuple(pts.shape)}"
+        )
+
+    # [B, 3, H, W] -> [B, H, W, 3]
+    if pts.shape[1] == 3:
+        pts = pts.permute(0, 2, 3, 1).contiguous()
+
+    if pts.shape[-1] != 3:
+        raise ValueError(
+            f"Expected pointmap with last dim 3 from key={used_key}, "
+            f"got shape={tuple(pts.shape)}"
+        )
+
+    return pts
+
+
+def point_anchor_loss(
+    student_res,
+    teacher_res,
+    beta=0.05,
+    max_abs_coord=1e4,
+):
+    """
+    Keep student pointmap close to a frozen teacher pointmap.
+
+    Purpose:
+        Prevent coplanarity loss from collapsing the pointmap scale.
+
+    student_res:
+        trainable model output
+
+    teacher_res:
+        frozen teacher model output
+
+    Returns:
+        SmoothL1(student_pts, teacher_pts) on valid points.
+    """
+    student_pts = get_pts3d_from_res_for_anchor(student_res)
+    teacher_pts = get_pts3d_from_res_for_anchor(teacher_res).detach()
+
+    valid = (
+        torch.isfinite(student_pts).all(dim=-1)
+        & torch.isfinite(teacher_pts).all(dim=-1)
+        & (student_pts.abs().amax(dim=-1) < max_abs_coord)
+        & (teacher_pts.abs().amax(dim=-1) < max_abs_coord)
+    )
+
+    if valid.sum() == 0:
+        return student_pts.sum() * 0.0
+
+    return torch.nn.functional.smooth_l1_loss(
+        student_pts[valid],
+        teacher_pts[valid],
+        beta=beta,
+        reduction="mean",
+    )
+
+
+@torch.no_grad()
+def compute_teacher_outputs(teacher_model, view1, view2):
+    """
+    Forward frozen teacher model without gradient.
+    """
+    teacher_model.eval()
+    teacher_res1, teacher_res2 = teacher_model(view1, view2)
+    return teacher_res1, teacher_res2
+
+
+def add_point_anchor_loss(
+    loss_total,
+    loss_dict,
+    res1,
+    res2,
+    teacher_res1,
+    teacher_res2,
+    args,
+):
+    """
+    Add two-view pointmap anchor loss to total loss and loss_dict.
+    """
+    if args.point_anchor_weight <= 0:
+        return loss_total, loss_dict
+
+    anchor1 = point_anchor_loss(
+        student_res=res1,
+        teacher_res=teacher_res1,
+        beta=args.point_anchor_beta,
+    )
+
+    anchor2 = point_anchor_loss(
+        student_res=res2,
+        teacher_res=teacher_res2,
+        beta=args.point_anchor_beta,
+    )
+
+    loss_anchor = 0.5 * (anchor1 + anchor2)
+
+    loss_total = loss_total + args.point_anchor_weight * loss_anchor
+
+    loss_dict["loss_point_anchor"] = to_float(loss_anchor)
     loss_dict["loss_total"] = to_float(loss_total)
 
     return loss_total, loss_dict
@@ -488,6 +760,7 @@ def train_one_epoch(
     args,
     epoch,
     swanlab_run=None,
+    teacher_model=None,
 ):
     model.train()
 
@@ -502,12 +775,32 @@ def train_one_epoch(
         res1, res2 = model(view1, view2)
 
         loss_total, loss_dict = compute_two_view_loss(res1, res2, batch, args)
+
+        if teacher_model is not None and args.point_anchor_weight > 0:
+            teacher_res1, teacher_res2 = compute_teacher_outputs(
+                teacher_model,
+                view1,
+                view2,
+            )
+
+            loss_total, loss_dict = add_point_anchor_loss(
+                loss_total=loss_total,
+                loss_dict=loss_dict,
+                res1=res1,
+                res2=res2,
+                teacher_res1=teacher_res1,
+                teacher_res2=teacher_res2,
+                args=args,
+            )
+
         if epoch == 1 and batch_idx == 1:
             print("[Debug] loss_dict keys:", sorted(loss_dict.keys()))
             if "loss_coplanarity" in loss_dict:
                 print("[Debug] loss_coplanarity:", to_float(loss_dict["loss_coplanarity"]))
             if "num_geo_planes" in loss_dict:
                 print("[Debug] num_geo_planes:", to_float(loss_dict["num_geo_planes"]))
+            if "loss_point_anchor" in loss_dict:
+                print("[Debug] loss_point_anchor:", to_float(loss_dict["loss_point_anchor"]))
 
         if not torch.isfinite(loss_total):
             print(
@@ -573,6 +866,7 @@ def train_one_epoch(
             "num_planes",
             "loss_coplanarity",
             "num_geo_planes",
+            "loss_point_anchor",
         ]
 
         for key in extra_keys:
@@ -592,6 +886,7 @@ def train_one_epoch(
                 f"line={to_float(loss_dict.get('loss_line', 0.0)):.4f}, "
                 f"plane={to_float(loss_dict.get('loss_plane', 0.0)):.4f}, "
                 f"geo={to_float(loss_dict.get('loss_coplanarity', 0.0)):.6f}, "
+                f"anchor={to_float(loss_dict.get('loss_point_anchor', 0.0)):.6f}, "
                 f"num_geo={to_float(loss_dict.get('num_geo_planes', 0.0)):.1f}"
             )
 
@@ -611,6 +906,7 @@ def train_one_epoch(
         f"line: {stats.get('loss_line', float('nan')):.4f}, "
         f"plane: {stats.get('loss_plane', float('nan')):.4f}, "
         f"geo: {stats.get('loss_coplanarity', 0.0):.6f}, "
+        f"anchor: {stats.get('loss_point_anchor', 0.0):.6f}, "
         f"num_geo: {stats.get('num_geo_planes', 0.0):.1f}, "
         f"skipped: {skipped_batches}"
     )
@@ -634,6 +930,7 @@ def train_one_epoch(
         "num_planes",
         "loss_coplanarity",
         "num_geo_planes",
+        "loss_point_anchor",
     ]:
         if key in stats:
             epoch_metrics[f"train/epoch_{key}"] = stats[key]
@@ -651,6 +948,7 @@ def validate_one_epoch(
     args,
     epoch,
     swanlab_run=None,
+    teacher_model=None,
 ):
     model.eval()
 
@@ -665,6 +963,23 @@ def validate_one_epoch(
         res1, res2 = model(view1, view2)
 
         loss_total, loss_dict = compute_two_view_loss(res1, res2, batch, args)
+
+        if teacher_model is not None and args.point_anchor_weight > 0:
+            teacher_res1, teacher_res2 = compute_teacher_outputs(
+                teacher_model,
+                view1,
+                view2,
+            )
+
+            loss_total, loss_dict = add_point_anchor_loss(
+                loss_total=loss_total,
+                loss_dict=loss_dict,
+                res1=res1,
+                res2=res2,
+                teacher_res1=teacher_res1,
+                teacher_res2=teacher_res2,
+                args=args,
+            )
 
         if not torch.isfinite(loss_total):
             print(
@@ -697,6 +1012,7 @@ def validate_one_epoch(
             "num_planes",
             "loss_coplanarity",
             "num_geo_planes",
+            "loss_point_anchor",
         ]
 
         for key in extra_keys:
@@ -714,7 +1030,10 @@ def validate_one_epoch(
                 f"[Val] batch {batch_idx}/{len(loader)} | "
                 f"total={to_float(loss_total):.4f}, "
                 f"line={to_float(loss_dict.get('loss_line', 0.0)):.4f}, "
-                f"plane={to_float(loss_dict.get('loss_plane', 0.0)):.4f}"
+                f"plane={to_float(loss_dict.get('loss_plane', 0.0)):.4f}, "
+                f"geo={to_float(loss_dict.get('loss_coplanarity', 0.0)):.6f}, "
+                f"anchor={to_float(loss_dict.get('loss_point_anchor', 0.0)):.6f}, "
+                f"num_geo={to_float(loss_dict.get('num_geo_planes', 0.0)):.1f}"
             )
 
     stats = average_meters(meters, valid_batches)
@@ -729,12 +1048,13 @@ def validate_one_epoch(
     stats["skipped_batches"] = skipped_batches
 
     print(
-        f"[Val] batch {batch_idx}/{len(loader)} | "
-        f"total={to_float(loss_total):.4f}, "
-        f"line={to_float(loss_dict.get('loss_line', 0.0)):.4f}, "
-        f"plane={to_float(loss_dict.get('loss_plane', 0.0)):.4f}, "
-        f"geo={to_float(loss_dict.get('loss_coplanarity', 0.0)):.6f}, "
-        f"num_geo={to_float(loss_dict.get('num_geo_planes', 0.0)):.1f}"
+        f"Val   | total: {stats.get('loss_total', float('nan')):.4f}, "
+        f"line: {stats.get('loss_line', float('nan')):.4f}, "
+        f"plane: {stats.get('loss_plane', float('nan')):.4f}, "
+        f"geo: {stats.get('loss_coplanarity', 0.0):.6f}, "
+        f"anchor: {stats.get('loss_point_anchor', 0.0):.6f}, "
+        f"num_geo: {stats.get('num_geo_planes', 0.0):.1f}, "
+        f"skipped: {skipped_batches}"
     )
 
     epoch_metrics = {
@@ -756,6 +1076,7 @@ def validate_one_epoch(
         "num_planes",
         "loss_coplanarity",
         "num_geo_planes",
+        "loss_point_anchor",
     ]:
         if key in stats:
             epoch_metrics[f"val/epoch_{key}"] = stats[key]
@@ -787,6 +1108,11 @@ def main():
     print(f"line_weight : {args.line_weight}")
     print(f"plane_weight: {args.plane_weight}")
     print(f"geo_weight  : {args.geo_weight}")
+    print(f"teacher_ckpt: {args.teacher_ckpt}")
+    print(f"point_anchor_weight: {args.point_anchor_weight}")
+    print(f"point_anchor_beta  : {args.point_anchor_beta}")
+    print(f"input_mode  : {args.input_mode}")
+    print(f"pair_strategy: {args.pair_strategy}")
     print("=" * 80)
 
     # -------------------------
@@ -797,6 +1123,8 @@ def main():
         split="train",
         train_ratio=args.train_ratio,
         image_size=(args.image_size, args.image_size),
+        input_mode=args.input_mode,
+        pair_strategy=args.pair_strategy,
     )
 
     val_dataset_full = Structured3DDataset(
@@ -804,6 +1132,8 @@ def main():
         split="val",
         train_ratio=args.train_ratio,
         image_size=(args.image_size, args.image_size),
+        input_mode=args.input_mode,
+        pair_strategy=args.pair_strategy,
     )
 
     print(f"Train scenes: {len(train_dataset_full.scenes)}")
@@ -854,6 +1184,8 @@ def main():
 
     count_parameters(model)
 
+    teacher_model = load_teacher_model(args, device)
+
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad],
         lr=args.lr,
@@ -888,6 +1220,7 @@ def main():
             args=args,
             epoch=epoch,
             swanlab_run=swanlab_run,
+            teacher_model=teacher_model,
         )
 
         val_stats = None
@@ -900,6 +1233,7 @@ def main():
                 args=args,
                 epoch=epoch,
                 swanlab_run=swanlab_run,
+                teacher_model=teacher_model,
             )
 
         # Always save latest.

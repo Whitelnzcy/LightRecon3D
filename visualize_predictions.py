@@ -47,6 +47,8 @@ def parse_args():
     parser.add_argument("--sample_idx", type=int, default=0)
     parser.add_argument("--train_ratio", type=float, default=0.9)
     parser.add_argument("--image_size", type=int, default=512)
+    parser.add_argument("--input_mode", type=str, default="pair", choices=["pair", "single"])
+    parser.add_argument("--pair_strategy", type=str, default="adjacent", choices=["adjacent", "all"])
 
     parser.add_argument("--hidden_dim", type=int, default=768)
     parser.add_argument("--plane_embed_dim", type=int, default=16)
@@ -78,16 +80,30 @@ def move_batch_to_device(batch, device):
 
 
 def build_views_from_batch(batch, prefix="vis"):
-    bsz = batch["img"].shape[0]
+    img1 = batch.get("img1", batch["img"])
+    img2 = batch.get("img2", batch["img"])
+    bsz = img1.shape[0]
+    true_shape1 = torch.tensor(
+        img1.shape[-2:],
+        device=img1.device,
+        dtype=torch.long,
+    )[None].repeat(bsz, 1)
+    true_shape2 = torch.tensor(
+        img2.shape[-2:],
+        device=img2.device,
+        dtype=torch.long,
+    )[None].repeat(bsz, 1)
 
     view1 = {
-        "img": batch["img"],
-        "instance": [f"{prefix}_{i}" for i in range(bsz)],
+        "img": img1,
+        "true_shape": true_shape1,
+        "instance": [f"{prefix}_{i}_view1" for i in range(bsz)],
     }
 
     view2 = {
-        "img": batch["img"],
-        "instance": [f"{prefix}_{i}" for i in range(bsz)],
+        "img": img2,
+        "true_shape": true_shape2,
+        "instance": [f"{prefix}_{i}_view2" for i in range(bsz)],
     }
 
     return view1, view2
@@ -237,6 +253,8 @@ def main():
         split=args.split,
         train_ratio=args.train_ratio,
         image_size=(args.image_size, args.image_size),
+        input_mode=args.input_mode,
+        pair_strategy=args.pair_strategy,
     )
 
     if args.sample_idx < 0 or args.sample_idx >= len(dataset):
@@ -251,6 +269,15 @@ def main():
         "gt_line": sample["gt_line"].unsqueeze(0),
         "gt_plane": sample["gt_plane"].unsqueeze(0),
     }
+    if "img2" in sample:
+        batch.update({
+            "img1": sample["img1"].unsqueeze(0),
+            "img2": sample["img2"].unsqueeze(0),
+            "gt_line1": sample["gt_line1"].unsqueeze(0),
+            "gt_line2": sample["gt_line2"].unsqueeze(0),
+            "gt_plane1": sample["gt_plane1"].unsqueeze(0),
+            "gt_plane2": sample["gt_plane2"].unsqueeze(0),
+        })
 
     batch = move_batch_to_device(batch, device)
     view1, view2 = build_views_from_batch(batch, prefix=args.split)
