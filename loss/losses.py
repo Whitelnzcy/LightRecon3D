@@ -35,6 +35,7 @@ def compute_losses(
     line_pos_weight=None,
     line_bce_weight=1.0,
     line_dice_weight=1.0,
+    line_target_dilate=0,
 
     # Plane embedding params
     plane_min_pixels=64,
@@ -120,6 +121,7 @@ def compute_losses(
         pos_weight=line_pos_weight,
         bce_weight=line_bce_weight,
         dice_weight=line_dice_weight,
+        target_dilate=line_target_dilate,
     )
 
     # -------------------------
@@ -183,6 +185,7 @@ def compute_losses(
         # Line details
         "loss_line_bce": _to_float(line_stats["loss_line_bce"]),
         "loss_line_dice": _to_float(line_stats["loss_line_dice"]),
+        "line_target_positive_ratio": _to_float(line_stats["line_target_positive_ratio"]),
 
         # Plane embedding details
         "loss_plane_embedding": _to_float(plane_stats["loss_plane_embedding"]),

@@ -47,6 +47,9 @@ def parse_args():
     parser.add_argument("--sample_idx", type=int, default=0)
     parser.add_argument("--train_ratio", type=float, default=0.9)
     parser.add_argument("--image_size", type=int, default=512)
+    parser.add_argument("--input_mode", type=str, default="pair", choices=["pair", "single"])
+    parser.add_argument("--pair_strategy", type=str, default="adjacent", choices=["adjacent", "all"])
+    parser.add_argument("--pair_max_view_id_gap", type=int, default=0)
 
     parser.add_argument("--hidden_dim", type=int, default=768)
     parser.add_argument("--plane_embed_dim", type=int, default=16)
@@ -78,16 +81,30 @@ def move_batch_to_device(batch, device):
 
 
 def build_views_from_batch(batch, prefix="vis"):
-    bsz = batch["img"].shape[0]
+    img1 = batch.get("img1", batch["img"])
+    img2 = batch.get("img2", batch["img"])
+    bsz = img1.shape[0]
+    true_shape1 = torch.tensor(
+        img1.shape[-2:],
+        device=img1.device,
+        dtype=torch.long,
+    )[None].repeat(bsz, 1)
+    true_shape2 = torch.tensor(
+        img2.shape[-2:],
+        device=img2.device,
+        dtype=torch.long,
+    )[None].repeat(bsz, 1)
 
     view1 = {
-        "img": batch["img"],
-        "instance": [f"{prefix}_{i}" for i in range(bsz)],
+        "img": img1,
+        "true_shape": true_shape1,
+        "instance": [f"{prefix}_{i}_view1" for i in range(bsz)],
     }
 
     view2 = {
-        "img": batch["img"],
-        "instance": [f"{prefix}_{i}" for i in range(bsz)],
+        "img": img2,
+        "true_shape": true_shape2,
+        "instance": [f"{prefix}_{i}_view2" for i in range(bsz)],
     }
 
     return view1, view2
@@ -237,6 +254,9 @@ def main():
         split=args.split,
         train_ratio=args.train_ratio,
         image_size=(args.image_size, args.image_size),
+        input_mode=args.input_mode,
+        pair_strategy=args.pair_strategy,
+        pair_max_view_id_gap=args.pair_max_view_id_gap,
     )
 
     if args.sample_idx < 0 or args.sample_idx >= len(dataset):
@@ -251,6 +271,15 @@ def main():
         "gt_line": sample["gt_line"].unsqueeze(0),
         "gt_plane": sample["gt_plane"].unsqueeze(0),
     }
+    if "img2" in sample:
+        batch.update({
+            "img1": sample["img1"].unsqueeze(0),
+            "img2": sample["img2"].unsqueeze(0),
+            "gt_line1": sample["gt_line1"].unsqueeze(0),
+            "gt_line2": sample["gt_line2"].unsqueeze(0),
+            "gt_plane1": sample["gt_plane1"].unsqueeze(0),
+            "gt_plane2": sample["gt_plane2"].unsqueeze(0),
+        })
 
     batch = move_batch_to_device(batch, device)
     view1, view2 = build_views_from_batch(batch, prefix=args.split)
@@ -303,60 +332,73 @@ def main():
 
     if "pred_line" not in res1:
         raise KeyError("res1 does not contain pred_line")
+    if "pred_line" not in res2:
+        raise KeyError("res2 does not contain pred_line")
 
     if "pred_plane" not in res1:
         raise KeyError("res1 does not contain pred_plane embedding")
+    if "pred_plane" not in res2:
+        raise KeyError("res2 does not contain pred_plane embedding")
 
-    img = tensor_image_to_numpy(batch["img"][0])
+    def collect_view_outputs(view_idx, res):
+        if view_idx == 1:
+            img_key = "img1" if "img1" in batch else "img"
+            line_key = "gt_line1" if "gt_line1" in batch else "gt_line"
+            plane_key = "gt_plane1" if "gt_plane1" in batch else "gt_plane"
+        else:
+            img_key = "img2" if "img2" in batch else "img"
+            line_key = "gt_line2" if "gt_line2" in batch else "gt_line"
+            plane_key = "gt_plane2" if "gt_plane2" in batch else "gt_plane"
 
-    gt_line = batch["gt_line"][0]
-    if gt_line.ndim == 3:
-        gt_line = gt_line[0]
-    gt_line = gt_line.detach().cpu().numpy()
+        img = tensor_image_to_numpy(batch[img_key][0])
 
-    gt_plane = batch["gt_plane"][0].detach().cpu().numpy()
+        gt_line = batch[line_key][0]
+        if gt_line.ndim == 3:
+            gt_line = gt_line[0]
+        gt_line = gt_line.detach().cpu().numpy()
 
-    pred_line_logits = res1["pred_line"][0, 0]
-    pred_line_prob = torch.sigmoid(pred_line_logits).detach().cpu().numpy()
-    pred_line_bin = (pred_line_prob > args.line_threshold).astype("float32")
+        gt_plane = batch[plane_key][0].detach().cpu().numpy()
 
-    pred_plane_embedding = res1["pred_plane"][0]  # [C,H,W]
-    pred_plane_rgb = embedding_pca_to_rgb(pred_plane_embedding)
+        pred_line_logits = res["pred_line"][0, 0]
+        pred_line_prob = torch.sigmoid(pred_line_logits).detach().cpu().numpy()
+        pred_plane_rgb = embedding_pca_to_rgb(res["pred_plane"][0])
 
-    print(f"pred_line shape : {res1['pred_line'].shape}")
-    print(f"pred_plane shape: {res1['pred_plane'].shape}")
+        return img, gt_line, pred_line_prob, gt_plane, pred_plane_rgb
 
-    plt.figure(figsize=(18, 10))
+    view1_outputs = collect_view_outputs(1, res1)
+    view2_outputs = collect_view_outputs(2, res2)
 
-    plt.subplot(2, 3, 1)
-    plt.title("Input RGB")
-    plt.imshow(img)
-    plt.axis("off")
+    print(f"res1 pred_line shape : {res1['pred_line'].shape}")
+    print(f"res1 pred_plane shape: {res1['pred_plane'].shape}")
+    print(f"res2 pred_line shape : {res2['pred_line'].shape}")
+    print(f"res2 pred_plane shape: {res2['pred_plane'].shape}")
 
-    plt.subplot(2, 3, 2)
-    plt.title("GT Line")
-    plt.imshow(gt_line, cmap="gray")
-    plt.axis("off")
+    plt.figure(figsize=(22, 9))
 
-    plt.subplot(2, 3, 3)
-    plt.title("Pred Line Prob")
-    plt.imshow(pred_line_prob, cmap="gray")
-    plt.axis("off")
+    titles = [
+        "RGB",
+        "GT Line",
+        "Pred Line Prob",
+        "GT Plane Instance",
+        "Pred Plane Embedding PCA",
+    ]
 
-    plt.subplot(2, 3, 4)
-    plt.title(f"Pred Line Binary > {args.line_threshold}")
-    plt.imshow(pred_line_bin, cmap="gray")
-    plt.axis("off")
+    for row_idx, (row_title, outputs) in enumerate([
+        ("View 1", view1_outputs),
+        ("View 2", view2_outputs),
+    ]):
+        for col_idx, (title, image) in enumerate(zip(titles, outputs)):
+            ax = plt.subplot(2, 5, row_idx * 5 + col_idx + 1)
+            ax.set_title(f"{row_title} {title}")
 
-    plt.subplot(2, 3, 5)
-    plt.title("GT Plane Instance")
-    plt.imshow(gt_plane, cmap="jet")
-    plt.axis("off")
+            if title == "GT Line" or title == "Pred Line Prob":
+                ax.imshow(image, cmap="gray")
+            elif title == "GT Plane Instance":
+                ax.imshow(image, cmap="jet")
+            else:
+                ax.imshow(image)
 
-    plt.subplot(2, 3, 6)
-    plt.title("Pred Plane Embedding PCA")
-    plt.imshow(pred_plane_rgb)
-    plt.axis("off")
+            ax.axis("off")
 
     plt.tight_layout()
 
