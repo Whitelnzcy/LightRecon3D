@@ -106,6 +106,41 @@ def _parse_pair_set(pair_list):
     return pair_set
 
 
+def _parse_pair_weight_map(pair_weight_list):
+    if pair_weight_list is None:
+        return None
+
+    pair_weight_map = {}
+
+    for item in pair_weight_list:
+        text = str(item).strip()
+        if not text:
+            continue
+
+        if ":" not in text:
+            raise ValueError(
+                f"Invalid pair weight format: {item!r}. Expected format like 0-1:0.2."
+            )
+
+        pair_text, weight_text = text.split(":", 1)
+        pair_set = _parse_pair_set([pair_text])
+
+        try:
+            weight = float(weight_text)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid pair weight format: {item!r}. Weight must be a number."
+            ) from exc
+
+        if weight <= 0:
+            raise ValueError(f"Pair weight must be positive, got {weight} for {item!r}")
+
+        key = next(iter(pair_set))
+        pair_weight_map[key] = weight
+
+    return pair_weight_map
+
+
 def _get_view_idx(view):
     def _to_int(value):
         if torch.is_tensor(value):
@@ -178,6 +213,38 @@ def filter_pairs_by_args(pairs, keep_pairs=None, drop_pairs=None):
         )
 
     return filtered
+
+
+def reweight_output_conf_by_pair(output, pairs, pair_weights):
+    weight_map = _parse_pair_weight_map(pair_weights)
+
+    if not weight_map:
+        return output
+
+    count = 0
+
+    for pair_idx, pair in enumerate(pairs):
+        view1, view2 = pair
+        i = _get_view_idx(view1)
+        j = _get_view_idx(view2)
+        key = (min(i, j), max(i, j))
+
+        if key not in weight_map:
+            continue
+
+        weight = weight_map[key]
+        output["pred1"]["conf"][pair_idx] *= weight
+        output["pred2"]["conf"][pair_idx] *= weight
+
+        print(
+            f"[PairWeight] pair_idx={pair_idx} "
+            f"pair={key} weight={weight}"
+        )
+        count += 1
+
+    print(f"[PairWeight] total reweighted pairs: {count}")
+
+    return output
 
 
 def to_numpy(x):
@@ -755,6 +822,12 @@ def main():
         default=None,
         help="Drop selected image pairs, format: 0-1 1-2",
     )
+    parser.add_argument(
+        "--pair_weights",
+        nargs="*",
+        default=None,
+        help="Pair confidence weights, format: 0-1:0.2 0-2:0.5",
+    )
 
     parser.add_argument("--niter", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.01)
@@ -868,6 +941,12 @@ def main():
         device,
         batch_size=args.batch_size,
         verbose=True,
+    )
+
+    output = reweight_output_conf_by_pair(
+        output,
+        pairs,
+        pair_weights=args.pair_weights,
     )
 
     if args.conf_reweight == "plane_conf_calib":
