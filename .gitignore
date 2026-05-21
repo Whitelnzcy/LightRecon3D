@@ -18,3 +18,65 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+# local / server generated files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# logs and outputs
+logs/
+output/
+outputs/
+runs/
+wandb/
+*.log
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.ply
+
+# checkpoints and weights
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# datasets / envs / caches
+Structured3D/
+datasets/
+data/
+data-1/
+envs/
+conda_pkgs/
+pip_cache/
+.cache/
+
+# generated experiment reports / archives
+*.zip
+
+# generated visualizations and logs
+*.log
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.ply
+
+# checkpoints / weights
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# python cache
+__pycache__/
+*.pyc
+
+# local env / cache
+envs/
+conda_pkgs/
+pip_cache/
+.cache/
