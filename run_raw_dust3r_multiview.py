@@ -73,6 +73,113 @@ def collect_images(image_dir=None, image_paths=None, max_images=8):
     return [str(p) for p in uniq]
 
 
+def _parse_pair_set(pair_list):
+    if pair_list is None:
+        return None
+
+    pair_set = set()
+
+    for item in pair_list:
+        text = str(item).strip()
+        if not text:
+            continue
+
+        parts = re.split(r"[-,]", text)
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid pair format: {item!r}. Expected format like 0-1."
+            )
+
+        try:
+            i = int(parts[0])
+            j = int(parts[1])
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid pair format: {item!r}. Expected integer indices."
+            ) from exc
+
+        if i == j:
+            raise ValueError(f"Invalid self pair: {item!r}")
+
+        pair_set.add((min(i, j), max(i, j)))
+
+    return pair_set
+
+
+def _get_view_idx(view):
+    def _to_int(value):
+        if torch.is_tensor(value):
+            if value.numel() != 1:
+                raise ValueError(f"Cannot convert tensor idx with shape {tuple(value.shape)}")
+            return int(value.detach().cpu().item())
+
+        if isinstance(value, np.ndarray):
+            if value.size != 1:
+                raise ValueError(f"Cannot convert ndarray idx with shape {value.shape}")
+            return int(value.item())
+
+        if isinstance(value, (list, tuple)):
+            if len(value) != 1:
+                raise ValueError(f"Cannot convert sequence idx with length {len(value)}")
+            return _to_int(value[0])
+
+        if isinstance(value, (int, np.integer)):
+            return int(value)
+
+        if isinstance(value, str):
+            text = value.strip()
+            if re.fullmatch(r"[+-]?\d+", text):
+                return int(text)
+            match = re.search(r"(?:^|[_\-/])(\d+)(?:$|[_\-.])", text)
+            if match:
+                return int(match.group(1))
+
+        raise ValueError(f"Cannot convert view index from value={value!r}")
+
+    if "idx" in view:
+        return _to_int(view["idx"])
+
+    if "instance" in view:
+        return _to_int(view["instance"])
+
+    print("Cannot find view index. view.keys():", list(view.keys()))
+    raise KeyError("DUSt3R view dict has neither 'idx' nor 'instance'")
+
+
+def filter_pairs_by_args(pairs, keep_pairs=None, drop_pairs=None):
+    keep_set = _parse_pair_set(keep_pairs)
+    drop_set = _parse_pair_set(drop_pairs)
+
+    original_count = len(pairs)
+    filtered = []
+
+    for pair in pairs:
+        view1, view2 = pair
+        i = _get_view_idx(view1)
+        j = _get_view_idx(view2)
+        key = (min(i, j), max(i, j))
+
+        if keep_set is not None and key not in keep_set:
+            continue
+        if drop_set is not None and key in drop_set:
+            continue
+
+        filtered.append(pair)
+
+    print("original pair count:", original_count)
+    print("keep_pairs:", sorted(keep_set) if keep_set is not None else None)
+    print("drop_pairs:", sorted(drop_set) if drop_set is not None else None)
+    print("filtered pair count:", len(filtered))
+
+    if len(filtered) == 0:
+        raise RuntimeError(
+            "Pair filtering removed all pairs. "
+            f"keep_pairs={keep_pairs}, drop_pairs={drop_pairs}"
+        )
+
+    return filtered
+
+
 def to_numpy(x):
     if torch.is_tensor(x):
         return x.detach().cpu().numpy()
@@ -636,6 +743,18 @@ def main():
 
     parser.add_argument("--scene_graph", default="complete")
     parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument(
+        "--keep_pairs",
+        nargs="*",
+        default=None,
+        help="Only keep selected image pairs, format: 0-1 1-2",
+    )
+    parser.add_argument(
+        "--drop_pairs",
+        nargs="*",
+        default=None,
+        help="Drop selected image pairs, format: 0-1 1-2",
+    )
 
     parser.add_argument("--niter", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.01)
@@ -733,7 +852,11 @@ def main():
         symmetrize=True,
     )
 
-    print("num pairs:", len(pairs))
+    pairs = filter_pairs_by_args(
+        pairs,
+        keep_pairs=args.keep_pairs,
+        drop_pairs=args.drop_pairs,
+    )
 
     print("=" * 80)
     print("Running pair inference")
