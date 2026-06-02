@@ -62,6 +62,31 @@ Recommended local file to inspect:
 outputs/val_000026_full_pointcloud_editable_planes_presentation_v2.html
 ```
 
+## Export an Edited Point Cloud
+
+The HTML demo is interactive, but edited geometry can also be exported as a new PLY. This is useful for saving the result of a plane-offset edit.
+
+Example: move plane `2` by `+0.25` along its normal.
+
+```bash
+python apply_editable_plane_offsets.py \
+  --input_html /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_full_pointcloud_editable_planes.html \
+  --output_ply /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_edit_plane2_d025_points_moved.ply \
+  --output_json /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_edit_plane2_d025_report.json \
+  --edit 2:0.25
+```
+
+Multiple planes can be edited in one export:
+
+```bash
+python apply_editable_plane_offsets.py \
+  --input_html /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_full_pointcloud_editable_planes.html \
+  --output_ply /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_edit_planes0_2_points_moved.ply \
+  --output_json /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_edit_planes0_2_report.json \
+  --edit 0:-0.15 \
+  --edit 2:0.25
+```
+
 ## Current Sample 26 Evidence
 
 For `val` sample `26`:
