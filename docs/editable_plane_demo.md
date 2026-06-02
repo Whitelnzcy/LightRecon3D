@@ -113,6 +113,21 @@ full_pointcloud_plane_edit_summary.json
 
 The summary is the main inspection artifact: it lists the complete point count, major plane equations, assigned point counts, and the exported full-pointcloud edit for each sample.
 
+## Generate Before/After Edit Comparison
+
+For visual inspection, generate a side-by-side HTML from the complete `.npz`:
+
+```bash
+python make_full_pointcloud_edit_comparison.py \
+  --input_npz /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/val_000026_full_pointcloud_editable_planes_data.npz \
+  --output_html /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/batch_summary/val_000026_full_pointcloud_edit_comparison.html \
+  --edit_plane largest \
+  --edit_delta 0.25 \
+  --max_display_points 28000
+```
+
+The page shows the original DUSt3R point cloud and the edited point cloud side by side. The browser view is sampled for speed, but all displayed metrics, plane equations, moved-point counts, and offset updates come from the full point cloud.
+
 ## Current Sample 26 Evidence
 
 For `val` sample `26`:
