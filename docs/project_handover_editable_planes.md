@@ -438,6 +438,58 @@ oracle_plane_refine.py
 
 这些是 plane head/聚类/优化方向的实验脚本，现阶段可以作为后续学习式方案的参考，但现在接手时优先理解 full pointcloud editable planes 这条主线。
 
+### `train_unsupervised_plane_tokens.py`
+
+用途：
+
+- 这是纠正方向后的第一版 plane-token decomposition 实验。
+- 不使用 RANSAC plane normal / offset / assignment 作为监督。
+- 直接从点云中学习 `K` 个 plane token：
+
+  ```text
+  plane token k -> normal n_k + offset d_k
+  point i -> soft assignment over K planes
+  ```
+
+- loss 由点到平面距离、assignment entropy、plane diversity、coverage 等几何项组成。
+- RANSAC 结果只作为 baseline 和对照，不作为主监督。
+
+当前在 `val_000035` 上跑过一版：
+
+```text
+/data/zhucy23u/logs/learned_plane_tokens_unsup_v1/val_000035_learned_plane_tokens.json
+/data/zhucy23u/logs/learned_plane_tokens_unsup_v1/val_000035_learned_plane_tokens_assignment.npz
+/data/zhucy23u/logs/learned_plane_tokens_unsup_v1/val_000035_learned_plane_token_edit_comparison.html
+```
+
+训练设置：
+
+```text
+num_planes: 4
+points used: 80000 sampled points
+steps: 1600
+supervision: none from RANSAC labels
+```
+
+当前结果：
+
+```text
+final loss: 0.0086
+soft fit: 0.0064
+assignment confidence: 0.962
+largest learned plane moved points: 58773 / 80000
+```
+
+但这版还有明显问题：largest token 覆盖约 73% 点，一个 token 只有约 2.4% 点，说明 learned planes 有不均衡/塌缩倾向。下一步要加强 coverage/diversity，或者引入 plane-token initialization、local smoothness、multi-sample training。
+
+### `make_learned_plane_token_comparison.py`
+
+用途：
+
+- 可视化 learned plane tokens 的 before/after 编辑。
+- 输入 `train_unsupervised_plane_tokens.py` 输出的 learned assignment `.npz` 和 learned plane `.json`。
+- 输出 HTML，用来和 RANSAC 后处理版本对比。
+
 ## 8. 推荐接手顺序
 
 1. 打开 `full_pointcloud_plane_edit_summary.md`，先看 26/27/28 三个样本的统计。
