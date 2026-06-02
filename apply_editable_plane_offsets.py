@@ -3,6 +3,8 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
+
 
 def extract_data(input_html):
     text = Path(input_html).read_text(encoding="utf-8")
@@ -22,6 +24,31 @@ def parse_edits(edit_args):
         plane_id, delta = item.split(":", 1)
         edits[int(plane_id)] = float(delta)
     return edits
+
+
+def load_npz_data(input_npz):
+    raw = np.load(input_npz)
+    plane_ids = raw["plane_ids"].astype(int).tolist()
+    normals = raw["plane_normals"].astype(float).tolist()
+    offsets = raw["plane_offsets"].astype(float).tolist()
+    inliers = raw["plane_inlier_counts"].astype(int).tolist()
+    planes = []
+    for plane_id, normal, offset, inlier_count in zip(plane_ids, normals, offsets, inliers):
+        planes.append(
+            {
+                "id": int(plane_id),
+                "normal": normal,
+                "offset": float(offset),
+                "inlier_count": int(inlier_count),
+            }
+        )
+    return {
+        "points": raw["points"].astype(float).tolist(),
+        "colors": raw["colors"].astype(int).tolist(),
+        "point_plane_ids": raw["point_plane_ids"].astype(int).tolist(),
+        "planes": planes,
+        "planeById": {int(p["id"]): p for p in planes},
+    }
 
 
 def edited_point(point, plane_id, data, edits):
@@ -49,7 +76,9 @@ def write_ply(path, points, colors):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_html", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--input_html")
+    source.add_argument("--input_npz")
     parser.add_argument("--output_ply", required=True)
     parser.add_argument("--output_json", required=True)
     parser.add_argument(
@@ -60,7 +89,12 @@ def main():
     )
     args = parser.parse_args()
 
-    data = extract_data(args.input_html)
+    if args.input_html:
+        data = extract_data(args.input_html)
+        input_source = args.input_html
+    else:
+        data = load_npz_data(args.input_npz)
+        input_source = args.input_npz
     edits = parse_edits(args.edit)
     if not edits:
         raise ValueError("At least one --edit PLANE_ID:DELTA is required")
@@ -78,7 +112,7 @@ def main():
     write_ply(args.output_ply, points, data["colors"])
 
     report = {
-        "input_html": args.input_html,
+        "input_source": input_source,
         "output_ply": args.output_ply,
         "edits": edits,
         "moved_counts": moved_counts,

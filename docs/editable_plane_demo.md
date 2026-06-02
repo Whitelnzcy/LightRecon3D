@@ -12,9 +12,9 @@ The target behavior is:
    n_x*x + n_y*y + n_z*z + d = 0
    ```
 
-4. Bind display points to their nearest extracted plane.
+4. Bind every full point-cloud point to its nearest extracted plane.
 5. Edit each plane independently by changing `d`.
-6. Move both the transparent plane mesh and the assigned point-cloud points along the plane normal.
+6. Move both the transparent plane mesh and the assigned full point-cloud points along the plane normal.
 
 ## Generate Editable Plane Data
 
@@ -40,11 +40,12 @@ Main outputs:
 ```text
 val_000026_full_pointcloud_editable_planes.html
 val_000026_full_pointcloud_editable_planes.ply
+val_000026_full_pointcloud_editable_planes_data.npz
 val_000026_full_pointcloud_plane_params.json
 val_000026_full_pointcloud_plane_params.txt
 ```
 
-The HTML includes one slider per extracted plane. Moving a slider changes the plane offset and moves assigned points along the plane normal.
+The HTML includes one slider per extracted plane. It down-samples points for browser inspection only. The `.npz` stores the complete point cloud, the full point-to-plane assignment, and the plane parameters used for exportable edits.
 
 ## Generate Presentation HTML
 
@@ -64,15 +65,15 @@ outputs/val_000026_full_pointcloud_editable_planes_presentation_v2.html
 
 ## Export an Edited Point Cloud
 
-The HTML demo is interactive, but edited geometry can also be exported as a new PLY. This is useful for saving the result of a plane-offset edit.
+The HTML demo is interactive, but edited geometry can also be exported as a new PLY. Use `--input_npz` when the edit must apply to the full point cloud instead of the browser display sample.
 
 Example: move plane `2` by `+0.25` along its normal.
 
 ```bash
 python apply_editable_plane_offsets.py \
-  --input_html /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_full_pointcloud_editable_planes.html \
-  --output_ply /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_edit_plane2_d025_points_moved.ply \
-  --output_json /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_edit_plane2_d025_report.json \
+  --input_npz /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/val_000026_full_pointcloud_editable_planes_data.npz \
+  --output_ply /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/val_000026_full_edit_plane2_d025_points_moved.ply \
+  --output_json /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/val_000026_full_edit_plane2_d025_report.json \
   --edit 2:0.25
 ```
 
@@ -80,9 +81,9 @@ Multiple planes can be edited in one export:
 
 ```bash
 python apply_editable_plane_offsets.py \
-  --input_html /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_full_pointcloud_editable_planes.html \
-  --output_ply /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_edit_planes0_2_points_moved.ply \
-  --output_json /data/zhucy23u/logs/full_pointcloud_editable_planes_points_move/val_000026_edit_planes0_2_report.json \
+  --input_npz /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/val_000026_full_pointcloud_editable_planes_data.npz \
+  --output_ply /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/val_000026_full_edit_planes0_2_points_moved.ply \
+  --output_json /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/val_000026_full_edit_planes0_2_report.json \
   --edit 0:-0.15 \
   --edit 2:0.25
 ```
@@ -97,6 +98,7 @@ display points: 22000
 extracted major planes: 5
 assigned display points: 21975
 unassigned display points: 25
+full exported edit: plane 2 offset +0.25 moved 55146 points in the 262144-point cloud
 ```
 
 Extracted plane equations:

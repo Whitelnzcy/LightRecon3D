@@ -448,27 +448,34 @@ def main():
         plane["v"] = v
         plane["extent"] = extent
 
-    display_n = min(args.max_display_points, len(points))
-    display_idx = np.linspace(0, len(points) - 1, display_n).astype(np.int64)
-    display_points = points[display_idx]
-    display_colors = colors[display_idx]
-    point_plane_ids = np.full(len(display_points), -1, dtype=np.int32)
+    full_point_plane_ids = np.full(len(points), -1, dtype=np.int32)
     if planes:
         dist_stack = []
         for plane in planes:
-            dist_stack.append(np.abs(display_points @ plane["normal"] + plane["offset"]))
+            dist_stack.append(np.abs(points @ plane["normal"] + plane["offset"]))
         dist_stack = np.stack(dist_stack, axis=1)
         nearest = np.argmin(dist_stack, axis=1)
-        nearest_dist = dist_stack[np.arange(len(display_points)), nearest]
+        nearest_dist = dist_stack[np.arange(len(points)), nearest]
         for i, (plane_idx, dist) in enumerate(zip(nearest, nearest_dist)):
             if dist <= args.threshold:
-                point_plane_ids[i] = int(planes[int(plane_idx)]["id"])
-                display_colors[i] = np.asarray(planes[int(plane_idx)]["color"], dtype=np.uint8)
+                full_point_plane_ids[i] = int(planes[int(plane_idx)]["id"])
+
+    full_colors = colors.copy()
+    for i, pid in enumerate(full_point_plane_ids):
+        if pid >= 0:
+            full_colors[i] = np.asarray(planes[int(pid)]["color"], dtype=np.uint8)
+
+    display_n = min(args.max_display_points, len(points))
+    display_idx = np.linspace(0, len(points) - 1, display_n).astype(np.int64)
+    display_points = points[display_idx]
+    display_colors = full_colors[display_idx]
+    point_plane_ids = full_point_plane_ids[display_idx]
 
     ply_path = out_dir / f"{args.split}_{args.sample_idx:06d}_full_pointcloud_editable_planes.ply"
     json_path = out_dir / f"{args.split}_{args.sample_idx:06d}_full_pointcloud_plane_params.json"
     txt_path = out_dir / f"{args.split}_{args.sample_idx:06d}_full_pointcloud_plane_params.txt"
     html_path = out_dir / f"{args.split}_{args.sample_idx:06d}_full_pointcloud_editable_planes.html"
+    npz_path = out_dir / f"{args.split}_{args.sample_idx:06d}_full_pointcloud_editable_planes_data.npz"
     write_ply(ply_path, display_points, display_colors, planes)
 
     params = []
@@ -485,9 +492,20 @@ def main():
             }
         )
     json_path.write_text(json.dumps({"sample_idx": args.sample_idx, "planes": params}, indent=2), encoding="utf-8")
+    np.savez_compressed(
+        npz_path,
+        points=points.astype(np.float32),
+        colors=full_colors.astype(np.uint8),
+        point_plane_ids=full_point_plane_ids.astype(np.int32),
+        plane_ids=np.asarray([p["id"] for p in planes], dtype=np.int32),
+        plane_normals=np.asarray([p["normal"] for p in planes], dtype=np.float32),
+        plane_offsets=np.asarray([p["offset"] for p in planes], dtype=np.float32),
+        plane_inlier_counts=np.asarray([p["inlier_count"] for p in planes], dtype=np.int32),
+    )
     with txt_path.open("w", encoding="utf-8") as f:
         f.write("Equation: nx*x + ny*y + nz*z + d = 0\n")
         f.write(f"Full point cloud points used for visualization: {len(display_points)} / {len(points)}\n")
+        f.write(f"Full editable point cloud data: {npz_path.name}\n")
         f.write(f"Extracted major planes: {len(planes)}\n\n")
         for p in params:
             n = p["normal"]
@@ -525,6 +543,7 @@ def main():
     print(ply_path)
     print(json_path)
     print(txt_path)
+    print(npz_path)
     print(html_path)
     print(f"planes={len(planes)} points={len(points)} display_points={len(display_points)}")
 
