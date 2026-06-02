@@ -336,14 +336,23 @@ for (const pl of DATA.planes) document.getElementById(`delta_${pl.id}`).addEvent
 function rot(p){ let [x,y,z]=p; let cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pitch), sp=Math.sin(pitch); let x1=cy*x+sy*z, z1=-sy*x+cy*z; let y1=cp*y-sp*z1, z2=sp*y+cp*z1; return [x1,y1,z2]; }
 function project(p){ const r=rot(p); const s=Math.min(canvas.width,canvas.height)*DATA.scale; return [canvas.width/2+r[0]*s, canvas.height/2-r[1]*s, r[2]]; }
 function planeVerts(pl, moved){ const delta=moved ? Number(document.getElementById(`delta_${pl.id}`).value) : 0; const n=pl.normal,u=pl.u,v=pl.v,e=pl.extent; const center=pl.center.map((x,i)=>x-delta*n[i]); return [[e[0],e[2]],[e[1],e[2]],[e[1],e[3]],[e[0],e[3]]].map(([a,b])=>center.map((x,i)=>x+a*u[i]+b*v[i])); }
+function editedPoint(i){
+  const p = DATA.points[i];
+  const pid = DATA.point_plane_ids[i];
+  if (pid < 0) return p;
+  const pl = DATA.planeById[pid];
+  if (!pl) return p;
+  const delta = Number(document.getElementById(`delta_${pid}`).value);
+  return p.map((x,j)=>x-delta*pl.normal[j]);
+}
 function drawPoly(verts, rgba){ const pts=verts.map(project); ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.fillStyle=rgba; ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1.1*devicePixelRatio; ctx.fill(); ctx.stroke(); }
 function draw(){
   ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#f6f6f4'; ctx.fillRect(0,0,canvas.width,canvas.height);
   for (const pl of DATA.planes) document.getElementById(`txt_${pl.id}`).textContent = Number(document.getElementById(`delta_${pl.id}`).value).toFixed(2);
   const items=[];
-  for(let i=0;i<DATA.points.length;i++){ const pr=project(DATA.points[i]); items.push(['pt',pr[2],pr,DATA.colors[i]]); }
+  for(let i=0;i<DATA.points.length;i++){ const pr=project(editedPoint(i)); items.push(['pt',pr[2],pr,DATA.colors[i],DATA.point_plane_ids[i]]); }
   items.sort((a,b)=>a[1]-b[1]);
-  for(const it of items){ const c=it[3]; ctx.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},0.42)`; ctx.fillRect(it[2][0],it[2][1],1.4*devicePixelRatio,1.4*devicePixelRatio); }
+  for(const it of items){ const c=it[3]; const alpha=it[4] < 0 ? 0.30 : 0.62; ctx.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${alpha})`; ctx.fillRect(it[2][0],it[2][1],1.45*devicePixelRatio,1.45*devicePixelRatio); }
   for(const pl of DATA.planes){ const c=pl.color; drawPoly(planeVerts(pl,false),`rgba(${c[0]},${c[1]},${c[2]},0.30)`); }
   for(const pl of DATA.planes){ drawPoly(planeVerts(pl,true),'rgba(220,55,45,0.26)'); }
   ctx.fillStyle='#222'; ctx.font=`${13*devicePixelRatio}px Arial`; let y=22*devicePixelRatio;
@@ -443,6 +452,18 @@ def main():
     display_idx = np.linspace(0, len(points) - 1, display_n).astype(np.int64)
     display_points = points[display_idx]
     display_colors = colors[display_idx]
+    point_plane_ids = np.full(len(display_points), -1, dtype=np.int32)
+    if planes:
+        dist_stack = []
+        for plane in planes:
+            dist_stack.append(np.abs(display_points @ plane["normal"] + plane["offset"]))
+        dist_stack = np.stack(dist_stack, axis=1)
+        nearest = np.argmin(dist_stack, axis=1)
+        nearest_dist = dist_stack[np.arange(len(display_points)), nearest]
+        for i, (plane_idx, dist) in enumerate(zip(nearest, nearest_dist)):
+            if dist <= args.threshold:
+                point_plane_ids[i] = int(planes[int(plane_idx)]["id"])
+                display_colors[i] = np.asarray(planes[int(plane_idx)]["color"], dtype=np.uint8)
 
     ply_path = out_dir / f"{args.split}_{args.sample_idx:06d}_full_pointcloud_editable_planes.ply"
     json_path = out_dir / f"{args.split}_{args.sample_idx:06d}_full_pointcloud_plane_params.json"
@@ -482,6 +503,7 @@ def main():
     html_data = {
         "points": display_points.round(5).tolist(),
         "colors": display_colors.astype(int).tolist(),
+        "point_plane_ids": point_plane_ids.astype(int).tolist(),
         "scale": scale,
         "planes": [
             {
@@ -498,6 +520,7 @@ def main():
             for p in planes
         ],
     }
+    html_data["planeById"] = {str(p["id"]): p for p in html_data["planes"]}
     make_html(html_path, html_data)
     print(ply_path)
     print(json_path)
