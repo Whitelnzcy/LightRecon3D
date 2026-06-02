@@ -38,23 +38,45 @@ def load_npz(path, max_points, seed):
     scale = np.linalg.norm(points - center, axis=1).max()
     scale = max(float(scale), 1e-6)
     points_norm = (points - center) / scale
-    return points, colors, points_norm.astype(np.float32), center[0].astype(np.float32), scale
+    colors_float = colors.astype(np.float32) / 255.0
+    radius = np.linalg.norm(points_norm, axis=1, keepdims=True).astype(np.float32)
+    point_features = np.concatenate([points_norm, colors_float, radius], axis=1)
+    return points, colors, points_norm.astype(np.float32), point_features.astype(np.float32), center[0].astype(np.float32), scale
 
 
 class PlaneTokenDecomposition(nn.Module):
-    def __init__(self, num_planes):
+    def __init__(self, num_planes, point_feature_dim=7, hidden_dim=128, assignment_mode="learned"):
         super().__init__()
+        self.assignment_mode = assignment_mode
         self.normal_raw = nn.Parameter(torch.randn(num_planes, 3) * 0.2)
         self.offset = nn.Parameter(torch.zeros(num_planes))
         self.logit = nn.Parameter(torch.zeros(num_planes))
+        assign_input_dim = point_feature_dim + 3 + 1 + 1
+        self.assignment_head = nn.Sequential(
+            nn.Linear(assign_input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 1),
+        )
 
-    def forward(self, points, temperature):
+    def forward(self, points, point_features, temperature, distance_logit_weight):
         normals = F.normalize(self.normal_raw, dim=-1)
         offsets = self.offset
         dists = torch.abs(points @ normals.t() + offsets.view(1, -1))
-        logits = -dists / temperature + self.logit.view(1, -1)
+        if self.assignment_mode == "distance":
+            logits = -dists / temperature + self.logit.view(1, -1)
+        else:
+            n_points = points.shape[0]
+            n_planes = normals.shape[0]
+            feat = point_features[:, None, :].expand(n_points, n_planes, -1)
+            normal_feat = normals[None, :, :].expand(n_points, n_planes, -1)
+            offset_feat = offsets.view(1, n_planes, 1).expand(n_points, n_planes, 1)
+            pair_feat = torch.cat([feat, normal_feat, offset_feat, dists.unsqueeze(-1)], dim=-1)
+            logits = self.assignment_head(pair_feat).squeeze(-1)
+            logits = logits - distance_logit_weight * dists / temperature + self.logit.view(1, -1)
         assign = F.softmax(logits, dim=-1)
-        return normals, offsets, dists, assign
+        return normals, offsets, dists, assign, logits
 
 
 def entropy(assign, eps=1e-8):
@@ -80,23 +102,49 @@ def coverage_loss(assign, min_coverage):
     return F.relu(min_coverage - coverage).mean(), coverage
 
 
+def balance_loss(assign):
+    coverage = assign.mean(dim=0)
+    target = torch.full_like(coverage, 1.0 / max(1, coverage.numel()))
+    return F.smooth_l1_loss(coverage, target), coverage
+
+
+def confidence_separation_loss(assign, margin=0.12):
+    if assign.shape[1] <= 1:
+        return assign.sum() * 0.0
+    top2 = torch.topk(assign, k=2, dim=-1).values
+    return F.relu(margin - (top2[:, 0] - top2[:, 1])).mean()
+
+
 def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    points_world, colors, points_norm, center, scale = load_npz(args.input_npz, args.max_points, args.seed)
+    points_world, colors, points_norm, point_features_np, center, scale = load_npz(args.input_npz, args.max_points, args.seed)
     points = torch.from_numpy(points_norm).to(device)
-    model = PlaneTokenDecomposition(args.num_planes).to(device)
+    point_features = torch.from_numpy(point_features_np).to(device)
+    model = PlaneTokenDecomposition(
+        args.num_planes,
+        point_feature_dim=point_features.shape[1],
+        hidden_dim=args.assignment_hidden_dim,
+        assignment_mode=args.assignment_mode,
+    ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     history = []
     best = None
     for step in range(1, args.steps + 1):
         temperature = max(args.min_temperature, args.temperature * (args.temperature_decay ** step))
-        normals, offsets, dists, assign = model(points, temperature)
+        normals, offsets, dists, assign, logits = model(
+            points,
+            point_features,
+            temperature,
+            args.distance_logit_weight,
+        )
         soft_dist = (assign * dists).sum(dim=-1).mean()
         min_dist = dists.min(dim=-1).values.mean()
         ent = entropy(assign).mean()
         div = diversity_loss(normals, offsets, args.diversity_normal_margin, args.diversity_offset_margin)
         cov_loss, coverage = coverage_loss(assign, args.min_coverage)
+        bal_loss, balanced_coverage = balance_loss(assign)
+        sep_loss = confidence_separation_loss(assign, args.assignment_margin)
         confidence = 1.0 - entropy(assign) / np.log(args.num_planes)
         confident_fit = (confidence.detach() * dists.min(dim=-1).values).mean()
         loss = (
@@ -105,6 +153,8 @@ def train(args):
             + args.entropy_weight * ent
             + args.diversity_weight * div
             + args.coverage_weight * cov_loss
+            + args.balance_weight * bal_loss
+            + args.assignment_margin_weight * sep_loss
             + args.confident_fit_weight * confident_fit
         )
         optimizer.zero_grad(set_to_none=True)
@@ -119,6 +169,8 @@ def train(args):
             "entropy": float(ent.detach().cpu()),
             "diversity": float(div.detach().cpu()),
             "coverage_loss": float(cov_loss.detach().cpu()),
+            "balance_loss": float(bal_loss.detach().cpu()),
+            "assignment_margin_loss": float(sep_loss.detach().cpu()),
             "confidence": float(confidence.mean().detach().cpu()),
             "temperature": float(temperature),
             "coverage": [float(x) for x in coverage.detach().cpu()],
@@ -131,11 +183,16 @@ def train(args):
             print(
                 f"step={step:04d} loss={row['loss']:.5f} fit={row['soft_fit']:.5f} "
                 f"hard={row['hard_fit']:.5f} ent={row['entropy']:.4f} "
-                f"conf={row['confidence']:.3f} active={active}/{args.num_planes}"
+                f"bal={row['balance_loss']:.4f} conf={row['confidence']:.3f} active={active}/{args.num_planes}"
             )
 
     with torch.no_grad():
-        normals, offsets_norm, dists, assign = model(points, args.min_temperature)
+        normals, offsets_norm, dists, assign, logits = model(
+            points,
+            point_features,
+            args.min_temperature,
+            args.distance_logit_weight,
+        )
         hard_assign = assign.argmax(dim=-1)
         coverage = torch.stack([(hard_assign == i).float().mean() for i in range(args.num_planes)])
         fit_per_plane = []
@@ -177,6 +234,7 @@ def train(args):
         "input_npz": args.input_npz,
         "num_points_used": int(len(points_world)),
         "num_planes": int(args.num_planes),
+        "assignment_mode": args.assignment_mode,
         "center": [float(x) for x in center],
         "scale": float(scale),
         "best": best,
@@ -209,6 +267,20 @@ def main():
     parser.add_argument("--steps", type=int, default=1500)
     parser.add_argument("--lr", type=float, default=0.03)
     parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument(
+        "--assignment_mode",
+        type=str,
+        default="learned",
+        choices=["learned", "distance"],
+        help="learned uses an MLP assignment head; distance keeps the earlier distance-softmax baseline.",
+    )
+    parser.add_argument("--assignment_hidden_dim", type=int, default=128)
+    parser.add_argument(
+        "--distance_logit_weight",
+        type=float,
+        default=0.35,
+        help="Geometric distance bias added to learned assignment logits.",
+    )
     parser.add_argument("--temperature", type=float, default=0.05)
     parser.add_argument("--temperature_decay", type=float, default=0.999)
     parser.add_argument("--min_temperature", type=float, default=0.012)
@@ -217,8 +289,11 @@ def main():
     parser.add_argument("--entropy_weight", type=float, default=0.015)
     parser.add_argument("--diversity_weight", type=float, default=0.04)
     parser.add_argument("--coverage_weight", type=float, default=0.2)
+    parser.add_argument("--balance_weight", type=float, default=0.08)
+    parser.add_argument("--assignment_margin_weight", type=float, default=0.02)
     parser.add_argument("--confident_fit_weight", type=float, default=0.05)
     parser.add_argument("--min_coverage", type=float, default=0.025)
+    parser.add_argument("--assignment_margin", type=float, default=0.12)
     parser.add_argument("--diversity_normal_margin", type=float, default=0.18)
     parser.add_argument("--diversity_offset_margin", type=float, default=0.04)
     parser.add_argument("--log_every", type=int, default=100)

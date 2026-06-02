@@ -482,6 +482,47 @@ largest learned plane moved points: 58773 / 80000
 
 但这版还有明显问题：largest token 覆盖约 73% 点，一个 token 只有约 2.4% 点，说明 learned planes 有不均衡/塌缩倾向。下一步要加强 coverage/diversity，或者引入 plane-token initialization、local smoothness、multi-sample training。
 
+后续已经做了一个 v2 assignment-head 版本：
+
+```text
+/data/zhucy23u/logs/learned_plane_tokens_unsup_v2_assign_head/val_000035_learned_plane_tokens.json
+/data/zhucy23u/logs/learned_plane_tokens_unsup_v2_assign_head/val_000035_learned_plane_tokens_assignment.npz
+/data/zhucy23u/logs/learned_plane_tokens_unsup_v2_assign_head/val_000035_learned_plane_token_edit_comparison.html
+```
+
+v2 改动：
+
+```text
+新增 point assignment MLP
+输入每点 xyz/rgb/radius + plane normal/offset/distance
+输出每点到每个 plane token 的 assignment logits
+保留 distance logit 作为几何 bias
+加强 coverage/balance/assignment margin
+```
+
+v2 在 `val_000035` 上的结果：
+
+```text
+final loss: 0.0131
+soft fit: 0.0086
+assignment confidence: 0.998
+largest learned plane moved points: 37324 / 80000
+```
+
+覆盖比例从 v1 的：
+
+```text
+0.7347, 0.1980, 0.0435, 0.0239
+```
+
+改善为 v2 的：
+
+```text
+0.4666, 0.2406, 0.1706, 0.1223
+```
+
+这说明 assignment-head 版本牺牲了一点 fit，但明显缓解了 token collapse，更接近“头自己学出可分离平面”的方向。下一步应该继续加入 local smoothness 和多样本训练。
+
 ### `make_learned_plane_token_comparison.py`
 
 用途：
