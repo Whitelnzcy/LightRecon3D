@@ -38,6 +38,7 @@ class LightReconModel(nn.Module):
         line_hidden_dim=256,
         plane_hidden_dim=256,
         plane_embed_dim=16,
+        plane_param_hidden_dim=256,
         num_planes=None,  # kept for compatibility; no longer used
     ):
         super().__init__()
@@ -73,6 +74,56 @@ class LightReconModel(nn.Module):
             nn.GroupNorm(num_groups=8, num_channels=plane_hidden_dim),
             nn.GELU(),
             nn.Conv2d(plane_hidden_dim, plane_embed_dim, kernel_size=1),
+        )
+
+        # -------------------------
+        # Plane parameter head
+        # output: [B, 4, H, W]
+        #
+        # channels:
+        #   0:3 -> plane normal direction, normalized in the loss/eval code
+        #   3   -> normalized plane offset
+        #
+        # This head is for the new parameterized-structure direction. It is
+        # intentionally separate from the older plane embedding head so old
+        # checkpoints can still load with strict=False in exploratory scripts.
+        # -------------------------
+        self.plane_param_head = nn.Sequential(
+            nn.Conv2d(hidden_dim, plane_param_hidden_dim, kernel_size=3, padding=1),
+            nn.GroupNorm(num_groups=8, num_channels=plane_param_hidden_dim),
+            nn.GELU(),
+            nn.Conv2d(plane_param_hidden_dim, plane_param_hidden_dim, kernel_size=3, padding=1),
+            nn.GroupNorm(num_groups=8, num_channels=plane_param_hidden_dim),
+            nn.GELU(),
+            nn.Conv2d(plane_param_hidden_dim, 4, kernel_size=1),
+        )
+
+        self.plane_token_param_head = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, plane_param_hidden_dim),
+            nn.GELU(),
+            nn.Linear(plane_param_hidden_dim, plane_param_hidden_dim),
+            nn.GELU(),
+            nn.Linear(plane_param_hidden_dim, 4),
+        )
+
+        geom_token_dim = hidden_dim + 10
+        self.geom_plane_token_param_head = nn.Sequential(
+            nn.LayerNorm(geom_token_dim),
+            nn.Linear(geom_token_dim, plane_param_hidden_dim),
+            nn.GELU(),
+            nn.Linear(plane_param_hidden_dim, plane_param_hidden_dim),
+            nn.GELU(),
+            nn.Linear(plane_param_hidden_dim, 4),
+        )
+
+        self.geom_plane_token_conf_head = nn.Sequential(
+            nn.LayerNorm(geom_token_dim),
+            nn.Linear(geom_token_dim, plane_param_hidden_dim),
+            nn.GELU(),
+            nn.Linear(plane_param_hidden_dim, plane_param_hidden_dim),
+            nn.GELU(),
+            nn.Linear(plane_param_hidden_dim, 5),
         )
 
     def _get_dec_features(self, res):
@@ -150,6 +201,7 @@ class LightReconModel(nn.Module):
 
         pred_line_lowres = self.line_head(feat_cnn)
         pred_plane_lowres = self.plane_head(feat_cnn)
+        pred_plane_params_lowres = self.plane_param_head(feat_cnn)
 
         pred_line = F.interpolate(
             pred_line_lowres,
@@ -165,6 +217,13 @@ class LightReconModel(nn.Module):
             align_corners=False,
         )
 
+        pred_plane_params = F.interpolate(
+            pred_plane_params_lowres,
+            size=(H_img, W_img),
+            mode="bilinear",
+            align_corners=False,
+        )
+
         res = dict(res)
 
         res["pred_line"] = pred_line
@@ -173,6 +232,9 @@ class LightReconModel(nn.Module):
         res["pred_plane"] = pred_plane
         res["pred_plane_embedding"] = pred_plane
         res["pred_plane_lowres"] = pred_plane_lowres
+        res["pred_plane_params"] = pred_plane_params
+        res["pred_plane_params_lowres"] = pred_plane_params_lowres
+        res["dec_feature_map"] = feat_cnn
 
         return res
 
