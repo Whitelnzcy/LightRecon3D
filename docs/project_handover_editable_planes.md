@@ -158,6 +158,36 @@ full_pointcloud_plane_edit_summary.json
 - 把早期交互 HTML 转成更适合汇报的页面。
 - 这个不是当前最关键脚本。当前更推荐看 `make_full_pointcloud_edit_comparison.py` 输出的 before/after HTML。
 
+### `train_pseudo_plane_head_from_npz.py`
+
+用途：
+
+- 这是从后处理走向可学习 primitive head 的第一版最小实验。
+- 输入当前 RANSAC-like 后处理生成的完整点云 `.npz`。
+- 每个点的输入是：
+
+  ```text
+  normalized xyz + rgb
+  ```
+
+- 伪标签来自 `.npz` 中的：
+
+  ```text
+  point_plane_ids
+  plane_normals
+  plane_offsets
+  ```
+
+- 训练一个小 MLP head，让它预测：
+
+  ```text
+  per-point plane normal
+  per-point plane offset
+  valid/confidence
+  ```
+
+注意：这还不是最终的 DUSt3R/MASt3R feature head，只是为了确认“RANSAC 后处理结果能否作为 pseudo label 训练一个 plane primitive head”。
+
 ## 3. 当前已经跑出的结果
 
 服务器汇总文件：
@@ -181,6 +211,33 @@ before/after HTML：
 /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/batch_summary/val_000027_full_pointcloud_edit_comparison.html
 /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/batch_summary/val_000028_full_pointcloud_edit_comparison.html
 ```
+
+第一版 pseudo plane head 训练结果：
+
+```text
+/data/zhucy23u/checkpoints/lightrecon_param/pseudo_plane_head_npz_v1/best_pseudo_plane_head.pt
+/data/zhucy23u/checkpoints/lightrecon_param/pseudo_plane_head_npz_v1/pseudo_plane_head_training_summary.json
+```
+
+训练设置：
+
+```text
+输入样本: val_000026 到 val_000040 的 15 个完整点云 npz
+训练/验证: 12 / 3
+输入: 每点 normalized xyz + rgb
+监督: RANSAC-like plane normal / offset / assignment 伪标签
+```
+
+当前 best epoch 是 35，验证指标大概是：
+
+```text
+val loss: 0.3539
+normal angle error: 44.95 deg
+offset MAE: 0.1686
+plane distance loss: 0.0861
+```
+
+这个结果说明 head 已经能开始拟合伪标签，但还不够好，尤其 normal 误差仍然偏大。它只能算学习头起步实验，不能作为最终方法。下一步应该把输入从简单 xyz/rgb 改成 DUSt3R/MASt3R decoder feature 或点云局部几何特征，并引入 plane-level pooling / assignment head。
 
 编辑后的完整 PLY：
 
@@ -388,3 +445,11 @@ oracle_plane_refine.py
 3. 跑一个新样本，例如 `sample_idx 29`。
 4. 改 `--threshold` 和 `--edit_delta`，观察平面数量、绑定点数、编辑效果变化。
 5. 再考虑把 learned plane head 接回来。
+
+如果要继续学习头，推荐顺序是：
+
+1. 先复现 `train_pseudo_plane_head_from_npz.py` 的小 MLP 结果。
+2. 加入局部几何特征，例如邻域 PCA normal、curvature、点到候选平面的距离。
+3. 将输入换成 DUSt3R decoder feature + pointmap 坐标。
+4. 从 per-point 参数预测升级到 plane-token 参数预测。
+5. 再加 line head，形成 plane/line primitive 联合预测。
