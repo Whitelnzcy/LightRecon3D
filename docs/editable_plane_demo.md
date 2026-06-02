@@ -88,6 +88,31 @@ python apply_editable_plane_offsets.py \
   --edit 2:0.25
 ```
 
+## Batch Summarize Editable Planes
+
+For checking whether the result is really a full-pointcloud editable structure, use the batch summary script on one or more exported `.npz` files:
+
+```bash
+python summarize_full_pointcloud_plane_edits.py \
+  --input_dir /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz \
+  --output_dir /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/batch_summary \
+  --export_edits \
+  --edit_plane largest \
+  --edit_delta 0.25
+```
+
+This writes:
+
+```text
+full_pointcloud_plane_edit_summary.md
+full_pointcloud_plane_edit_summary.csv
+full_pointcloud_plane_edit_summary.json
+*_full_points.ply
+*_report.json
+```
+
+The summary is the main inspection artifact: it lists the complete point count, major plane equations, assigned point counts, and the exported full-pointcloud edit for each sample.
+
 ## Current Sample 26 Evidence
 
 For `val` sample `26`:
