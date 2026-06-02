@@ -523,6 +523,62 @@ largest learned plane moved points: 37324 / 80000
 
 这说明 assignment-head 版本牺牲了一点 fit，但明显缓解了 token collapse，更接近“头自己学出可分离平面”的方向。下一步应该继续加入 local smoothness 和多样本训练。
 
+### `train_multisample_unsupervised_plane_tokens.py`
+
+用途：
+
+- 多样本版 unsupervised plane-token decomposition。
+- 每个样本有自己的 `K` 个 plane tokens，输出该样本的平面方程。
+- 多个样本共享同一个 point assignment MLP，学习通用的点到 plane token 分配规则。
+- 不使用 RANSAC 平面作为监督。
+
+当前已在 `val_000026` 到 `val_000040` 的 15 个样本上训练过：
+
+```text
+/data/zhucy23u/logs/learned_plane_tokens_multisample_v1
+```
+
+训练设置：
+
+```text
+num_samples: 15
+num_planes: 4
+points per sample: 30000
+steps: 1400
+shared module: assignment MLP
+sample-specific module: plane tokens normal/offset/logit
+```
+
+本地已拉回：
+
+```text
+C:\Users\admin\Documents\Codex\2026-06-01\mobaxterm\outputs\learned_plane_tokens_multisample_v1
+```
+
+主要报告：
+
+```text
+multisample_learned_plane_tokens_report.md
+multisample_learned_plane_tokens_summary.json
+```
+
+从统计看，多样本版在一些样本上 token 覆盖比较均衡：
+
+```text
+val_000026: ratios 0.265, 0.246, 0.252, 0.237
+val_000037: ratios 0.315, 0.207, 0.235, 0.242
+val_000036: ratios 0.250, 0.325, 0.269, 0.156
+```
+
+但部分样本仍有 token 偏大：
+
+```text
+val_000035: largest ratio 0.681
+val_000038: largest ratio 0.636
+```
+
+结论：多样本训练已经能让一部分样本学出更均衡的可分离 plane tokens，但仍需要 local smoothness、局部几何特征、以及更好的 coverage/diversity 设计来避免个别样本的大 token 吞并问题。
+
 ### `make_learned_plane_token_comparison.py`
 
 用途：
