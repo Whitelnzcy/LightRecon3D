@@ -607,6 +607,87 @@ val_000038: largest ratio 0.636
 
 结论：多样本训练已经能让一部分样本学出更均衡的可分离 plane tokens，但仍需要 local smoothness、局部几何特征、以及更好的 coverage/diversity 设计来避免个别样本的大 token 吞并问题。
 
+### `evaluate_learned_plane_token_params.py`
+
+用途：
+
+- 评价 learned plane-token 输出的参数方程质量。
+- 不只看 HTML 观感，而是量化：
+
+  ```text
+  assigned_point_count / assigned_ratio
+  mean residual
+  median residual
+  p90 residual
+  trimmed mean residual
+  inlier_ratio@0.02
+  inlier_ratio@0.05
+  plane normal pair angle relation
+  ```
+
+运行示例：
+
+```bash
+/data/zhucy23u/conda_envs/lightrecon/bin/python evaluate_learned_plane_token_params.py \
+  --input_dir /data/zhucy23u/logs/learned_plane_tokens_multisample_v1 \
+  --output_dir /data/zhucy23u/logs/learned_plane_tokens_multisample_v1/eval \
+  --pattern "*_multisample_learned_plane_tokens.json" \
+  --trim_ratio 0.8 \
+  --thresholds 0.02 0.05
+```
+
+输出：
+
+```text
+learned_plane_token_param_eval.csv
+learned_plane_token_normal_relations.csv
+learned_plane_token_param_eval_summary.md
+learned_plane_token_param_eval_summary.json
+```
+
+### 多样本 v2：去掉强均衡，改 anti-collapse + trimmed fit
+
+用户指出真实大墙/地面本来就应该对应大 token，所以不应该强迫每个 token 覆盖接近 `1/K`。这是合理的。
+
+因此 v2 做了：
+
+```text
+去掉 balance loss: 不再强制每个 token 覆盖 1/K
+加入 dead-token loss: 只防止 token 完全空掉
+加入 trimmed fit: 用 residual 最小的 80% 点优化点到平面距离
+```
+
+服务器结果：
+
+```text
+/data/zhucy23u/logs/learned_plane_tokens_multisample_v2_trimfit
+```
+
+本地结果：
+
+```text
+C:\Users\admin\Documents\Codex\2026-06-01\mobaxterm\outputs\learned_plane_tokens_multisample_v2_trimfit
+```
+
+v1/v2 指标对比：
+
+```text
+v1 mean trimmed residual: 0.01019
+v1 mean inlier@0.05:      0.9499
+v1 mean coverage spread:  0.2844
+
+v2 mean trimmed residual: 0.01168
+v2 mean inlier@0.05:      0.9202
+v2 mean coverage spread:  0.4123
+```
+
+解释：
+
+```text
+v2 更允许真实大面对应大 token，但整体 residual 稍差，token spread 变大。
+这说明“去强均衡”方向是合理的，但还需要 local smoothness / RGB feature consistency / structure prior，避免大 token 吞并非同一真实平面的区域。
+```
+
 ### `make_learned_plane_token_comparison.py`
 
 用途：

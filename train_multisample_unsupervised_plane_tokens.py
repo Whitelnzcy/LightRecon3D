@@ -102,15 +102,21 @@ def diversity_loss(normals, offsets, margin_normal=0.18, margin_offset=0.04):
     return F.relu(sim - (1.0 - margin_normal)).mean() + F.relu(margin_offset - off_dist).mean()
 
 
-def balance_loss(assign):
-    coverage = assign.mean(dim=0)
-    target = torch.full_like(coverage, 1.0 / max(1, coverage.numel()))
-    return F.smooth_l1_loss(coverage, target), coverage
-
-
 def coverage_loss(assign, min_coverage):
     coverage = assign.mean(dim=0)
     return F.relu(min_coverage - coverage).mean(), coverage
+
+
+def dead_token_loss(assign, min_coverage):
+    coverage = assign.mean(dim=0)
+    return F.relu(min_coverage - coverage).pow(2).mean(), coverage
+
+
+def trimmed_mean(values, keep_ratio):
+    if keep_ratio >= 1.0:
+        return values.mean()
+    keep = max(1, int(round(values.numel() * keep_ratio)))
+    return torch.topk(values.reshape(-1), k=keep, largest=False).values.mean()
 
 
 def confidence_separation_loss(assign, margin):
@@ -128,12 +134,13 @@ def compute_one_loss(model, sample_idx, points, features, args, temperature):
         temperature,
         args.distance_logit_weight,
     )
-    soft_fit = (assign * dists).sum(dim=-1).mean()
+    soft_residual = (assign * dists).sum(dim=-1)
+    soft_fit = trimmed_mean(soft_residual, args.trimmed_fit_ratio)
     hard_fit = dists.min(dim=-1).values.mean()
     ent = entropy(assign).mean()
     div = diversity_loss(normals, offsets, args.diversity_normal_margin, args.diversity_offset_margin)
     cov_loss, coverage = coverage_loss(assign, args.min_coverage)
-    bal_loss, _ = balance_loss(assign)
+    dead_loss, _ = dead_token_loss(assign, args.dead_token_min_coverage)
     sep_loss = confidence_separation_loss(assign, args.assignment_margin)
     confidence = 1.0 - entropy(assign) / np.log(args.num_planes)
     confident_fit = (confidence.detach() * dists.min(dim=-1).values).mean()
@@ -143,7 +150,7 @@ def compute_one_loss(model, sample_idx, points, features, args, temperature):
         + args.entropy_weight * ent
         + args.diversity_weight * div
         + args.coverage_weight * cov_loss
-        + args.balance_weight * bal_loss
+        + args.dead_token_weight * dead_loss
         + args.assignment_margin_weight * sep_loss
         + args.confident_fit_weight * confident_fit
     )
@@ -154,7 +161,7 @@ def compute_one_loss(model, sample_idx, points, features, args, temperature):
         "entropy": ent.detach(),
         "diversity": div.detach(),
         "coverage_loss": cov_loss.detach(),
-        "balance_loss": bal_loss.detach(),
+        "dead_token_loss": dead_loss.detach(),
         "confidence": confidence.mean().detach(),
         "coverage": coverage.detach(),
     }
@@ -242,11 +249,18 @@ def main():
     parser.add_argument("--temperature_decay", type=float, default=0.999)
     parser.add_argument("--min_temperature", type=float, default=0.012)
     parser.add_argument("--fit_weight", type=float, default=1.0)
+    parser.add_argument(
+        "--trimmed_fit_ratio",
+        type=float,
+        default=0.8,
+        help="Use the lowest residual fraction for robust point-to-plane fit.",
+    )
     parser.add_argument("--hard_fit_weight", type=float, default=0.2)
     parser.add_argument("--entropy_weight", type=float, default=0.01)
     parser.add_argument("--diversity_weight", type=float, default=0.04)
     parser.add_argument("--coverage_weight", type=float, default=0.35)
-    parser.add_argument("--balance_weight", type=float, default=0.16)
+    parser.add_argument("--dead_token_weight", type=float, default=0.5)
+    parser.add_argument("--dead_token_min_coverage", type=float, default=0.02)
     parser.add_argument("--assignment_margin_weight", type=float, default=0.03)
     parser.add_argument("--confident_fit_weight", type=float, default=0.05)
     parser.add_argument("--min_coverage", type=float, default=0.08)
@@ -303,7 +317,7 @@ def main():
             "hard_fit": float(torch.stack([s["hard_fit"] for s in stat_rows]).mean().cpu()),
             "entropy": float(torch.stack([s["entropy"] for s in stat_rows]).mean().cpu()),
             "confidence": float(torch.stack([s["confidence"] for s in stat_rows]).mean().cpu()),
-            "balance_loss": float(torch.stack([s["balance_loss"] for s in stat_rows]).mean().cpu()),
+            "dead_token_loss": float(torch.stack([s["dead_token_loss"] for s in stat_rows]).mean().cpu()),
             "temperature": float(temperature),
         }
         history.append(row)
@@ -311,7 +325,7 @@ def main():
             print(
                 f"step={step:04d} loss={row['loss']:.5f} fit={row['soft_fit']:.5f} "
                 f"hard={row['hard_fit']:.5f} ent={row['entropy']:.4f} "
-                f"bal={row['balance_loss']:.4f} conf={row['confidence']:.3f}"
+                f"dead={row['dead_token_loss']:.4f} conf={row['confidence']:.3f}"
             )
 
     output_dir = Path(args.output_dir)
