@@ -71,6 +71,7 @@ def evaluate_file(json_path, thresholds, trim_ratio):
     offsets = raw["plane_offsets"].astype(np.float32)
     sample = Path(json_path).name
     sample = sample.replace("_multisample_learned_plane_tokens.json", "")
+    sample = sample.replace("_amortized_plane_tokens.json", "")
     sample = sample.replace("_learned_plane_tokens.json", "")
     rows = []
     for plane_id, (normal, offset) in enumerate(zip(normals, offsets)):

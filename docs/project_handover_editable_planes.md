@@ -730,6 +730,70 @@ v3b_smooth02:trim=0.01258, inlier@0.05=0.9027, spread=0.4903, empty_token_sample
 4. 后续再加入结构关系指标，例如平行/垂直/共面关系，以及可编辑后点云一致性。
 ```
 
+### 阶段路线修正：从 per-sample tokens 到 amortized head
+
+当前研究线需要按阶段推进，不能直接把 stage4 的结构约束当成主方法：
+
+```text
+Stage 1: per-sample plane tokens + shared assignment MLP
+  作用：验证无监督 plane decomposition 是否能跑通。
+  局限：每个样本的 plane tokens 是单独优化出来的，更像 test-time fitting，不是真正的预测头。
+
+Stage 2: amortized prediction
+  作用：输入点云/feature，由网络直接预测该样本的 plane tokens。
+  关键区别：plane tokens 不再是 per-sample nn.Parameter，而是 head(features) 的输出。
+
+Stage 3: weak / auxiliary supervision
+  作用：Structured3D GT plane、RANSAC 高置信候选、trimmed SVD refinement 只作为辅助约束。
+  注意：这些不是唯一 teacher，不能把方法退回纯 RANSAC 蒸馏。
+
+Stage 4: structure constraints
+  作用：local smoothness、RGB/feature consistency、parallel / orthogonal / Manhattan、line-plane consistency。
+  注意：这些是提升结构合理性的约束，不是 stage2 的替代品。
+```
+
+已新增 stage2 baseline 脚本：
+
+```text
+train_amortized_plane_tokens.py
+```
+
+服务器结果：
+
+```text
+/data/zhucy23u/logs/amortized_plane_tokens_stage2_v1
+```
+
+本地结果：
+
+```text
+C:\Users\admin\Documents\Codex\2026-06-01\mobaxterm\outputs\amortized_plane_tokens_stage2_v1
+```
+
+stage2 baseline 指标：
+
+```text
+stage2_amortized_v1: trim=0.01420, inlier@0.05=0.8769, spread=0.3422, empty_token_samples=0/15
+val_000037: trimmed residual=0.00701, spread=0.6234
+```
+
+和 stage1 对比：
+
+```text
+stage1_v1_balance:    trim=0.01019, inlier@0.05=0.9499, spread=0.2844, empty=0/15
+stage1_v2_trimfit:    trim=0.01168, inlier@0.05=0.9202, spread=0.4123, empty=0/15
+stage1_v3b_smooth02:  trim=0.01258, inlier@0.05=0.9027, spread=0.4903, empty=2/15
+stage2_amortized_v1:  trim=0.01420, inlier@0.05=0.8769, spread=0.3422, empty=0/15
+```
+
+解释：
+
+```text
+stage2 residual 比 stage1 略差是正常的，因为它不再给每个样本单独优化自由 plane parameters。
+但它更接近真正要写进论文/项目里的 primitive head：同一套网络从点云特征直接预测 plane equations。
+下一步应优先提升 stage2，而不是继续堆 stage1 的 per-sample fitting。
+```
+
 ### `make_learned_plane_token_comparison.py`
 
 用途：
