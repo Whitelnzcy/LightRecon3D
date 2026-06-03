@@ -408,6 +408,34 @@ val_0000XX_full_pointcloud_edit_comparison.html
 *_full_points.ply
 ```
 
+还必须同时看原始 RGB。只看 3D 点云颜色分块不够，因为 learned token 可能只是把点云切成几块几何区域，并不一定对应真实墙面/地面/桌面。
+
+当前已经导出 `val_000026` 到 `val_000040` 的 RGB：
+
+```text
+/data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/rgb_context
+C:\Users\admin\Documents\Codex\2026-06-01\mobaxterm\outputs\rgb_context
+```
+
+例如：
+
+```text
+val_000037_rgb_resized.png
+val_000037_rgb_context.json
+```
+
+`*_rgb_context.json` 里记录了对应 Structured3D 的原始 `rgb_rawlight.png` 和 `layout.json` 路径。
+
+可以用脚本重新导出 RGB：
+
+```bash
+/data/zhucy23u/conda_envs/lightrecon/bin/python export_sample_rgb_context.py \
+  --root_dir /data/zhucy23u/datasets/Structured3D \
+  --split val \
+  --sample_indices 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 \
+  --output_dir /data/zhucy23u/logs/full_pointcloud_editable_planes_full_npz/rgb_context
+```
+
 ## 7. 当前还没完成的研究部分
 
 当前这条链路主要是：
