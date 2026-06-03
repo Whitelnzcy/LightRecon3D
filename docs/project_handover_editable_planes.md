@@ -688,6 +688,48 @@ v2 更允许真实大面对应大 token，但整体 residual 稍差，token spre
 这说明“去强均衡”方向是合理的，但还需要 local smoothness / RGB feature consistency / structure prior，避免大 token 吞并非同一真实平面的区域。
 ```
 
+### 多样本 v3：加入局部 RGB/空间一致性
+
+目标：回应 `val_000037` 这类可视化中出现的斜切片问题。v2 去掉强均衡以后允许大墙/地面对应大 token，但仅靠点到平面的 residual 容易把空间上不连续的点切成数学上可拟合、结构上不合理的片。v3 在不恢复强均衡的前提下加入 local smoothness：
+
+```text
+smooth pair: 在采样点中为每个 anchor 随机找候选邻居，并选空间最近点
+smooth weight: exp(-xyz_dist^2 / sigma_xyz^2 - rgb_dist^2 / sigma_rgb^2)
+smooth loss: 让局部空间/RGB 相近点的 assignment 分布更接近
+```
+
+服务器结果：
+
+```text
+/data/zhucy23u/logs/learned_plane_tokens_multisample_v3_smooth
+/data/zhucy23u/logs/learned_plane_tokens_multisample_v3b_smooth02
+```
+
+本地结果：
+
+```text
+C:\Users\admin\Documents\Codex\2026-06-01\mobaxterm\outputs\learned_plane_tokens_multisample_v3_smooth
+C:\Users\admin\Documents\Codex\2026-06-01\mobaxterm\outputs\learned_plane_tokens_multisample_v3b_smooth02
+```
+
+指标对比：
+
+```text
+v1_balance:   trim=0.01019, inlier@0.05=0.9499, spread=0.2844, empty_token_samples=0/15
+v2_trimfit:   trim=0.01168, inlier@0.05=0.9202, spread=0.4123, empty_token_samples=0/15
+v3_smooth08: trim=0.01405, inlier@0.05=0.8895, spread=0.5309, empty_token_samples=4/15
+v3b_smooth02:trim=0.01258, inlier@0.05=0.9027, spread=0.4903, empty_token_samples=2/15
+```
+
+`val_000037` 单样本上，v3b 的 trimmed residual 从 v2 的 `0.00364` 降到 `0.00247`，说明平面方程拟合更准；但 spread 到 `0.6755`，仍有大 token 吞并问题。因此结论不是“继续加平滑”，而是：
+
+```text
+1. 保留轻量 local smoothness 作为可选项；
+2. 加入 effective token count / empty token 惩罚，防止 token 死亡；
+3. 引入 RGB 图像边界或 DUSt3R decoder feature，使 token 更贴近真实墙面/地面边界；
+4. 后续再加入结构关系指标，例如平行/垂直/共面关系，以及可编辑后点云一致性。
+```
+
 ### `make_learned_plane_token_comparison.py`
 
 用途：

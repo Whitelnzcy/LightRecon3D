@@ -25,7 +25,54 @@ PLANE_COLORS = np.asarray(
 )
 
 
-def sample_case(path, max_points, seed):
+def build_smooth_pairs(
+    points_norm,
+    colors_float,
+    pair_count,
+    candidate_count,
+    xyz_sigma,
+    rgb_sigma,
+    seed,
+):
+    if pair_count <= 0 or len(points_norm) <= 1:
+        return (
+            np.zeros((0,), dtype=np.int64),
+            np.zeros((0,), dtype=np.int64),
+            np.zeros((0,), dtype=np.float32),
+        )
+    rng = np.random.default_rng(seed)
+    n_points = len(points_norm)
+    anchors = rng.integers(0, n_points, size=pair_count, endpoint=False)
+    candidate_count = max(2, min(int(candidate_count), n_points))
+    candidates = rng.integers(0, n_points, size=(pair_count, candidate_count), endpoint=False)
+    same = candidates == anchors[:, None]
+    if same.any():
+        candidates[same] = (candidates[same] + 1) % n_points
+
+    anchor_xyz = points_norm[anchors, None, :]
+    cand_xyz = points_norm[candidates]
+    xyz_dist2 = np.sum((cand_xyz - anchor_xyz) ** 2, axis=-1)
+    nearest = np.argmin(xyz_dist2, axis=1)
+    paired = candidates[np.arange(pair_count), nearest]
+    xyz_dist2 = xyz_dist2[np.arange(pair_count), nearest]
+
+    rgb_dist2 = np.sum((colors_float[paired] - colors_float[anchors]) ** 2, axis=-1)
+    xyz_sigma2 = max(float(xyz_sigma) ** 2, 1e-8)
+    rgb_sigma2 = max(float(rgb_sigma) ** 2, 1e-8)
+    weights = np.exp(-xyz_dist2 / xyz_sigma2 - rgb_dist2 / rgb_sigma2).astype(np.float32)
+    keep = weights > 1e-4
+    return anchors[keep].astype(np.int64), paired[keep].astype(np.int64), weights[keep]
+
+
+def sample_case(
+    path,
+    max_points,
+    seed,
+    smooth_pairs_per_sample=0,
+    smooth_candidates=24,
+    smooth_xyz_sigma=0.06,
+    smooth_rgb_sigma=0.25,
+):
     raw = np.load(path)
     points = raw["points"].astype(np.float32)
     colors = raw["colors"].astype(np.uint8)
@@ -41,6 +88,15 @@ def sample_case(path, max_points, seed):
     colors_float = colors.astype(np.float32) / 255.0
     radius = np.linalg.norm(points_norm, axis=1, keepdims=True).astype(np.float32)
     features = np.concatenate([points_norm, colors_float, radius], axis=1).astype(np.float32)
+    smooth_i, smooth_j, smooth_w = build_smooth_pairs(
+        points_norm,
+        colors_float,
+        smooth_pairs_per_sample,
+        smooth_candidates,
+        smooth_xyz_sigma,
+        smooth_rgb_sigma,
+        seed + 13,
+    )
     return {
         "path": str(path),
         "stem": Path(path).name.replace("_full_pointcloud_editable_planes_data.npz", ""),
@@ -48,6 +104,9 @@ def sample_case(path, max_points, seed):
         "colors": colors,
         "points_norm": points_norm,
         "features": features,
+        "smooth_i": smooth_i,
+        "smooth_j": smooth_j,
+        "smooth_w": smooth_w,
         "center": center[0],
         "scale": scale,
     }
@@ -126,7 +185,14 @@ def confidence_separation_loss(assign, margin):
     return F.relu(margin - (top2[:, 0] - top2[:, 1])).mean()
 
 
-def compute_one_loss(model, sample_idx, points, features, args, temperature):
+def local_smoothness_loss(assign, smooth_i, smooth_j, smooth_w):
+    if smooth_i.numel() == 0:
+        return assign.sum() * 0.0
+    diff = (assign[smooth_i] - assign[smooth_j]).pow(2).sum(dim=-1)
+    return (diff * smooth_w).sum() / smooth_w.sum().clamp_min(1e-6)
+
+
+def compute_one_loss(model, sample_idx, points, features, smooth_i, smooth_j, smooth_w, args, temperature):
     normals, offsets, dists, assign = model.forward_one(
         sample_idx,
         points,
@@ -142,6 +208,7 @@ def compute_one_loss(model, sample_idx, points, features, args, temperature):
     cov_loss, coverage = coverage_loss(assign, args.min_coverage)
     dead_loss, _ = dead_token_loss(assign, args.dead_token_min_coverage)
     sep_loss = confidence_separation_loss(assign, args.assignment_margin)
+    smooth_loss = local_smoothness_loss(assign, smooth_i, smooth_j, smooth_w)
     confidence = 1.0 - entropy(assign) / np.log(args.num_planes)
     confident_fit = (confidence.detach() * dists.min(dim=-1).values).mean()
     loss = (
@@ -152,6 +219,7 @@ def compute_one_loss(model, sample_idx, points, features, args, temperature):
         + args.coverage_weight * cov_loss
         + args.dead_token_weight * dead_loss
         + args.assignment_margin_weight * sep_loss
+        + args.smooth_weight * smooth_loss
         + args.confident_fit_weight * confident_fit
     )
     stats = {
@@ -162,6 +230,7 @@ def compute_one_loss(model, sample_idx, points, features, args, temperature):
         "diversity": div.detach(),
         "coverage_loss": cov_loss.detach(),
         "dead_token_loss": dead_loss.detach(),
+        "smooth_loss": smooth_loss.detach(),
         "confidence": confidence.mean().detach(),
         "coverage": coverage.detach(),
     }
@@ -263,6 +332,16 @@ def main():
     parser.add_argument("--dead_token_min_coverage", type=float, default=0.02)
     parser.add_argument("--assignment_margin_weight", type=float, default=0.03)
     parser.add_argument("--confident_fit_weight", type=float, default=0.05)
+    parser.add_argument(
+        "--smooth_weight",
+        type=float,
+        default=0.0,
+        help="Encourage nearby RGB-consistent points to share plane-token assignments.",
+    )
+    parser.add_argument("--smooth_pairs_per_sample", type=int, default=0)
+    parser.add_argument("--smooth_candidates", type=int, default=24)
+    parser.add_argument("--smooth_xyz_sigma", type=float, default=0.06)
+    parser.add_argument("--smooth_rgb_sigma", type=float, default=0.25)
     parser.add_argument("--min_coverage", type=float, default=0.08)
     parser.add_argument("--assignment_margin", type=float, default=0.12)
     parser.add_argument("--diversity_normal_margin", type=float, default=0.18)
@@ -278,12 +357,26 @@ def main():
         paths = [p for p in paths if args.sample_glob in p.name]
     if not paths:
         raise FileNotFoundError(f"No npz files matched under {args.input_dir}")
-    cases = [sample_case(p, args.max_points_per_sample, args.seed + i * 97) for i, p in enumerate(paths)]
+    cases = [
+        sample_case(
+            p,
+            args.max_points_per_sample,
+            args.seed + i * 97,
+            args.smooth_pairs_per_sample,
+            args.smooth_candidates,
+            args.smooth_xyz_sigma,
+            args.smooth_rgb_sigma,
+        )
+        for i, p in enumerate(paths)
+    ]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tensors = [
         (
             torch.from_numpy(case["points_norm"]).to(device),
             torch.from_numpy(case["features"]).to(device),
+            torch.from_numpy(case["smooth_i"]).to(device),
+            torch.from_numpy(case["smooth_j"]).to(device),
+            torch.from_numpy(case["smooth_w"]).to(device),
         )
         for case in cases
     ]
@@ -302,8 +395,18 @@ def main():
         losses = []
         stat_rows = []
         for sid in sample_ids:
-            points, features = tensors[int(sid)]
-            loss, stats = compute_one_loss(model, int(sid), points, features, args, temperature)
+            points, features, smooth_i, smooth_j, smooth_w = tensors[int(sid)]
+            loss, stats = compute_one_loss(
+                model,
+                int(sid),
+                points,
+                features,
+                smooth_i,
+                smooth_j,
+                smooth_w,
+                args,
+                temperature,
+            )
             losses.append(loss)
             stat_rows.append(stats)
         loss = torch.stack(losses).mean()
@@ -318,6 +421,7 @@ def main():
             "entropy": float(torch.stack([s["entropy"] for s in stat_rows]).mean().cpu()),
             "confidence": float(torch.stack([s["confidence"] for s in stat_rows]).mean().cpu()),
             "dead_token_loss": float(torch.stack([s["dead_token_loss"] for s in stat_rows]).mean().cpu()),
+            "smooth_loss": float(torch.stack([s["smooth_loss"] for s in stat_rows]).mean().cpu()),
             "temperature": float(temperature),
         }
         history.append(row)
@@ -325,7 +429,8 @@ def main():
             print(
                 f"step={step:04d} loss={row['loss']:.5f} fit={row['soft_fit']:.5f} "
                 f"hard={row['hard_fit']:.5f} ent={row['entropy']:.4f} "
-                f"dead={row['dead_token_loss']:.4f} conf={row['confidence']:.3f}"
+                f"dead={row['dead_token_loss']:.4f} smooth={row['smooth_loss']:.4f} "
+                f"conf={row['confidence']:.3f}"
             )
 
     output_dir = Path(args.output_dir)
@@ -339,6 +444,7 @@ def main():
         "num_samples": len(cases),
         "num_planes": args.num_planes,
         "max_points_per_sample": args.max_points_per_sample,
+        "smooth_pairs_per_sample": args.smooth_pairs_per_sample,
         "history": history,
         "exported": exported,
     }
