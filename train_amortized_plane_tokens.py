@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import json
 from pathlib import Path
 
@@ -18,6 +19,53 @@ from train_multisample_unsupervised_plane_tokens import (
     sample_case,
     trimmed_mean,
 )
+
+
+def sample_case_with_aux_planes(path, args, seed):
+    case = sample_case(
+        path,
+        args.max_points_per_sample,
+        seed,
+        args.smooth_pairs_per_sample,
+        args.smooth_candidates,
+        args.smooth_xyz_sigma,
+        args.smooth_rgb_sigma,
+    )
+    raw = np.load(path)
+    if "plane_normals" not in raw or "plane_offsets" not in raw:
+        return case
+
+    normals = raw["plane_normals"].astype(np.float32)
+    offsets = raw["plane_offsets"].astype(np.float32)
+    counts = raw["plane_inlier_counts"].astype(np.float32) if "plane_inlier_counts" in raw else np.ones(len(normals))
+    plane_ids = raw["plane_ids"].astype(np.int32) if "plane_ids" in raw else np.arange(len(normals), dtype=np.int32)
+    order = np.argsort(-counts)[: args.num_planes]
+    normals = normals[order]
+    offsets = offsets[order]
+    plane_ids = plane_ids[order]
+    counts = counts[order]
+
+    offsets_norm = []
+    for n, d_world in zip(normals, offsets):
+        offsets_norm.append((float(d_world) + float(np.dot(n, case["center"]))) / case["scale"])
+    case["aux_plane_normals"] = normals.astype(np.float32)
+    case["aux_plane_offsets_norm"] = np.asarray(offsets_norm, dtype=np.float32)
+    case["aux_plane_ids"] = plane_ids.astype(np.int32)
+    case["aux_plane_counts"] = counts.astype(np.float32)
+
+    if "point_plane_ids" in raw:
+        # Recreate the same subsampling deterministically so pseudo labels align with sampled points.
+        point_ids = raw["point_plane_ids"].astype(np.int32)
+        rng = np.random.default_rng(seed)
+        if args.max_points_per_sample > 0 and len(point_ids) > args.max_points_per_sample:
+            idx = rng.choice(len(point_ids), size=args.max_points_per_sample, replace=False)
+            point_ids = point_ids[idx]
+        remap = {int(pid): i for i, pid in enumerate(plane_ids)}
+        labels = np.full(len(point_ids), -1, dtype=np.int64)
+        for pid, target_idx in remap.items():
+            labels[point_ids == pid] = int(target_idx)
+        case["aux_point_labels"] = labels
+    return case
 
 
 class AmortizedPlaneTokenHead(nn.Module):
@@ -72,7 +120,53 @@ class AmortizedPlaneTokenHead(nn.Module):
         return normals, offsets, dists, assign
 
 
-def compute_one_loss(model, points, features, smooth_i, smooth_j, smooth_w, args, temperature):
+def match_predicted_to_aux_planes(pred_normals, pred_offsets, aux_normals, aux_offsets):
+    if aux_normals.numel() == 0:
+        zero = pred_normals.sum() * 0.0
+        return zero, []
+    k = pred_normals.shape[0]
+    m = min(k, aux_normals.shape[0])
+    aux_normals = aux_normals[:m]
+    aux_offsets = aux_offsets[:m]
+    dot = pred_normals @ aux_normals.t()
+    same_cost = (1.0 - dot.clamp(-1, 1)) + torch.abs(pred_offsets[:, None] - aux_offsets[None, :])
+    flip_cost = (1.0 + dot.clamp(-1, 1)) + torch.abs(pred_offsets[:, None] + aux_offsets[None, :])
+    cost = torch.minimum(same_cost, flip_cost)
+    candidates = []
+    for pred_ids in itertools.permutations(range(k), m):
+        candidates.append(cost[list(pred_ids), torch.arange(m, device=cost.device)].mean())
+    stacked = torch.stack(candidates)
+    best_idx = int(torch.argmin(stacked.detach()).cpu())
+    best_pred_ids = list(itertools.permutations(range(k), m))[best_idx]
+    return stacked[best_idx], [(int(pred_id), int(aux_id)) for aux_id, pred_id in enumerate(best_pred_ids)]
+
+
+def auxiliary_assignment_loss(assign, aux_point_labels, matches):
+    if aux_point_labels.numel() == 0 or not matches:
+        return assign.sum() * 0.0
+    target_to_pred = {target_id: pred_id for pred_id, target_id in matches}
+    labels = torch.full_like(aux_point_labels, -1)
+    for target_id, pred_id in target_to_pred.items():
+        labels[aux_point_labels == target_id] = pred_id
+    valid = labels >= 0
+    if not torch.any(valid):
+        return assign.sum() * 0.0
+    return F.nll_loss(torch.log(assign[valid].clamp_min(1e-8)), labels[valid])
+
+
+def compute_one_loss(
+    model,
+    points,
+    features,
+    smooth_i,
+    smooth_j,
+    smooth_w,
+    aux_normals,
+    aux_offsets,
+    aux_point_labels,
+    args,
+    temperature,
+):
     normals, offsets, dists, assign = model.forward_one(
         points,
         features,
@@ -88,6 +182,8 @@ def compute_one_loss(model, points, features, smooth_i, smooth_j, smooth_w, args
     dead_loss, _ = dead_token_loss(assign, args.dead_token_min_coverage)
     sep_loss = confidence_separation_loss(assign, args.assignment_margin)
     smooth_loss = local_smoothness_loss(assign, smooth_i, smooth_j, smooth_w)
+    aux_param_loss, aux_matches = match_predicted_to_aux_planes(normals, offsets, aux_normals, aux_offsets)
+    aux_assign_loss = auxiliary_assignment_loss(assign, aux_point_labels, aux_matches)
     confidence = 1.0 - entropy(assign) / np.log(args.num_planes)
     confident_fit = (confidence.detach() * dists.min(dim=-1).values).mean()
     loss = (
@@ -99,6 +195,8 @@ def compute_one_loss(model, points, features, smooth_i, smooth_j, smooth_w, args
         + args.dead_token_weight * dead_loss
         + args.assignment_margin_weight * sep_loss
         + args.smooth_weight * smooth_loss
+        + args.aux_plane_weight * aux_param_loss
+        + args.aux_assignment_weight * aux_assign_loss
         + args.confident_fit_weight * confident_fit
     )
     stats = {
@@ -110,6 +208,8 @@ def compute_one_loss(model, points, features, smooth_i, smooth_j, smooth_w, args
         "coverage_loss": cov_loss.detach(),
         "dead_token_loss": dead_loss.detach(),
         "smooth_loss": smooth_loss.detach(),
+        "aux_param_loss": aux_param_loss.detach(),
+        "aux_assignment_loss": aux_assign_loss.detach(),
         "confidence": confidence.mean().detach(),
         "coverage": coverage.detach(),
     }
@@ -204,6 +304,18 @@ def main():
     parser.add_argument("--dead_token_min_coverage", type=float, default=0.02)
     parser.add_argument("--assignment_margin_weight", type=float, default=0.03)
     parser.add_argument("--confident_fit_weight", type=float, default=0.05)
+    parser.add_argument(
+        "--aux_plane_weight",
+        type=float,
+        default=0.0,
+        help="Weakly match predicted planes to high-confidence candidate plane equations.",
+    )
+    parser.add_argument(
+        "--aux_assignment_weight",
+        type=float,
+        default=0.0,
+        help="Weakly align point assignments to candidate plane labels after plane matching.",
+    )
     parser.add_argument("--smooth_weight", type=float, default=0.0)
     parser.add_argument("--smooth_pairs_per_sample", type=int, default=0)
     parser.add_argument("--smooth_candidates", type=int, default=24)
@@ -224,18 +336,7 @@ def main():
         paths = [p for p in paths if args.sample_glob in p.name]
     if not paths:
         raise FileNotFoundError(f"No npz files matched under {args.input_dir}")
-    cases = [
-        sample_case(
-            p,
-            args.max_points_per_sample,
-            args.seed + i * 97,
-            args.smooth_pairs_per_sample,
-            args.smooth_candidates,
-            args.smooth_xyz_sigma,
-            args.smooth_rgb_sigma,
-        )
-        for i, p in enumerate(paths)
-    ]
+    cases = [sample_case_with_aux_planes(p, args, args.seed + i * 97) for i, p in enumerate(paths)]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tensors = [
         (
@@ -244,6 +345,9 @@ def main():
             torch.from_numpy(case["smooth_i"]).to(device),
             torch.from_numpy(case["smooth_j"]).to(device),
             torch.from_numpy(case["smooth_w"]).to(device),
+            torch.from_numpy(case.get("aux_plane_normals", np.zeros((0, 3), dtype=np.float32))).to(device),
+            torch.from_numpy(case.get("aux_plane_offsets_norm", np.zeros((0,), dtype=np.float32))).to(device),
+            torch.from_numpy(case.get("aux_point_labels", np.zeros((0,), dtype=np.int64))).to(device),
         )
         for case in cases
     ]
@@ -262,8 +366,20 @@ def main():
         losses = []
         stat_rows = []
         for sid in sample_ids:
-            points, features, smooth_i, smooth_j, smooth_w = tensors[int(sid)]
-            loss, stats = compute_one_loss(model, points, features, smooth_i, smooth_j, smooth_w, args, temperature)
+            points, features, smooth_i, smooth_j, smooth_w, aux_normals, aux_offsets, aux_point_labels = tensors[int(sid)]
+            loss, stats = compute_one_loss(
+                model,
+                points,
+                features,
+                smooth_i,
+                smooth_j,
+                smooth_w,
+                aux_normals,
+                aux_offsets,
+                aux_point_labels,
+                args,
+                temperature,
+            )
             losses.append(loss)
             stat_rows.append(stats)
         loss = torch.stack(losses).mean()
@@ -279,6 +395,8 @@ def main():
             "confidence": float(torch.stack([s["confidence"] for s in stat_rows]).mean().cpu()),
             "dead_token_loss": float(torch.stack([s["dead_token_loss"] for s in stat_rows]).mean().cpu()),
             "smooth_loss": float(torch.stack([s["smooth_loss"] for s in stat_rows]).mean().cpu()),
+            "aux_param_loss": float(torch.stack([s["aux_param_loss"] for s in stat_rows]).mean().cpu()),
+            "aux_assignment_loss": float(torch.stack([s["aux_assignment_loss"] for s in stat_rows]).mean().cpu()),
             "temperature": float(temperature),
         }
         history.append(row)
@@ -287,6 +405,7 @@ def main():
                 f"step={step:04d} loss={row['loss']:.5f} fit={row['soft_fit']:.5f} "
                 f"hard={row['hard_fit']:.5f} ent={row['entropy']:.4f} "
                 f"dead={row['dead_token_loss']:.4f} smooth={row['smooth_loss']:.4f} "
+                f"aux={row['aux_param_loss']:.4f}/{row['aux_assignment_loss']:.4f} "
                 f"conf={row['confidence']:.3f}"
             )
 
@@ -302,6 +421,8 @@ def main():
         "num_planes": args.num_planes,
         "max_points_per_sample": args.max_points_per_sample,
         "method": "amortized_plane_token_head",
+        "aux_plane_weight": args.aux_plane_weight,
+        "aux_assignment_weight": args.aux_assignment_weight,
         "history": history,
         "exported": exported,
     }
