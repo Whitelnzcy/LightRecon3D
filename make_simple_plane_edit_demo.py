@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -97,13 +98,17 @@ def draw_cloud(draw, panel, points, point_ids, plane_ids, title, edit_plane=None
         draw.text((x1 + 22, y2 - 34), f"Edited plane {edit_plane}: offset changed, moved points shown in pink", fill="#e11d48", font=F_SMALL)
 
 
-def make_demo(sample="val_000026", edit_plane=0):
-    data = np.load(DATA_DIR / f"{sample}_refined_plane_proposals_data.npz")
+def make_demo(input_npz=None, sample="val_000026", edit_plane=None, output_name=None):
+    input_npz = Path(input_npz) if input_npz else DATA_DIR / f"{sample}_refined_plane_proposals_data.npz"
+    data = np.load(input_npz)
     points = data["points"].astype(np.float32)
     point_ids = data["point_plane_ids"].astype(np.int32)
     plane_ids = data["plane_ids"].astype(np.int32)
     normals = data["plane_normals"].astype(np.float32)
     offsets = data["plane_offsets"].astype(np.float32)
+    if edit_plane is None:
+        counts = [(int((point_ids == pid).sum()), int(pid)) for pid in plane_ids]
+        edit_plane = max(counts)[1]
     n = normals[list(plane_ids).index(edit_plane)]
     d = float(offsets[list(plane_ids).index(edit_plane)])
     moved_count = int((point_ids == edit_plane).sum())
@@ -127,11 +132,17 @@ def make_demo(sample="val_000026", edit_plane=0):
     for note in notes:
         draw.text((90, yy), note, fill="#4b5563", font=F_BODY)
         yy += 26
-    out = ASSETS / f"fig7_simple_plane_edit_{sample}.png"
+    out = ASSETS / (output_name or f"fig7_simple_plane_edit_{sample}.png")
     img.save(out, quality=95)
     print(out)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser("Create a simple one-color-per-plane edit demo figure.")
+    parser.add_argument("--input_npz", default=None)
+    parser.add_argument("--sample", default="val_000026")
+    parser.add_argument("--edit_plane", type=int, default=None)
+    parser.add_argument("--output_name", default=None)
+    args = parser.parse_args()
     ASSETS.mkdir(parents=True, exist_ok=True)
-    make_demo()
+    make_demo(args.input_npz, args.sample, args.edit_plane, args.output_name)
