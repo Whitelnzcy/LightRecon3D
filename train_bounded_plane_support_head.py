@@ -22,6 +22,13 @@ class BoundedPlaneSupportHead(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, 1),
         )
+        self.fit_confidence_net = nn.Sequential(
+            nn.Linear(patch_feature_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 1),
+        )
         self.background_logit = nn.Parameter(torch.tensor(0.0))
 
     def forward(self, patch_features, patch_centroids, patch_normals, plane_normals, plane_offsets, support_prior=None):
@@ -36,8 +43,41 @@ class BoundedPlaneSupportHead(nn.Module):
         logits = self.net(pair_feat).squeeze(-1)
         if support_prior is not None:
             logits = logits + support_prior[:, :n_planes]
+        patch_fit_confidence = torch.sigmoid(
+            self.fit_confidence_net(patch_features).squeeze(-1)
+        )
+        fit_confidence = patch_fit_confidence[:, None].expand(n_patches, n_planes)
         logits = torch.cat([logits, self.background_logit.expand(n_patches, 1)], dim=1)
-        return F.softmax(logits, dim=-1), dists
+        return F.softmax(logits, dim=-1), dists, fit_confidence
+
+
+def differentiable_weighted_plane_fit(
+    points,
+    weights,
+    patch_counts=None,
+    eps=1e-6,
+    cov_jitter=1e-6,
+):
+    """Fit K planes from soft patch support using differentiable weighted PCA."""
+    weights = weights.clamp_min(0.0)
+    if patch_counts is not None:
+        weights = weights * patch_counts[:, None].to(dtype=weights.dtype)
+
+    mass = weights.sum(dim=0).clamp_min(eps)
+    centers = (weights.transpose(0, 1) @ points) / mass[:, None]
+    centered = points[:, None, :] - centers[None, :, :]
+    covariance = torch.einsum(
+        "nk,nki,nkj->kij",
+        weights,
+        centered,
+        centered,
+    ) / mass[:, None, None]
+    eye = torch.eye(3, device=points.device, dtype=points.dtype).unsqueeze(0)
+    covariance = covariance + float(cov_jitter) * eye
+    eigvals, eigvecs = torch.linalg.eigh(covariance)
+    normals = F.normalize(eigvecs[:, :, 0], dim=-1)
+    offsets = -(normals * centers).sum(dim=-1)
+    return normals, offsets, centers, eigvals, mass
 
 
 def edge_smoothness_loss(assign, edge_i, edge_j, labels, edge_boundary_conf, line_smooth_suppress=0.6, margin=0.1):
@@ -141,8 +181,16 @@ def compute_loss(model, tensors, args):
         aux_normals,
         aux_offsets,
         support_prior,
+        patch_counts,
     ) = tensors
-    assign, dists = model(patch_features, patch_centroids, patch_normals, aux_normals, aux_offsets, support_prior)
+    assign, dists, fit_confidence = model(
+        patch_features,
+        patch_centroids,
+        patch_normals,
+        aux_normals,
+        aux_offsets,
+        support_prior,
+    )
     teacher_loss = boundary_weighted_patch_ce(
         assign,
         patch_labels,
@@ -170,12 +218,69 @@ def compute_loss(model, tensors, args):
     plane_assign = assign[:, :-1]
     fg = plane_assign.sum(dim=-1).clamp_min(1e-6)
     residual_loss = ((plane_assign * dists).sum(dim=-1) / fg).mean()
+    valid_label = (patch_labels >= 0) & (patch_labels < aux_normals.shape[0])
+    if torch.any(valid_label):
+        valid_ids = torch.nonzero(valid_label, as_tuple=False).flatten()
+        own_ids = patch_labels[valid_label]
+        own_distance = dists[valid_ids, own_ids]
+        own_alignment = torch.abs(
+            (patch_normals[valid_label] * aux_normals[own_ids]).sum(dim=-1)
+        ).clamp(0.0, 1.0)
+        confidence_target = torch.exp(
+            -torch.square(own_distance / max(float(args.fit_confidence_distance_scale), 1e-6))
+        ) * own_alignment.pow(float(args.fit_confidence_normal_power))
+        confidence_prediction = fit_confidence[valid_ids, own_ids]
+        fit_confidence_loss = F.binary_cross_entropy(
+            confidence_prediction.clamp(1e-6, 1.0 - 1e-6),
+            confidence_target.detach(),
+            weight=patch_label_conf[valid_label].clamp_min(0.2),
+        )
+        mean_fit_confidence_target = confidence_target.mean()
+    else:
+        fit_confidence_loss = assign.sum() * 0.0
+        mean_fit_confidence_target = assign.sum().detach() * 0.0
+    fit_weights = plane_assign * fit_confidence
+    (
+        normals_fit,
+        offsets_fit,
+        _,
+        eigvals,
+        plane_mass,
+    ) = differentiable_weighted_plane_fit(
+        patch_centroids,
+        fit_weights,
+        patch_counts=patch_counts if args.use_patch_count_weight else None,
+        cov_jitter=args.cov_jitter,
+    )
+    fitted_residual = torch.abs(patch_centroids @ normals_fit.t() + offsets_fit[None, :])
+    robust_residual = torch.sqrt(
+        fitted_residual.square() + float(args.fit_charbonnier_eps) ** 2
+    )
+    valid_plane = plane_mass > float(args.min_plane_mass)
+    if torch.any(valid_plane):
+        valid_weights = fit_weights[:, valid_plane]
+        diff_fit_loss = (
+            valid_weights * robust_residual[:, valid_plane]
+        ).sum() / valid_weights.sum().clamp_min(1e-6)
+        mean_eig_min = eigvals[valid_plane, 0].mean()
+        mean_eig_gap = (eigvals[valid_plane, 1] - eigvals[valid_plane, 0]).mean()
+    else:
+        diff_fit_loss = assign.sum() * 0.0
+        mean_eig_min = assign.sum().detach() * 0.0
+        mean_eig_gap = assign.sum().detach() * 0.0
+    coverage_loss = F.relu(float(args.min_plane_mass) - plane_mass).mean() / max(
+        float(args.min_plane_mass),
+        1e-6,
+    )
     loss = (
         args.teacher_weight * teacher_loss
         + args.smooth_weight * same_loss
         + args.boundary_weight * boundary_loss
         + args.hard_boundary_weight * hard_boundary_loss
         + args.residual_weight * residual_loss
+        + args.fit_confidence_weight * fit_confidence_loss
+        + args.diff_plane_fit_weight * diff_fit_loss
+        + args.coverage_weight * coverage_loss
     )
     stats = {
         "loss": loss.detach(),
@@ -184,6 +289,14 @@ def compute_loss(model, tensors, args):
         "boundary_loss": boundary_loss.detach(),
         "hard_boundary_loss": hard_boundary_loss.detach(),
         "residual_loss": residual_loss.detach(),
+        "fit_confidence_loss": fit_confidence_loss.detach(),
+        "mean_fit_confidence": fit_confidence.mean().detach(),
+        "mean_fit_confidence_target": mean_fit_confidence_target.detach(),
+        "diff_fit_loss": diff_fit_loss.detach(),
+        "coverage_loss": coverage_loss.detach(),
+        "mean_plane_mass": plane_mass.mean().detach(),
+        "mean_eig_min": mean_eig_min.detach(),
+        "mean_eig_gap": mean_eig_gap.detach(),
         "background_ratio": assign[:, -1].mean().detach(),
     }
     return loss, stats
@@ -199,7 +312,14 @@ def export_case(model, case, output_dir, args, device):
     aux_offsets = torch.from_numpy(aux_offsets_np).to(device)
     support_prior = torch.from_numpy(case["patch_support_prior"]).to(device)
     with torch.no_grad():
-        assign, _ = model(patch_features, patch_centroids, patch_normals, aux_normals, aux_offsets, support_prior)
+        assign, _, fit_confidence = model(
+            patch_features,
+            patch_centroids,
+            patch_normals,
+            aux_normals,
+            aux_offsets,
+            support_prior,
+        )
     patch_assign = assign.argmax(dim=-1).detach().cpu().numpy().astype(np.int32)
     patch_assign[patch_assign >= len(aux_normals_np)] = -1
     if args.boundary_strict_decode:
@@ -217,18 +337,50 @@ def export_case(model, case, output_dir, args, device):
     for patch_id, plane_id in enumerate(patch_assign):
         point_assignment[case["point_to_patch"] == patch_id] = int(plane_id)
 
+    hard_fit_weights = torch.zeros_like(fit_confidence)
+    valid_patch_ids = np.flatnonzero(patch_assign >= 0)
+    if len(valid_patch_ids):
+        valid_patch_ids_t = torch.from_numpy(valid_patch_ids).to(device=device, dtype=torch.long)
+        valid_plane_ids_t = torch.from_numpy(patch_assign[valid_patch_ids]).to(
+            device=device,
+            dtype=torch.long,
+        )
+        hard_fit_weights[valid_patch_ids_t, valid_plane_ids_t] = fit_confidence[
+            valid_patch_ids_t,
+            valid_plane_ids_t,
+        ]
+    with torch.no_grad():
+        fitted_normals_t, fitted_offsets_t, _, _, fitted_mass_t = (
+            differentiable_weighted_plane_fit(
+                patch_centroids,
+                hard_fit_weights,
+                patch_counts=torch.from_numpy(case["patch_counts"]).to(device),
+                cov_jitter=args.cov_jitter,
+            )
+        )
+    fitted_normals_np = fitted_normals_t.cpu().numpy().astype(np.float32)
+    fitted_offsets_np = fitted_offsets_t.cpu().numpy().astype(np.float32)
+    fitted_mass_np = fitted_mass_t.cpu().numpy().astype(np.float32)
+    fit_confidence_np = fit_confidence.cpu().numpy().astype(np.float32)
+
     normals = []
     offsets_norm = []
     planes = []
     for plane_id in range(len(aux_normals_np)):
         mask = point_assignment == plane_id
-        if int(mask.sum()) < args.refit_min_points:
+        enough_support = int(mask.sum()) >= args.refit_min_points
+        enough_fit_mass = fitted_mass_np[plane_id] >= args.refit_min_effective_mass
+        if not (enough_support and enough_fit_mass):
             normals.append(aux_normals_np[plane_id])
             offsets_norm.append(aux_offsets_np[plane_id])
             active = False
             mean_res = None
         else:
-            normal, offset = refit_plane_from_points(case["points_norm"][mask].astype(np.float32), aux_normals_np[plane_id])
+            normal = fitted_normals_np[plane_id]
+            offset = float(fitted_offsets_np[plane_id])
+            if float(np.dot(normal, aux_normals_np[plane_id])) < 0.0:
+                normal = -normal
+                offset = -offset
             normals.append(normal)
             offsets_norm.append(float(offset))
             dist = np.abs(case["points_norm"][mask].astype(np.float32) @ normal + float(offset))
@@ -243,6 +395,12 @@ def export_case(model, case, output_dir, args, device):
                 "assigned_patch_count": int((patch_assign == plane_id).sum()),
                 "assigned_ratio": float(mask.mean()),
                 "mean_abs_distance_normalized": mean_res,
+                "fit_confidence_mean": (
+                    float(fit_confidence_np[patch_assign == plane_id, plane_id].mean())
+                    if np.any(patch_assign == plane_id)
+                    else None
+                ),
+                "fit_effective_mass": float(fitted_mass_np[plane_id]),
                 "active": bool(active),
             }
         )
@@ -288,6 +446,8 @@ def export_case(model, case, output_dir, args, device):
         patch_edge_boundary_conf=case["patch_edge_boundary_conf"].astype(np.float32),
         patch_boundary_neighbor=case["patch_boundary_neighbor"].astype(np.float32),
         patch_support_prior=case["patch_support_prior"].astype(np.float32),
+        patch_fit_confidence=fit_confidence_np.astype(np.float32),
+        patch_fit_weight=hard_fit_weights.cpu().numpy().astype(np.float32),
         plane_normals=normals.astype(np.float32),
         plane_offsets=offsets_world.astype(np.float32),
         plane_offsets_normalized=offsets_norm.astype(np.float32),
@@ -333,6 +493,11 @@ def main():
     parser.add_argument("--patch_pixel_size", type=float, default=0.08)
     parser.add_argument("--patch_voxel_size", type=float, default=0.045)
     parser.add_argument("--min_patch_points", type=int, default=12)
+    parser.add_argument(
+        "--hide_teacher_feature_conf",
+        action="store_true",
+        help="Do not expose GT-derived patch label confidence to the network input.",
+    )
     parser.add_argument("--edge_boundary_normal_gap", type=float, default=0.10)
     parser.add_argument("--support_logit_weight", type=float, default=0.15)
     parser.add_argument("--boundary_support_logit_weight", type=float, default=0.05)
@@ -342,6 +507,11 @@ def main():
     parser.add_argument("--support_max_distance_cells", type=int, default=10)
     parser.add_argument("--support_min_label_conf", type=float, default=0.60)
     parser.add_argument("--teacher_label_logit_weight", type=float, default=0.0)
+    parser.add_argument(
+        "--disable_support_prior",
+        action="store_true",
+        help="Zero the teacher-derived bounded-support prior before training and export.",
+    )
     parser.add_argument("--steps", type=int, default=2400)
     parser.add_argument("--sample_batch_size", type=int, default=4)
     parser.add_argument("--hidden_dim", type=int, default=192)
@@ -351,13 +521,24 @@ def main():
     parser.add_argument("--smooth_weight", type=float, default=0.06)
     parser.add_argument("--boundary_weight", type=float, default=0.18)
     parser.add_argument("--residual_weight", type=float, default=0.04)
+    parser.add_argument("--fit_confidence_weight", type=float, default=0.20)
+    parser.add_argument("--fit_confidence_distance_scale", type=float, default=0.03)
+    parser.add_argument("--fit_confidence_normal_power", type=float, default=2.0)
     parser.add_argument("--line_smooth_suppress", type=float, default=0.60)
     parser.add_argument("--boundary_margin", type=float, default=0.10)
     parser.add_argument("--boundary_error_weight", type=float, default=3.0)
     parser.add_argument("--boundary_error_min_edge_conf", type=float, default=0.25)
     parser.add_argument("--hard_boundary_weight", type=float, default=0.0)
     parser.add_argument("--hard_boundary_min_edge_conf", type=float, default=0.25)
+    parser.add_argument("--diff_plane_fit_weight", type=float, default=0.0)
+    parser.add_argument("--coverage_weight", type=float, default=0.0)
+    parser.add_argument("--min_plane_mass", type=float, default=30.0)
+    parser.add_argument("--cov_jitter", type=float, default=1e-6)
+    parser.add_argument("--fit_charbonnier_eps", type=float, default=1e-3)
+    parser.add_argument("--use_patch_count_weight", action="store_true")
+    parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--refit_min_points", type=int, default=300)
+    parser.add_argument("--refit_min_effective_mass", type=float, default=50.0)
     parser.add_argument("--boundary_strict_decode", action="store_true")
     parser.add_argument("--boundary_strict_label_conf", type=float, default=0.65)
     parser.add_argument("--boundary_strict_edge_conf", type=float, default=0.25)
@@ -377,6 +558,9 @@ def main():
         )
         for i, p in enumerate(paths)
     ]
+    if args.disable_support_prior:
+        for case in cases:
+            case["patch_support_prior"].fill(0.0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tensors = []
     for case in cases:
@@ -394,6 +578,7 @@ def main():
                 torch.from_numpy(case.get("aux_plane_normals", np.zeros((0, 3), dtype=np.float32))).to(device),
                 torch.from_numpy(case.get("aux_plane_offsets_norm", np.zeros((0,), dtype=np.float32))).to(device),
                 torch.from_numpy(case["patch_support_prior"]).to(device),
+                torch.from_numpy(case["patch_counts"]).to(device),
             )
         )
     model = BoundedPlaneSupportHead(tensors[0][2].shape[1], hidden_dim=args.hidden_dim).to(device)
@@ -416,7 +601,7 @@ def main():
             losses.append(loss)
             stat_rows.append(stats)
             with torch.no_grad():
-                assign, _ = model(
+                assign, _, _ = model(
                     tensors[int(sid)][2],
                     tensors[int(sid)][0],
                     tensors[int(sid)][1],
@@ -428,6 +613,8 @@ def main():
         loss = torch.stack(losses).mean()
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        if args.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         optimizer.step()
         row = {"step": int(step), "loss": float(loss.detach().cpu())}
         for key in stat_rows[0]:
@@ -439,7 +626,12 @@ def main():
                 f"step={step:04d} loss={row['loss']:.5f} teacher={row['teacher_loss']:.4f} "
                 f"smooth={row['smooth_loss']:.4f} boundary={row['boundary_loss']:.4f} "
                 f"hard={row['hard_boundary_loss']:.4f} "
-                f"res={row['residual_loss']:.4f} bg={row['background_ratio']:.3f} acc={row['patch_acc']:.3f}"
+                f"res={row['residual_loss']:.4f} conf={row['fit_confidence_loss']:.4f} "
+                f"conf_mean={row['mean_fit_confidence']:.3f}/{row['mean_fit_confidence_target']:.3f} "
+                f"diff={row['diff_fit_loss']:.4f} "
+                f"cover={row['coverage_loss']:.4f} mass={row['mean_plane_mass']:.2f} "
+                f"eig={row['mean_eig_min']:.6f}/{row['mean_eig_gap']:.6f} "
+                f"bg={row['background_ratio']:.3f} acc={row['patch_acc']:.3f}"
             )
 
     output_dir = Path(args.output_dir)

@@ -1,4 +1,5 @@
 import argparse
+import functools
 import json
 from pathlib import Path
 
@@ -97,7 +98,7 @@ def build_surface_patches(case, args):
                 np.asarray([planarity], dtype=np.float32),
                 extent,
                 log_count,
-                np.asarray([conf], dtype=np.float32),
+                np.asarray([0.0 if args.hide_teacher_feature_conf else conf], dtype=np.float32),
                 np.asarray([line_mean, line_max], dtype=np.float32),
             ]
         )
@@ -307,6 +308,75 @@ def class_balanced_patch_ce(assign, labels, num_planes, label_conf):
     return (per_patch * point_weights).sum() / point_weights.sum().clamp_min(1e-6)
 
 
+def permutation_invariant_labels(
+    assign,
+    labels,
+    label_conf,
+    pred_normals,
+    pred_offsets,
+    teacher_normals,
+    teacher_offsets,
+    classification_weight,
+    normal_weight,
+    offset_weight,
+):
+    active_count = min(int(teacher_normals.shape[0]), pred_normals.shape[0])
+    if active_count <= 0:
+        return labels
+    query_count = pred_normals.shape[0]
+    with torch.no_grad():
+        costs = torch.empty(
+            (active_count, query_count),
+            device=assign.device,
+            dtype=assign.dtype,
+        )
+        for teacher_id in range(active_count):
+            own = labels == teacher_id
+            weights = label_conf[own].clamp_min(0.2)
+            if torch.any(own):
+                class_cost = -(
+                    torch.log(assign[own, :query_count].clamp_min(1e-8)) * weights[:, None]
+                ).sum(dim=0) / weights.sum().clamp_min(1e-6)
+            else:
+                class_cost = torch.full(
+                    (query_count,),
+                    4.0,
+                    device=assign.device,
+                    dtype=assign.dtype,
+                )
+            normal_cost = 1.0 - torch.abs(pred_normals @ teacher_normals[teacher_id])
+            offset_cost = torch.abs(pred_offsets - teacher_offsets[teacher_id])
+            costs[teacher_id] = (
+                float(classification_weight) * class_cost
+                + float(normal_weight) * normal_cost
+                + float(offset_weight) * offset_cost
+            )
+
+        costs_cpu = costs.cpu().numpy()
+
+        @functools.lru_cache(maxsize=None)
+        def solve(teacher_id, used_mask):
+            if teacher_id == active_count:
+                return 0.0, ()
+            best_cost = float("inf")
+            best_queries = ()
+            for query_id in range(query_count):
+                if used_mask & (1 << query_id):
+                    continue
+                tail_cost, tail_queries = solve(teacher_id + 1, used_mask | (1 << query_id))
+                total = float(costs_cpu[teacher_id, query_id]) + tail_cost
+                if total < best_cost:
+                    best_cost = total
+                    best_queries = (query_id,) + tail_queries
+            return best_cost, best_queries
+
+        _, matched_queries = solve(0, 0)
+        remapped = labels.clone()
+        for teacher_id, query_id in enumerate(matched_queries):
+            remapped[labels == teacher_id] = int(query_id)
+        return remapped
+
+
 def background_patch_loss(assign, labels, num_planes):
     bg = labels < 0
     if not torch.any(bg):
@@ -487,8 +557,22 @@ def compute_loss(model, tensors, args, temperature):
         support_prior=support_prior,
         teacher_label_prior=teacher_label_prior,
     )
+    loss_labels = patch_labels
+    if args.permutation_invariant_matching:
+        loss_labels = permutation_invariant_labels(
+            assign,
+            patch_labels,
+            patch_label_conf,
+            normals,
+            offsets,
+            aux_normals,
+            aux_offsets,
+            args.match_classification_weight,
+            args.match_normal_weight,
+            args.match_offset_weight,
+        )
     plane_assign = assign[:, :-1]
-    teacher_loss = class_balanced_patch_ce(assign, patch_labels, args.num_planes, patch_label_conf)
+    teacher_loss = class_balanced_patch_ce(assign, loss_labels, args.num_planes, patch_label_conf)
     bg_loss = background_patch_loss(assign, patch_labels, args.num_planes)
     foreground = plane_assign.sum(dim=-1).clamp_min(1e-6)
     residual = (plane_assign * dists).sum(dim=-1) / foreground
@@ -498,7 +582,7 @@ def compute_loss(model, tensors, args, temperature):
         assign,
         edge_i,
         edge_j,
-        patch_labels,
+        loss_labels,
         edge_line_prob=edge_line_prob,
         edge_boundary_conf=edge_boundary_conf,
         margin=args.patch_boundary_margin,
@@ -507,7 +591,7 @@ def compute_loss(model, tensors, args, temperature):
     )
     side_loss = boundary_side_consistency_loss(
         assign,
-        patch_labels,
+        loss_labels,
         dists,
         boundary_neighbor,
         args.num_planes,
@@ -517,7 +601,7 @@ def compute_loss(model, tensors, args, temperature):
     compact_loss = patch_compactness_loss(patch_centroids, assign)
     coverage_loss, overcoverage_loss = teacher_plane_coverage_losses(
         assign,
-        patch_labels,
+        loss_labels,
         args.num_planes,
         min_recall=args.teacher_min_plane_recall,
         max_leakage=args.teacher_max_plane_leakage,
@@ -525,15 +609,22 @@ def compute_loss(model, tensors, args, temperature):
     )
     pairwise_leakage_loss = teacher_pairwise_leakage_loss(
         assign,
-        patch_labels,
+        loss_labels,
         args.num_planes,
         max_pair_leakage=args.teacher_max_pair_leakage,
         label_conf=patch_label_conf,
     )
-    support_loss = support_violation_loss(assign, support_inside, boundary_neighbor, patch_labels, args.num_planes)
+    support_loss = support_violation_loss(assign, support_inside, boundary_neighbor, loss_labels, args.num_planes)
     ent_loss = entropy(assign).mean()
-    active_count = min(int(aux_normals.shape[0]), args.num_planes)
-    inactive_loss = plane_assign[:, active_count:].mean() if active_count < args.num_planes else assign.sum() * 0.0
+    present_queries = torch.zeros(args.num_planes, dtype=torch.bool, device=assign.device)
+    valid_loss_labels = loss_labels[(loss_labels >= 0) & (loss_labels < args.num_planes)]
+    if valid_loss_labels.numel():
+        present_queries[torch.unique(valid_loss_labels)] = True
+    inactive_loss = (
+        plane_assign[:, ~present_queries].mean()
+        if torch.any(~present_queries)
+        else assign.sum() * 0.0
+    )
     loss = (
         args.teacher_assignment_weight * teacher_loss
         + args.background_weight * bg_loss
@@ -764,6 +855,15 @@ def main():
     parser.add_argument("--patch_pixel_size", type=float, default=0.08)
     parser.add_argument("--patch_voxel_size", type=float, default=0.045)
     parser.add_argument("--min_patch_points", type=int, default=12)
+    parser.add_argument(
+        "--hide_teacher_feature_conf",
+        action="store_true",
+        help="Do not expose GT-derived patch label confidence to the network input.",
+    )
+    parser.add_argument("--permutation_invariant_matching", action="store_true")
+    parser.add_argument("--match_classification_weight", type=float, default=1.0)
+    parser.add_argument("--match_normal_weight", type=float, default=0.25)
+    parser.add_argument("--match_offset_weight", type=float, default=0.10)
     parser.add_argument("--steps", type=int, default=2600)
     parser.add_argument("--sample_batch_size", type=int, default=4)
     parser.add_argument("--hidden_dim", type=int, default=160)
