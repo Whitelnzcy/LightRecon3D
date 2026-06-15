@@ -10,12 +10,14 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
 from dataloaders.s3d_dataset import Structured3DDataset
-from models.build_backbone import build_dust3r_backbone
 from models.plane_mask_head import PlaneMaskHead
 
 
+SCALES = (32, 64, 128)
+
+
 def parse_args():
-    parser = argparse.ArgumentParser("Train Stage1 bounded plane mask queries")
+    parser = argparse.ArgumentParser("Train coarse-to-fine Stage1 plane masks")
     parser.add_argument("--root_dir", required=True)
     parser.add_argument("--weights_path", required=True)
     parser.add_argument("--save_dir", required=True)
@@ -25,27 +27,66 @@ def parse_args():
     parser.add_argument("--train_ratio", type=float, default=0.9)
     parser.add_argument("--small_train_size", type=int, default=128)
     parser.add_argument("--small_val_size", type=int, default=32)
+    parser.add_argument("--hard_case_indices", default="")
+    parser.add_argument("--hard_case_repeat", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--num_epochs", type=int, default=5)
+    parser.add_argument("--num_epochs", type=int, default=8)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--num_queries", type=int, default=8)
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--decoder_layers", type=int, default=3)
     parser.add_argument("--decoder_heads", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--feature_indices", type=int, nargs=4, default=(0, 6, 9, 12))
+    parser.add_argument("--feature_dims", type=int, nargs=4, default=(1024, 768, 768, 768))
+    parser.add_argument("--disable_rgb_edge", action="store_true")
+    parser.add_argument("--refinement_margin", type=float, default=0.55)
+    parser.add_argument("--resume_joint", action="store_true")
+    parser.add_argument("--eval_before_train", action="store_true")
+    parser.add_argument("--refine_lr", type=float, default=2e-4)
+    parser.add_argument("--coarse_lr", type=float, default=2e-5)
+    parser.add_argument("--refine_only_epochs", type=int, default=3)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--min_plane_pixels", type=int, default=4)
     parser.add_argument("--match_bce_weight", type=float, default=1.0)
     parser.add_argument("--match_dice_weight", type=float, default=2.0)
-    parser.add_argument("--mask_bce_weight", type=float, default=1.0)
-    parser.add_argument("--mask_dice_weight", type=float, default=2.0)
-    parser.add_argument("--existence_weight", type=float, default=0.5)
+    parser.add_argument("--scale_weights", type=float, nargs=3, default=(1.0, 0.7, 1.0))
+    parser.add_argument("--mask_focal_weight", type=float, default=1.0)
+    parser.add_argument("--mask_tversky_weight", type=float, default=2.0)
     parser.add_argument("--partition_weight", type=float, default=1.0)
-    parser.add_argument("--boundary_weight", type=float, default=4.0)
+    parser.add_argument("--existence_weight", type=float, default=1.0)
+    parser.add_argument("--boundary_loss_weight", type=float, default=1.0)
+    parser.add_argument("--separation_weight", type=float, default=0.5)
+    parser.add_argument("--smoothness_weight", type=float, default=0.05)
+    parser.add_argument("--boundary_band", type=int, default=5)
+    parser.add_argument("--separation_margin", type=float, default=1.0)
+    parser.add_argument("--focal_gamma", type=float, default=2.0)
+    parser.add_argument("--tversky_fp_weight", type=float, default=0.7)
+    parser.add_argument("--tversky_fn_weight", type=float, default=0.3)
+    parser.add_argument("--small_plane_max_weight", type=float, default=3.0)
+    parser.add_argument("--existence_threshold", type=float, default=0.5)
+    parser.add_argument("--full_mask_threshold", type=float, default=0.5)
+    parser.add_argument("--core_mask_threshold", type=float, default=0.75)
+    parser.add_argument("--core_margin_threshold", type=float, default=0.35)
     parser.add_argument("--log_every", type=int, default=32)
     parser.add_argument("--seed", type=int, default=20260612)
-    return parser.parse_args()
+    # Legacy flags remain accepted so older launch scripts fail gracefully into
+    # the equivalent new loss terms.
+    parser.add_argument("--lr", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--mask_bce_weight", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--mask_dice_weight", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--boundary_weight", type=float, default=None, help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.lr is not None:
+        args.refine_lr = args.lr
+        args.coarse_lr = args.lr
+    if args.mask_bce_weight is not None:
+        args.mask_focal_weight = args.mask_bce_weight
+    if args.mask_dice_weight is not None:
+        args.mask_tversky_weight = args.mask_dice_weight
+    if args.boundary_weight is not None:
+        args.boundary_loss_weight = args.boundary_weight
+    return args
 
 
 def set_seed(seed):
@@ -62,6 +103,16 @@ def move_batch(batch, device):
     }
 
 
+def _read_hard_indices(path):
+    if not path:
+        return []
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if isinstance(payload, dict):
+        payload = payload.get("indices", payload.get("hard_cases", []))
+    return [int(value) for value in payload]
+
+
 def make_loader(args, split):
     dataset_kwargs = {
         "root_dir": args.root_dir,
@@ -76,9 +127,17 @@ def make_loader(args, split):
             raise
         dataset = Structured3DDataset(**dataset_kwargs)
         dataset.lightrecon_input_mode = "single"
+
     limit = args.small_train_size if split == "train" else args.small_val_size
-    if limit > 0:
-        dataset = Subset(dataset, range(min(limit, len(dataset))))
+    count = min(limit, len(dataset)) if limit > 0 else len(dataset)
+    indices = list(range(count))
+    if split == "train" and args.hard_case_indices:
+        hard_indices = [
+            index for index in _read_hard_indices(args.hard_case_indices)
+            if 0 <= index < count
+        ]
+        indices.extend(hard_indices * max(args.hard_case_repeat, 0))
+    dataset = Subset(dataset, indices)
     return DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -100,38 +159,97 @@ def build_views(batch, prefix):
     )
 
 
-def feature_map_from_result(result, image, patch_size=16):
-    features = result["dec_features"]
-    if isinstance(features, (list, tuple)):
-        features = features[-1]
+def _tokens_to_map(features, image, patch_size=16, name="features"):
+    if features.ndim != 3:
+        raise ValueError(f"{name} must be [B,S,C], got {tuple(features.shape)}")
     batch_size, tokens, channels = features.shape
     height = image.shape[-2] // patch_size
     width = image.shape[-1] // patch_size
     if tokens != height * width:
-        raise ValueError(f"Token count {tokens} does not match {height}x{width}")
+        raise ValueError(f"{name} token count {tokens} does not match {height}x{width}")
     return features.transpose(1, 2).reshape(batch_size, channels, height, width)
 
 
-def instance_masks(labels, target_hw, max_planes, min_pixels):
-    labels = F.interpolate(
+def feature_maps_from_result(result, image, feature_indices=(0, 6, 9, 12), patch_size=16):
+    all_features = result.get("dec_features_all")
+    if all_features is None:
+        raise KeyError(
+            "DUSt3R result lacks dec_features_all. Use the LightRecon3D "
+            "backbone with multi-layer feature export enabled."
+        )
+    if len(feature_indices) != 4:
+        raise ValueError("feature_indices must contain four decoder stages")
+    resolved = []
+    for index in feature_indices:
+        actual = index if index >= 0 else len(all_features) + index
+        if actual < 0 or actual >= len(all_features):
+            raise IndexError(
+                f"Feature index {index} is invalid for {len(all_features)} decoder outputs"
+            )
+        resolved.append(
+            _tokens_to_map(
+                all_features[actual],
+                image,
+                patch_size=patch_size,
+                name=f"dec_features_all[{actual}]",
+            )
+        )
+    spatial_shapes = {tuple(feature.shape[-2:]) for feature in resolved}
+    if len(spatial_shapes) != 1:
+        raise ValueError(f"Decoder feature maps must share one token grid, got {spatial_shapes}")
+    return {
+        "encoder": resolved[0],
+        "shallow": resolved[1],
+        "middle": resolved[2],
+        "deep": resolved[3],
+    }
+
+
+def feature_map_from_result(result, image, patch_size=16):
+    """Backward-compatible last-layer feature accessor."""
+    features = result["dec_features"]
+    if isinstance(features, (list, tuple)):
+        features = features[-1]
+    return _tokens_to_map(features, image, patch_size=patch_size)
+
+
+def _resize_labels(labels, target_hw):
+    return F.interpolate(
         labels[:, None].float(),
         size=target_hw,
         mode="nearest",
     )[:, 0].long()
-    batch_masks = []
-    for label_map in labels:
+
+
+def select_plane_ids(labels, target_hw, max_planes, min_pixels):
+    coarse_labels = _resize_labels(labels, target_hw)
+    batch_ids = []
+    for label_map in coarse_labels:
         candidates = []
-        for plane_id in torch.unique(label_map):
-            plane_id = int(plane_id)
+        for plane_id_tensor in torch.unique(label_map):
+            plane_id = int(plane_id_tensor)
             if plane_id <= 0 or plane_id == 255:
                 continue
-            mask = label_map == plane_id
-            count = int(mask.sum())
+            count = int((label_map == plane_id).sum())
             if count >= min_pixels:
-                candidates.append((count, mask.float()))
+                candidates.append((count, plane_id))
         candidates.sort(key=lambda item: item[0], reverse=True)
-        batch_masks.append([mask for _, mask in candidates[:max_planes]])
-    return labels, batch_masks
+        batch_ids.append([plane_id for _, plane_id in candidates[:max_planes]])
+    return coarse_labels, batch_ids
+
+
+def masks_for_plane_ids(labels, target_hw, batch_plane_ids):
+    resized = _resize_labels(labels, target_hw)
+    masks = []
+    for label_map, plane_ids in zip(resized, batch_plane_ids):
+        masks.append([(label_map == plane_id).float() for plane_id in plane_ids])
+    return resized, masks
+
+
+def instance_masks(labels, target_hw, max_planes, min_pixels):
+    resized, plane_ids = select_plane_ids(labels, target_hw, max_planes, min_pixels)
+    _, masks = masks_for_plane_ids(labels, target_hw, plane_ids)
+    return resized, masks
 
 
 def dice_cost(pred_prob, targets, eps=1e-6):
@@ -144,7 +262,7 @@ def match_queries(mask_logits, targets, args):
     if targets.shape[0] == 0:
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
     pred_prob = mask_logits.sigmoid()
-    query_count, height, width = mask_logits.shape
+    query_count = mask_logits.shape[0]
     target_count = targets.shape[0]
     logits_flat = mask_logits.flatten(1)[:, None].expand(query_count, target_count, -1)
     targets_flat = targets.flatten(1)[None].expand(query_count, target_count, -1)
@@ -155,7 +273,6 @@ def match_queries(mask_logits, targets, args):
     ).mean(dim=-1)
     cost = args.match_bce_weight * bce + args.match_dice_weight * dice_cost(pred_prob, targets)
     cost_np = cost.detach().cpu().numpy()
-    query_count, target_count = cost_np.shape
     states = {0: (0.0, ())}
     for target_id in range(target_count):
         next_states = {}
@@ -171,9 +288,7 @@ def match_queries(mask_logits, targets, args):
                     next_states[new_mask] = (new_cost, assignment + (query_id,))
         states = next_states
     _, best_assignment = min(states.values(), key=lambda item: item[0])
-    query_ids = np.asarray(best_assignment, dtype=np.int64)
-    target_ids = np.arange(target_count, dtype=np.int64)
-    return query_ids, target_ids
+    return np.asarray(best_assignment, dtype=np.int64), np.arange(target_count, dtype=np.int64)
 
 
 def boundary_map(label_map):
@@ -187,138 +302,441 @@ def boundary_map(label_map):
     return boundary
 
 
-def sample_loss(output, labels, target_masks, args):
-    mask_logits = output["mask_logits"]
-    existence_logits = output["existence_logits"]
-    background_logits = output["background_logits"]
-    total = mask_logits.sum() * 0.0
+def typed_boundary_maps(label_map):
+    plane_plane = torch.zeros_like(label_map, dtype=torch.bool)
+    plane_background = torch.zeros_like(label_map, dtype=torch.bool)
+
+    def add_pair(left, right, left_slice, right_slice):
+        different = left != right
+        left_plane = (left > 0) & (left != 255)
+        right_plane = (right > 0) & (right != 255)
+        pp = different & left_plane & right_plane
+        pb = different & (left_plane ^ right_plane)
+        plane_plane[left_slice] |= pp
+        plane_plane[right_slice] |= pp
+        plane_background[left_slice] |= pb
+        plane_background[right_slice] |= pb
+
+    add_pair(
+        label_map[:, :-1],
+        label_map[:, 1:],
+        (slice(None), slice(None, -1)),
+        (slice(None), slice(1, None)),
+    )
+    add_pair(
+        label_map[:-1, :],
+        label_map[1:, :],
+        (slice(None, -1), slice(None)),
+        (slice(1, None), slice(None)),
+    )
+    return plane_plane, plane_background
+
+
+def dilate_mask(mask, band_size):
+    radius = max(int(band_size) // 2, 0)
+    if radius == 0:
+        return mask
+    kernel = radius * 2 + 1
+    return F.max_pool2d(
+        mask[None, None].float(),
+        kernel_size=kernel,
+        stride=1,
+        padding=radius,
+    )[0, 0] > 0
+
+
+def _stack_masks(mask_list, reference):
+    if mask_list:
+        return torch.stack(mask_list)
+    return reference.new_zeros((0, *reference.shape[-2:]))
+
+
+def _area_weights(targets, max_weight):
+    if targets.shape[0] == 0:
+        return targets.new_zeros((0,))
+    areas = targets.sum(dim=(1, 2)).clamp_min(1.0)
+    weights = torch.sqrt(areas.max() / areas).clamp(max=max_weight)
+    return weights / weights.mean().clamp_min(1e-6)
+
+
+def focal_bce_loss(logits, targets, gamma):
+    bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    probabilities = logits.sigmoid()
+    pt = probabilities * targets + (1.0 - probabilities) * (1.0 - targets)
+    return ((1.0 - pt).pow(gamma) * bce).mean(dim=(1, 2))
+
+
+def tversky_loss(logits, targets, fp_weight, fn_weight):
+    probabilities = logits.sigmoid()
+    true_positive = (probabilities * targets).sum(dim=(1, 2))
+    false_positive = (probabilities * (1.0 - targets)).sum(dim=(1, 2))
+    false_negative = ((1.0 - probabilities) * targets).sum(dim=(1, 2))
+    score = (true_positive + 1e-6) / (
+        true_positive
+        + fp_weight * false_positive
+        + fn_weight * false_negative
+        + 1e-6
+    )
+    return 1.0 - score
+
+
+def make_class_target(labels, targets, query_ids, target_ids, num_queries):
+    class_target = torch.full(
+        labels.shape,
+        num_queries,
+        device=labels.device,
+        dtype=torch.long,
+    )
+    for query_id, target_id in zip(query_ids, target_ids):
+        class_target[targets[target_id] > 0.5] = int(query_id)
+    return class_target
+
+
+def interior_smoothness(class_logits, class_target):
+    probabilities = class_logits.softmax(dim=0)
+    total = class_logits.sum() * 0.0
+    count = 0
+    same_h = class_target[:, 1:] == class_target[:, :-1]
+    same_v = class_target[1:, :] == class_target[:-1, :]
+    if same_h.any():
+        diff_h = (probabilities[:, :, 1:] - probabilities[:, :, :-1]).abs().mean(dim=0)
+        total = total + diff_h[same_h].mean()
+        count += 1
+    if same_v.any():
+        diff_v = (probabilities[:, 1:, :] - probabilities[:, :-1, :]).abs().mean(dim=0)
+        total = total + diff_v[same_v].mean()
+        count += 1
+    return total / max(count, 1)
+
+
+def scale_loss(
+    mask_logits,
+    background_logits,
+    labels,
+    targets,
+    query_ids,
+    target_ids,
+    args,
+):
+    zero = mask_logits.sum() * 0.0
+    query_ids_t = torch.as_tensor(query_ids, device=mask_logits.device, dtype=torch.long)
+    target_ids_t = torch.as_tensor(target_ids, device=mask_logits.device, dtype=torch.long)
+    if len(query_ids):
+        matched_logits = mask_logits[query_ids_t]
+        matched_targets = targets[target_ids_t]
+        area_weights = _area_weights(matched_targets, args.small_plane_max_weight)
+        focal = (
+            focal_bce_loss(matched_logits, matched_targets, args.focal_gamma)
+            * area_weights
+        ).mean()
+        tversky = (
+            tversky_loss(
+                matched_logits,
+                matched_targets,
+                args.tversky_fp_weight,
+                args.tversky_fn_weight,
+            )
+            * area_weights
+        ).mean()
+    else:
+        focal = zero
+        tversky = zero
+
+    class_logits = torch.cat((mask_logits, background_logits), dim=0)
+    class_target = make_class_target(
+        labels,
+        targets,
+        query_ids,
+        target_ids,
+        args.num_queries,
+    )
+    partition = F.cross_entropy(class_logits[None], class_target[None])
+
+    pp_boundary, pb_boundary = typed_boundary_maps(labels)
+    pp_band = dilate_mask(pp_boundary, args.boundary_band)
+    pb_band = dilate_mask(pb_boundary, args.boundary_band)
+    boundary_pixels = pp_band | pb_band
+    pixel_ce = F.cross_entropy(
+        class_logits[None],
+        class_target[None],
+        reduction="none",
+    )[0]
+    boundary_loss = pixel_ce[boundary_pixels].mean() if boundary_pixels.any() else zero
+
+    valid_pp = pp_band & (class_target < args.num_queries)
+    if valid_pp.any():
+        correct = class_logits.gather(0, class_target.clamp_max(args.num_queries)[None])[0]
+        query_logits = mask_logits.clone()
+        one_hot = F.one_hot(
+            class_target.clamp_max(args.num_queries - 1),
+            num_classes=args.num_queries,
+        ).permute(2, 0, 1).bool()
+        query_logits = query_logits.masked_fill(one_hot, -1e4)
+        strongest_wrong = query_logits.max(dim=0).values
+        separation = F.relu(
+            args.separation_margin - correct[valid_pp] + strongest_wrong[valid_pp]
+        ).mean()
+    else:
+        separation = zero
+    smoothness = interior_smoothness(class_logits, class_target)
+
+    loss = (
+        args.mask_focal_weight * focal
+        + args.mask_tversky_weight * tversky
+        + args.partition_weight * partition
+        + args.boundary_loss_weight * boundary_loss
+        + args.separation_weight * separation
+        + args.smoothness_weight * smoothness
+    )
+    predicted = class_logits.argmax(dim=0)
+    valid = class_target < args.num_queries
+    accuracy = (
+        (predicted[valid] == class_target[valid]).float().mean()
+        if valid.any()
+        else zero
+    )
+    pp_valid = pp_band & valid
+    pb_valid = pb_band & valid
+    pp_accuracy = (
+        (predicted[pp_valid] == class_target[pp_valid]).float().mean()
+        if pp_valid.any()
+        else zero
+    )
+    pb_accuracy = (
+        (predicted[pb_valid] == class_target[pb_valid]).float().mean()
+        if pb_valid.any()
+        else zero
+    )
+    matched_ious = []
+    for query_id, target_id in zip(query_ids, target_ids):
+        pred_mask = predicted == int(query_id)
+        target_mask = targets[target_id] > 0.5
+        union = (pred_mask | target_mask).sum()
+        if union > 0:
+            matched_ious.append((pred_mask & target_mask).sum().float() / union)
+    mean_iou = torch.stack(matched_ious).mean() if matched_ious else zero
+    return loss, {
+        "focal": focal,
+        "tversky": tversky,
+        "partition": partition,
+        "boundary_loss": boundary_loss,
+        "separation": separation,
+        "smoothness": smoothness,
+        "mask_accuracy": accuracy,
+        "plane_plane_boundary_accuracy": pp_accuracy,
+        "plane_background_boundary_accuracy": pb_accuracy,
+        "mean_iou": mean_iou,
+    }
+
+
+def prediction_masks(
+    mask_logits,
+    background_logits,
+    existence_logits,
+    existence_threshold=0.5,
+    full_threshold=0.5,
+    core_threshold=0.75,
+    core_margin_threshold=0.35,
+):
+    probabilities = mask_logits.sigmoid()
+    class_probabilities = torch.cat(
+        (probabilities, background_logits.sigmoid()),
+        dim=0,
+    )
+    active = existence_logits.sigmoid() > existence_threshold
+    inactive = ~active
+    class_probabilities[:-1][inactive] = 0.0
+    top2 = class_probabilities.topk(k=2, dim=0)
+    predicted = top2.indices[0]
+    confidence = top2.values[0]
+    margin = top2.values[0] - top2.values[1]
+    predicted[predicted == mask_logits.shape[0]] = -1
+    full_masks = []
+    core_masks = []
+    for query_id in range(mask_logits.shape[0]):
+        assigned = predicted == query_id
+        full_masks.append(assigned & (probabilities[query_id] >= full_threshold))
+        core_masks.append(
+            assigned
+            & (probabilities[query_id] >= core_threshold)
+            & (margin >= core_margin_threshold)
+        )
+    return {
+        "assignment": predicted,
+        "full_masks": torch.stack(full_masks),
+        "core_masks": torch.stack(core_masks),
+        "confidence": confidence,
+        "margin": margin,
+        "active": active,
+    }
+
+
+def sample_loss(output, raw_labels, plane_ids, args):
+    total = output["mask_logits"].sum() * 0.0
     stats = defaultdict(float)
-    batch_size = mask_logits.shape[0]
+    batch_size = output["mask_logits"].shape[0]
+    scale_weights = dict(zip(SCALES, args.scale_weights))
 
     for batch_id in range(batch_size):
-        targets = (
-            torch.stack(target_masks[batch_id])
-            if target_masks[batch_id]
-            else mask_logits.new_zeros((0, *mask_logits.shape[-2:]))
+        labels_by_scale = {}
+        targets_by_scale = {}
+        for scale in SCALES:
+            logits = output[f"mask_logits_{scale}"]
+            labels, masks = masks_for_plane_ids(
+                raw_labels[batch_id : batch_id + 1],
+                logits.shape[-2:],
+                [plane_ids[batch_id]],
+            )
+            labels_by_scale[scale] = labels[0]
+            targets_by_scale[scale] = _stack_masks(masks[0], logits[batch_id])
+
+        query_ids, target_ids = match_queries(
+            output["mask_logits_32"][batch_id],
+            targets_by_scale[32],
+            args,
         )
-        query_ids, target_ids = match_queries(mask_logits[batch_id], targets, args)
-        query_ids_t = torch.as_tensor(query_ids, device=mask_logits.device, dtype=torch.long)
-        target_ids_t = torch.as_tensor(target_ids, device=mask_logits.device, dtype=torch.long)
-
-        existence_target = torch.zeros_like(existence_logits[batch_id])
+        existence_target = torch.zeros_like(output["existence_logits"][batch_id])
         if len(query_ids):
-            existence_target[query_ids_t] = 1.0
-            matched_logits = mask_logits[batch_id, query_ids_t]
-            matched_targets = targets[target_ids_t]
-            mask_bce = F.binary_cross_entropy_with_logits(matched_logits, matched_targets)
-            probabilities = matched_logits.sigmoid()
-            intersection = (probabilities * matched_targets).sum(dim=(1, 2))
-            denominator = probabilities.sum(dim=(1, 2)) + matched_targets.sum(dim=(1, 2))
-            mask_dice = (1.0 - (2.0 * intersection + 1e-6) / (denominator + 1e-6)).mean()
-        else:
-            mask_bce = total
-            mask_dice = total
-
+            existence_target[
+                torch.as_tensor(query_ids, device=existence_target.device)
+            ] = 1.0
         existence = F.binary_cross_entropy_with_logits(
-            existence_logits[batch_id],
+            output["existence_logits"][batch_id],
             existence_target,
         )
-
-        class_logits = torch.cat(
-            (mask_logits[batch_id], background_logits[batch_id]),
-            dim=0,
-        )
-        class_target = torch.full(
-            labels[batch_id].shape,
-            args.num_queries,
-            device=labels.device,
-            dtype=torch.long,
-        )
-        for query_id, target_id in zip(query_ids, target_ids):
-            class_target[targets[target_id] > 0.5] = int(query_id)
-        pixel_ce = F.cross_entropy(class_logits[None], class_target[None], reduction="none")[0]
-        weights = torch.ones_like(pixel_ce)
-        weights[boundary_map(labels[batch_id])] = args.boundary_weight
-        partition = (pixel_ce * weights).sum() / weights.sum().clamp_min(1.0)
-
-        loss = (
-            args.mask_bce_weight * mask_bce
-            + args.mask_dice_weight * mask_dice
-            + args.existence_weight * existence
-            + args.partition_weight * partition
-        )
-        total = total + loss
-
-        predicted = class_logits.argmax(dim=0)
-        valid = class_target < args.num_queries
-        accuracy = (predicted[valid] == class_target[valid]).float().mean() if valid.any() else total * 0.0
-        boundary = boundary_map(labels[batch_id]) & valid
-        boundary_accuracy = (
-            (predicted[boundary] == class_target[boundary]).float().mean()
-            if boundary.any()
-            else total * 0.0
-        )
-        matched_ious = []
-        for query_id, target_id in zip(query_ids, target_ids):
-            pred_mask = predicted == int(query_id)
-            target_mask = targets[target_id] > 0.5
-            union = (pred_mask | target_mask).sum()
-            if union > 0:
-                matched_ious.append((pred_mask & target_mask).sum().float() / union)
-        mean_iou = torch.stack(matched_ious).mean() if matched_ious else total * 0.0
-
-        stats["mask_bce"] += float(mask_bce.detach())
-        stats["mask_dice"] += float(mask_dice.detach())
+        sample_total = args.existence_weight * existence
         stats["existence"] += float(existence.detach())
-        stats["partition"] += float(partition.detach())
-        stats["mask_accuracy"] += float(accuracy.detach())
-        stats["boundary_accuracy"] += float(boundary_accuracy.detach())
-        stats["mean_iou"] += float(mean_iou.detach())
-        stats["gt_planes"] += float(targets.shape[0])
-        stats["pred_planes"] += float((existence_logits[batch_id].sigmoid() > 0.5).sum())
 
-    return total / batch_size, {key: value / batch_size for key, value in stats.items()}
+        for scale in SCALES:
+            scale_value, scale_stats = scale_loss(
+                output[f"mask_logits_{scale}"][batch_id],
+                output[f"background_logits_{scale}"][batch_id],
+                labels_by_scale[scale],
+                targets_by_scale[scale],
+                query_ids,
+                target_ids,
+                args,
+            )
+            sample_total = sample_total + scale_weights[scale] * scale_value
+            for key, value in scale_stats.items():
+                stats[f"{key}_{scale}"] += float(value.detach())
+
+        for scale in (64, 128):
+            gate = output[f"refinement_gate{scale}"][batch_id, 0]
+            boundary = dilate_mask(
+                boundary_map(labels_by_scale[scale]),
+                args.boundary_band,
+            )
+            interior = ~boundary
+            stats[f"gate_boundary_{scale}"] += (
+                float(gate[boundary].mean().detach()) if boundary.any() else 0.0
+            )
+            stats[f"gate_interior_{scale}"] += (
+                float(gate[interior].mean().detach()) if interior.any() else 0.0
+            )
+
+        stats["gt_planes"] += float(len(plane_ids[batch_id]))
+        stats["pred_planes"] += float(
+            (output["existence_logits"][batch_id].sigmoid() > args.existence_threshold).sum()
+        )
+        total = total + sample_total
+
+    stats["alpha64"] = float(output["refinement_alpha64"].detach())
+    stats["alpha128"] = float(output["refinement_alpha128"].detach())
+    return total / batch_size, {
+        key: value / batch_size
+        if key not in ("alpha64", "alpha128")
+        else value
+        for key, value in stats.items()
+    }
+
+
+def _grad_norm(parameters):
+    squared = 0.0
+    for parameter in parameters:
+        if parameter.grad is not None:
+            squared += float(parameter.grad.detach().norm().pow(2))
+    return squared ** 0.5
+
+
+def set_training_phase(head, optimizer, epoch, args):
+    refine_only = bool(args.init_checkpoint) and epoch <= args.refine_only_epochs
+    for parameter in head.coarse_parameters():
+        parameter.requires_grad = not refine_only
+    optimizer.param_groups[0]["lr"] = 0.0 if refine_only else args.coarse_lr
+    optimizer.param_groups[1]["lr"] = args.refine_lr
+    return "refinement_only" if refine_only else "joint"
 
 
 def run_epoch(backbone, head, loader, optimizer, device, args, train):
     head.train(train)
+    if train and not any(parameter.requires_grad for parameter in head.coarse_parameters()):
+        for module in head.coarse_modules():
+            module.eval()
     backbone.eval()
     totals = defaultdict(float)
     steps = 0
     for step, batch in enumerate(loader, start=1):
         batch = move_batch(batch, device)
-        view1, view2 = build_views(batch, "stage1")
+        view1, view2 = build_views(batch, "stage1_multiscale")
         if train:
             optimizer.zero_grad(set_to_none=True)
         with torch.no_grad():
             result1, result2 = backbone(view1, view2)
-            feature1 = feature_map_from_result(result1, view1["img"])
-            feature2 = feature_map_from_result(result2, view2["img"])
-        views = [(feature1, batch.get("gt_plane1", batch["gt_plane"]))]
+            features1 = feature_maps_from_result(
+                result1,
+                view1["img"],
+                args.feature_indices,
+            )
+            features2 = feature_maps_from_result(
+                result2,
+                view2["img"],
+                args.feature_indices,
+            )
+        views = [
+            (
+                features1,
+                view1["img"],
+                batch.get("gt_plane1", batch["gt_plane"]),
+            )
+        ]
         if args.input_mode == "pair" and "gt_plane2" in batch:
-            views.append((feature2, batch["gt_plane2"]))
+            views.append((features2, view2["img"], batch["gt_plane2"]))
 
         losses = []
         rows = []
-        for feature_map, gt_plane in views:
-            output = head(feature_map)
-            labels, masks = instance_masks(
+        for features, image, gt_plane in views:
+            output = head(
+                features["deep"],
+                middle_feature=features["middle"],
+                shallow_feature=features["shallow"],
+                encoder_feature=features["encoder"],
+                image=image,
+            )
+            _, plane_ids = select_plane_ids(
                 gt_plane,
-                output["mask_logits"].shape[-2:],
+                output["mask_logits_32"].shape[-2:],
                 args.num_queries,
                 args.min_plane_pixels,
             )
-            loss, row = sample_loss(output, labels, masks, args)
+            loss, row = sample_loss(output, gt_plane, plane_ids, args)
             losses.append(loss)
             rows.append(row)
         loss = torch.stack(losses).mean()
         if train:
             loss.backward()
+            coarse_grad = _grad_norm(head.coarse_parameters())
+            refine_grad = _grad_norm(head.refinement_parameters())
             if args.grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(head.parameters(), args.grad_clip)
             optimizer.step()
+        else:
+            coarse_grad = 0.0
+            refine_grad = 0.0
 
         totals["loss"] += float(loss.detach())
+        totals["coarse_grad_norm"] += coarse_grad
+        totals["refine_grad_norm"] += refine_grad
         for row in rows:
             for key, value in row.items():
                 totals[key] += value / len(rows)
@@ -327,17 +745,82 @@ def run_epoch(backbone, head, loader, optimizer, device, args, train):
             print(
                 f"[{'Train' if train else 'Val'}] {step}/{len(loader)} "
                 f"loss={float(loss.detach()):.4f} "
-                f"iou={np.mean([row['mean_iou'] for row in rows]):.3f} "
-                f"boundary={np.mean([row['boundary_accuracy'] for row in rows]):.3f} "
-                f"planes={np.mean([row['pred_planes'] for row in rows]):.1f}/"
-                f"{np.mean([row['gt_planes'] for row in rows]):.1f}",
+                f"iou32={np.mean([row['mean_iou_32'] for row in rows]):.3f} "
+                f"iou64={np.mean([row['mean_iou_64'] for row in rows]):.3f} "
+                f"iou128={np.mean([row['mean_iou_128'] for row in rows]):.3f} "
+                f"pp128={np.mean([row['plane_plane_boundary_accuracy_128'] for row in rows]):.3f} "
+                f"alpha=({float(head.alpha64.detach()):.4f},"
+                f"{float(head.alpha128.detach()):.4f})",
                 flush=True,
             )
     return {key: value / max(steps, 1) for key, value in totals.items()}
 
 
+def verify_zero_refinement(head, device, args):
+    head.eval()
+    batch_size = 1
+    height = width = args.image_size // 16
+    with torch.no_grad():
+        output = head(
+            torch.randn(batch_size, args.feature_dims[3], height, width, device=device),
+            middle_feature=torch.randn(
+                batch_size,
+                args.feature_dims[2],
+                height,
+                width,
+                device=device,
+            ),
+            shallow_feature=torch.randn(
+                batch_size,
+                args.feature_dims[1],
+                height,
+                width,
+                device=device,
+            ),
+            encoder_feature=torch.randn(
+                batch_size,
+                args.feature_dims[0],
+                height,
+                width,
+                device=device,
+            ),
+            image=torch.randn(
+                batch_size,
+                3,
+                args.image_size,
+                args.image_size,
+                device=device,
+            ),
+        )
+        expected64 = F.interpolate(
+            torch.cat(
+                (output["mask_logits_32"], output["background_logits_32"]),
+                dim=1,
+            ),
+            scale_factor=2.0,
+            mode="bilinear",
+            align_corners=False,
+        )
+        expected128 = F.interpolate(
+            expected64,
+            scale_factor=2.0,
+            mode="bilinear",
+            align_corners=False,
+        )
+        actual128 = torch.cat(
+            (output["mask_logits_128"], output["background_logits_128"]),
+            dim=1,
+        )
+        max_error = float((actual128 - expected128).abs().max())
+    if max_error >= 1e-5:
+        raise RuntimeError(f"Zero-refinement equivalence failed: max_error={max_error}")
+    print(f"Zero-refinement equivalence passed: max_error={max_error:.3e}", flush=True)
+
+
 def main():
     args = parse_args()
+    from models.build_backbone import build_dust3r_backbone
+
     set_seed(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -347,36 +830,94 @@ def main():
     for parameter in backbone.parameters():
         parameter.requires_grad = False
     head = PlaneMaskHead(
-        feature_dim=768,
+        feature_dim=args.feature_dims[3],
+        encoder_feature_dim=args.feature_dims[0],
+        shallow_feature_dim=args.feature_dims[1],
+        middle_feature_dim=args.feature_dims[2],
         hidden_dim=args.hidden_dim,
         num_queries=args.num_queries,
         num_decoder_layers=args.decoder_layers,
         num_heads=args.decoder_heads,
+        use_rgb_edge=not args.disable_rgb_edge,
+        refinement_margin=args.refinement_margin,
     ).to(device)
+    verify_coarse_equivalence = True
     if args.init_checkpoint:
         checkpoint = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
-        head.load_state_dict(checkpoint["head"])
-        print(f"Initialized mask head from {args.init_checkpoint}", flush=True)
-    optimizer = torch.optim.AdamW(head.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        source_state = checkpoint["head"]
+        if "alpha64" in source_state and "alpha128" in source_state:
+            head.load_state_dict(source_state)
+            verify_coarse_equivalence = False
+            if args.resume_joint:
+                args.refine_only_epochs = 0
+            print(f"Resumed multiscale mask head from {args.init_checkpoint}", flush=True)
+        else:
+            head.load_coarse_state_dict(source_state)
+            print(f"Initialized coarse mask head from {args.init_checkpoint}", flush=True)
+    else:
+        args.refine_only_epochs = 0
+
+    if verify_coarse_equivalence:
+        verify_zero_refinement(head, device, args)
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": list(head.coarse_parameters()), "lr": args.coarse_lr},
+            {"params": list(head.refinement_parameters()), "lr": args.refine_lr},
+        ],
+        weight_decay=args.weight_decay,
+    )
 
     history = []
     best_iou = -1.0
+    if args.eval_before_train:
+        initial_val = run_epoch(
+            backbone,
+            head,
+            val_loader,
+            None,
+            device,
+            args,
+            train=False,
+        )
+        initial_row = {
+            "epoch": 0,
+            "phase": "initial_eval",
+            "val": initial_val,
+        }
+        history.append(initial_row)
+        best_iou = initial_val["mean_iou_128"]
+        print(json.dumps(initial_row), flush=True)
+        torch.save(
+            {
+                "model_version": "stage1_plane_masks_multiscale_v1",
+                "head": head.state_dict(),
+                "args": vars(args),
+                "epoch": 0,
+                "phase": "initial_eval",
+                "val_stats": initial_val,
+            },
+            os.path.join(args.save_dir, "best.pt"),
+        )
     for epoch in range(1, args.num_epochs + 1):
+        phase = set_training_phase(head, optimizer, epoch, args)
+        print(f"Epoch {epoch}: phase={phase}", flush=True)
         train_stats = run_epoch(backbone, head, train_loader, optimizer, device, args, train=True)
         val_stats = run_epoch(backbone, head, val_loader, None, device, args, train=False)
-        row = {"epoch": epoch, "train": train_stats, "val": val_stats}
+        row = {"epoch": epoch, "phase": phase, "train": train_stats, "val": val_stats}
         history.append(row)
         print(json.dumps(row), flush=True)
         checkpoint = {
+            "model_version": "stage1_plane_masks_multiscale_v1",
             "head": head.state_dict(),
             "args": vars(args),
             "epoch": epoch,
+            "phase": phase,
             "train_stats": train_stats,
             "val_stats": val_stats,
         }
         torch.save(checkpoint, os.path.join(args.save_dir, "latest.pt"))
-        if val_stats["mean_iou"] > best_iou:
-            best_iou = val_stats["mean_iou"]
+        if val_stats["mean_iou_128"] > best_iou:
+            best_iou = val_stats["mean_iou_128"]
             torch.save(checkpoint, os.path.join(args.save_dir, "best.pt"))
         with open(os.path.join(args.save_dir, "history.json"), "w", encoding="utf-8") as handle:
             json.dump(history, handle, indent=2)

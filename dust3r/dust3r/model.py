@@ -218,6 +218,8 @@ class AsymmetricCroCo3DStereo (
         # 我们把它塞进字典里一起 return 出去
         res1['dec_features'] = dec1_float[-1]
         res2['dec_features'] = dec2_float[-1]
+        res1['dec_features_all'] = dec1_float
+        res2['dec_features_all'] = dec2_float
         # === 【LightRecon3D 截胡代码结束】 ===
 
         return res1, res2
