@@ -220,14 +220,14 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    config = checkpoint["args"]
     dataset = Structured3DDataset(
         root_dir=args.root_dir,
         split=args.split,
         image_size=(512, 512),
-        input_mode="single",
+        input_mode=config.get("input_mode", "single"),
     )
-    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    config = checkpoint["args"]
     feature_indices = config.get("feature_indices", [0, 6, 9, 12])
     feature_dims = config.get("feature_dims", [1024, 768, 768, 768])
     backbone = build_dust3r_backbone(args.weights_path, device=device)

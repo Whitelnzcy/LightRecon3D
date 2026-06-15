@@ -10,6 +10,10 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
 from dataloaders.s3d_dataset import Structured3DDataset
+from models.differentiable_plane_fit import (
+    differentiable_weighted_plane_fit,
+    point_to_plane_distance,
+)
 from models.plane_mask_head import PlaneMaskHead
 
 
@@ -68,6 +72,14 @@ def parse_args():
     parser.add_argument("--full_mask_threshold", type=float, default=0.5)
     parser.add_argument("--core_mask_threshold", type=float, default=0.75)
     parser.add_argument("--core_margin_threshold", type=float, default=0.35)
+    parser.add_argument("--plane_fit_warmup_epochs", type=int, default=1)
+    parser.add_argument("--plane_normal_weight", type=float, default=0.1)
+    parser.add_argument("--plane_offset_weight", type=float, default=0.1)
+    parser.add_argument("--plane_residual_weight", type=float, default=0.05)
+    parser.add_argument("--plane_fit_min_mass", type=float, default=32.0)
+    parser.add_argument("--plane_fit_trim_quantile", type=float, default=0.85)
+    parser.add_argument("--plane_fit_cov_jitter", type=float, default=1e-5)
+    parser.add_argument("--plane_fit_temperature", type=float, default=0.25)
     parser.add_argument("--log_every", type=int, default=32)
     parser.add_argument("--seed", type=int, default=20260612)
     # Legacy flags remain accepted so older launch scripts fail gracefully into
@@ -211,6 +223,30 @@ def feature_map_from_result(result, image, patch_size=16):
     if isinstance(features, (list, tuple)):
         features = features[-1]
     return _tokens_to_map(features, image, patch_size=patch_size)
+
+
+def point_map_from_result(result):
+    for key in ("pts3d", "pts3d_in_other_view", "pointmap", "pred_pts3d"):
+        if key in result:
+            points = result[key]
+            break
+    else:
+        raise KeyError(f"Cannot find point map in result keys: {list(result.keys())}")
+    if points.ndim != 4:
+        raise ValueError(f"Point map must be rank 4, got {tuple(points.shape)}")
+    if points.shape[-1] == 3:
+        return points
+    if points.shape[1] == 3:
+        return points.permute(0, 2, 3, 1).contiguous()
+    raise ValueError(f"Cannot interpret point-map shape {tuple(points.shape)}")
+
+
+def resize_point_map(point_map, target_hw):
+    return F.interpolate(
+        point_map.permute(0, 3, 1, 2),
+        size=target_hw,
+        mode="nearest",
+    ).permute(0, 2, 3, 1).contiguous()
 
 
 def _resize_labels(labels, target_hw):
@@ -571,7 +607,149 @@ def prediction_masks(
     }
 
 
-def sample_loss(output, raw_labels, plane_ids, args):
+def plane_fit_supervision(
+    mask_logits,
+    background_logits,
+    point_map,
+    targets,
+    query_ids,
+    target_ids,
+    args,
+):
+    zero = mask_logits.sum() * 0.0
+    empty_stats = {
+        "plane_fit_valid": 0.0,
+        "plane_normal_angle_deg": 0.0,
+        "plane_offset_abs_error": 0.0,
+        "plane_pred_residual": 0.0,
+        "plane_teacher_residual": 0.0,
+        "plane_fit_mass": 0.0,
+        "plane_fit_eigengap": 0.0,
+    }
+    if len(query_ids) == 0:
+        return zero, empty_stats
+
+    query_ids_t = torch.as_tensor(query_ids, device=mask_logits.device, dtype=torch.long)
+    target_ids_t = torch.as_tensor(target_ids, device=mask_logits.device, dtype=torch.long)
+    temperature = max(float(args.plane_fit_temperature), 1e-3)
+    class_probabilities = (
+        torch.cat((mask_logits, background_logits), dim=0) / temperature
+    ).softmax(dim=0)
+    pred_weights = class_probabilities[query_ids_t].flatten(1).transpose(0, 1)
+    teacher_weights = targets[target_ids_t].flatten(1).transpose(0, 1)
+    points = point_map.reshape(-1, 3).float()
+    valid_points = torch.isfinite(points).all(dim=-1) & (points.abs().amax(dim=-1) < 1e4)
+
+    with torch.no_grad():
+        initial_normals, initial_offsets, _, _, initial_mass = (
+            differentiable_weighted_plane_fit(
+                points,
+                teacher_weights,
+                valid_mask=valid_points,
+                cov_jitter=args.plane_fit_cov_jitter,
+            )
+        )
+        initial_distances = point_to_plane_distance(
+            torch.where(valid_points[:, None], points, torch.zeros_like(points)),
+            initial_normals,
+            initial_offsets,
+        )
+        trimmed_teacher = teacher_weights.clone()
+        trim_quantile = float(args.plane_fit_trim_quantile)
+        if trim_quantile < 1.0:
+            for plane_index in range(trimmed_teacher.shape[1]):
+                selected = (teacher_weights[:, plane_index] > 0.5) & valid_points
+                if int(selected.sum()) < 3:
+                    trimmed_teacher[:, plane_index] = 0.0
+                    continue
+                threshold = torch.quantile(
+                    initial_distances[selected, plane_index],
+                    trim_quantile,
+                )
+                trimmed_teacher[:, plane_index] *= (
+                    initial_distances[:, plane_index] <= threshold
+                ).to(trimmed_teacher.dtype)
+        teacher_normals, teacher_offsets, _, teacher_eigenvalues, teacher_mass = (
+            differentiable_weighted_plane_fit(
+                points,
+                trimmed_teacher,
+                valid_mask=valid_points,
+                cov_jitter=args.plane_fit_cov_jitter,
+            )
+        )
+
+    pred_normals, pred_offsets, _, pred_eigenvalues, pred_mass = (
+        differentiable_weighted_plane_fit(
+            points,
+            pred_weights,
+            valid_mask=valid_points,
+            cov_jitter=args.plane_fit_cov_jitter,
+        )
+    )
+    valid_planes = (
+        (initial_mass >= args.plane_fit_min_mass)
+        & (teacher_mass >= args.plane_fit_min_mass)
+        & (pred_mass >= args.plane_fit_min_mass)
+    )
+    if not valid_planes.any():
+        return zero, empty_stats
+
+    dot = (pred_normals * teacher_normals).sum(dim=-1)
+    normal_loss_per_plane = 1.0 - dot.abs().clamp(max=1.0)
+    orientation = torch.where(dot.detach() < 0.0, -1.0, 1.0)
+    aligned_offsets = pred_offsets * orientation
+    offset_loss_per_plane = F.smooth_l1_loss(
+        aligned_offsets,
+        teacher_offsets,
+        reduction="none",
+        beta=0.02,
+    )
+    safe_points = torch.where(valid_points[:, None], points, torch.zeros_like(points))
+    pred_distances = point_to_plane_distance(safe_points, pred_normals, pred_offsets)
+    teacher_distances = point_to_plane_distance(
+        safe_points,
+        teacher_normals,
+        teacher_offsets,
+    )
+    valid_float = valid_points[:, None].to(pred_weights.dtype)
+    pred_residual_per_plane = (
+        pred_distances * pred_weights * valid_float
+    ).sum(dim=0) / pred_mass.clamp_min(1e-6)
+    teacher_residual_per_plane = (
+        teacher_distances * trimmed_teacher * valid_float
+    ).sum(dim=0) / teacher_mass.clamp_min(1e-6)
+
+    normal_loss = normal_loss_per_plane[valid_planes].mean()
+    offset_loss = offset_loss_per_plane[valid_planes].mean()
+    residual_loss = pred_residual_per_plane[valid_planes].mean()
+    loss = (
+        args.plane_normal_weight * normal_loss
+        + args.plane_offset_weight * offset_loss
+        + args.plane_residual_weight * residual_loss
+    )
+    normal_angle = torch.rad2deg(
+        torch.acos(dot.abs().clamp(min=0.0, max=1.0))
+    )
+    eigengap = pred_eigenvalues[:, 1] - pred_eigenvalues[:, 0]
+    stats = {
+        "plane_fit_valid": float(valid_planes.sum().detach()),
+        "plane_normal_angle_deg": float(normal_angle[valid_planes].mean().detach()),
+        "plane_offset_abs_error": float(
+            (aligned_offsets - teacher_offsets).abs()[valid_planes].mean().detach()
+        ),
+        "plane_pred_residual": float(
+            pred_residual_per_plane[valid_planes].mean().detach()
+        ),
+        "plane_teacher_residual": float(
+            teacher_residual_per_plane[valid_planes].mean().detach()
+        ),
+        "plane_fit_mass": float(pred_mass[valid_planes].mean().detach()),
+        "plane_fit_eigengap": float(eigengap[valid_planes].mean().detach()),
+    }
+    return loss, stats
+
+
+def sample_loss(output, raw_labels, plane_ids, point_map, args, plane_fit_scale=1.0):
     total = output["mask_logits"].sum() * 0.0
     stats = defaultdict(float)
     batch_size = output["mask_logits"].shape[0]
@@ -621,6 +799,25 @@ def sample_loss(output, raw_labels, plane_ids, args):
             for key, value in scale_stats.items():
                 stats[f"{key}_{scale}"] += float(value.detach())
 
+        fit_point_map = resize_point_map(
+            point_map[batch_id : batch_id + 1],
+            output["mask_logits_128"].shape[-2:],
+        )[0]
+        fit_loss, fit_stats = plane_fit_supervision(
+            output["mask_logits_128"][batch_id],
+            output["background_logits_128"][batch_id],
+            fit_point_map,
+            targets_by_scale[128],
+            query_ids,
+            target_ids,
+            args,
+        )
+        sample_total = sample_total + float(plane_fit_scale) * fit_loss
+        stats["plane_fit_loss"] += float(fit_loss.detach())
+        stats["plane_fit_scale"] += float(plane_fit_scale)
+        for key, value in fit_stats.items():
+            stats[key] += value
+
         for scale in (64, 128):
             gate = output[f"refinement_gate{scale}"][batch_id, 0]
             boundary = dilate_mask(
@@ -668,7 +865,7 @@ def set_training_phase(head, optimizer, epoch, args):
     return "refinement_only" if refine_only else "joint"
 
 
-def run_epoch(backbone, head, loader, optimizer, device, args, train):
+def run_epoch(backbone, head, loader, optimizer, device, args, train, epoch=0):
     head.train(train)
     if train and not any(parameter.requires_grad for parameter in head.coarse_parameters()):
         for module in head.coarse_modules():
@@ -693,19 +890,27 @@ def run_epoch(backbone, head, loader, optimizer, device, args, train):
                 view2["img"],
                 args.feature_indices,
             )
+            points1 = point_map_from_result(result1)
+            points2 = point_map_from_result(result2)
         views = [
             (
                 features1,
                 view1["img"],
                 batch.get("gt_plane1", batch["gt_plane"]),
+                points1,
             )
         ]
         if args.input_mode == "pair" and "gt_plane2" in batch:
-            views.append((features2, view2["img"], batch["gt_plane2"]))
+            views.append((features2, view2["img"], batch["gt_plane2"], points2))
 
         losses = []
         rows = []
-        for features, image, gt_plane in views:
+        plane_fit_scale = (
+            0.0
+            if train and epoch <= args.plane_fit_warmup_epochs
+            else 1.0
+        )
+        for features, image, gt_plane, point_map in views:
             output = head(
                 features["deep"],
                 middle_feature=features["middle"],
@@ -719,7 +924,14 @@ def run_epoch(backbone, head, loader, optimizer, device, args, train):
                 args.num_queries,
                 args.min_plane_pixels,
             )
-            loss, row = sample_loss(output, gt_plane, plane_ids, args)
+            loss, row = sample_loss(
+                output,
+                gt_plane,
+                plane_ids,
+                point_map,
+                args,
+                plane_fit_scale=plane_fit_scale,
+            )
             losses.append(loss)
             rows.append(row)
         loss = torch.stack(losses).mean()
@@ -749,6 +961,8 @@ def run_epoch(backbone, head, loader, optimizer, device, args, train):
                 f"iou64={np.mean([row['mean_iou_64'] for row in rows]):.3f} "
                 f"iou128={np.mean([row['mean_iou_128'] for row in rows]):.3f} "
                 f"pp128={np.mean([row['plane_plane_boundary_accuracy_128'] for row in rows]):.3f} "
+                f"angle={np.mean([row['plane_normal_angle_deg'] for row in rows]):.2f} "
+                f"offset={np.mean([row['plane_offset_abs_error'] for row in rows]):.4f} "
                 f"alpha=({float(head.alpha64.detach()):.4f},"
                 f"{float(head.alpha128.detach()):.4f})",
                 flush=True,
@@ -869,6 +1083,7 @@ def main():
 
     history = []
     best_iou = -1.0
+    best_geometry_error = float("inf")
     if args.eval_before_train:
         initial_val = run_epoch(
             backbone,
@@ -878,6 +1093,7 @@ def main():
             device,
             args,
             train=False,
+            epoch=0,
         )
         initial_row = {
             "epoch": 0,
@@ -889,7 +1105,7 @@ def main():
         print(json.dumps(initial_row), flush=True)
         torch.save(
             {
-                "model_version": "stage1_plane_masks_multiscale_v1",
+                "model_version": "stage1_plane_masks_multiscale_svd_v1",
                 "head": head.state_dict(),
                 "args": vars(args),
                 "epoch": 0,
@@ -898,16 +1114,52 @@ def main():
             },
             os.path.join(args.save_dir, "best.pt"),
         )
+        if initial_val.get("plane_fit_valid", 0.0) > 0:
+            best_geometry_error = (
+                initial_val["plane_normal_angle_deg"]
+                + 50.0 * initial_val["plane_offset_abs_error"]
+                + 50.0 * initial_val["plane_pred_residual"]
+            )
+            torch.save(
+                {
+                    "model_version": "stage1_plane_masks_multiscale_svd_v1",
+                    "head": head.state_dict(),
+                    "args": vars(args),
+                    "epoch": 0,
+                    "phase": "initial_eval",
+                    "val_stats": initial_val,
+                    "geometry_error": best_geometry_error,
+                },
+                os.path.join(args.save_dir, "best_geometry.pt"),
+            )
     for epoch in range(1, args.num_epochs + 1):
         phase = set_training_phase(head, optimizer, epoch, args)
         print(f"Epoch {epoch}: phase={phase}", flush=True)
-        train_stats = run_epoch(backbone, head, train_loader, optimizer, device, args, train=True)
-        val_stats = run_epoch(backbone, head, val_loader, None, device, args, train=False)
+        train_stats = run_epoch(
+            backbone,
+            head,
+            train_loader,
+            optimizer,
+            device,
+            args,
+            train=True,
+            epoch=epoch,
+        )
+        val_stats = run_epoch(
+            backbone,
+            head,
+            val_loader,
+            None,
+            device,
+            args,
+            train=False,
+            epoch=epoch,
+        )
         row = {"epoch": epoch, "phase": phase, "train": train_stats, "val": val_stats}
         history.append(row)
         print(json.dumps(row), flush=True)
         checkpoint = {
-            "model_version": "stage1_plane_masks_multiscale_v1",
+            "model_version": "stage1_plane_masks_multiscale_svd_v1",
             "head": head.state_dict(),
             "args": vars(args),
             "epoch": epoch,
@@ -919,6 +1171,20 @@ def main():
         if val_stats["mean_iou_128"] > best_iou:
             best_iou = val_stats["mean_iou_128"]
             torch.save(checkpoint, os.path.join(args.save_dir, "best.pt"))
+        if val_stats.get("plane_fit_valid", 0.0) > 0:
+            geometry_error = (
+                val_stats["plane_normal_angle_deg"]
+                + 50.0 * val_stats["plane_offset_abs_error"]
+                + 50.0 * val_stats["plane_pred_residual"]
+            )
+            if geometry_error < best_geometry_error:
+                best_geometry_error = geometry_error
+                geometry_checkpoint = dict(checkpoint)
+                geometry_checkpoint["geometry_error"] = geometry_error
+                torch.save(
+                    geometry_checkpoint,
+                    os.path.join(args.save_dir, "best_geometry.pt"),
+                )
         with open(os.path.join(args.save_dir, "history.json"), "w", encoding="utf-8") as handle:
             json.dump(history, handle, indent=2)
 
