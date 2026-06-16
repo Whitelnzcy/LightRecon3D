@@ -59,6 +59,7 @@ class PlaneMaskHead(nn.Module):
         self.existence_head = nn.Linear(hidden_dim, 1)
         self.background_head = nn.Conv2d(hidden_dim, 1, kernel_size=1)
         self.boundary_head32 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
+        self.structural_boundary_head32 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
 
         self.middle_proj = nn.Conv2d(middle_feature_dim, hidden_dim, kernel_size=1)
         self.encoder_proj = nn.Conv2d(encoder_feature_dim, hidden_dim, kernel_size=1)
@@ -69,6 +70,7 @@ class PlaneMaskHead(nn.Module):
         )
         self.middle_delta = nn.Conv2d(hidden_dim, num_queries + 1, kernel_size=1)
         self.boundary_head64 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
+        self.structural_boundary_head64 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
 
         self.fine_semantic_up = _pixel_shuffle_block(
             hidden_dim * 3 + num_queries + 1,
@@ -93,6 +95,7 @@ class PlaneMaskHead(nn.Module):
         )
         self.fine_delta = nn.Conv2d(hidden_dim, num_queries + 1, kernel_size=1)
         self.boundary_head128 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
+        self.structural_boundary_head128 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
 
         # Zero gates preserve the old coarse result at initialization.
         self.alpha64 = nn.Parameter(torch.zeros(()))
@@ -131,6 +134,7 @@ class PlaneMaskHead(nn.Module):
                     "fine_",
                     "rgb_edge_",
                     "boundary_",
+                    "structural_boundary_",
                     "alpha64",
                     "alpha128",
                 )
@@ -307,6 +311,10 @@ class PlaneMaskHead(nn.Module):
             "boundary_logits_64": self.boundary_head64(middle_pixels),
             "boundary_logits_128": self.boundary_head128(fine_pixels),
             "boundary_logits": self.boundary_head128(fine_pixels),
+            "structural_boundary_logits_32": self.structural_boundary_head32(coarse_pixels),
+            "structural_boundary_logits_64": self.structural_boundary_head64(middle_pixels),
+            "structural_boundary_logits_128": self.structural_boundary_head128(fine_pixels),
+            "structural_boundary_logits": self.structural_boundary_head128(fine_pixels),
             "refinement_alpha64": self.alpha64,
             "refinement_alpha128": self.alpha128,
             "refinement_gate64": gate64,

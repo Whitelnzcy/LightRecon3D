@@ -10,14 +10,13 @@ import torch.nn.functional as F
 from dataloaders.s3d_dataset import Structured3DDataset
 from models.plane_mask_head import PlaneMaskHead
 from train_stage1_plane_masks import (
-    _resize_lines,
-    boundary_target_from_labels_and_lines,
     build_views,
     feature_maps_from_result,
     masks_for_plane_ids,
     match_queries,
     prediction_masks,
     select_plane_ids,
+    structural_boundary_target_from_labels,
     typed_boundary_maps,
 )
 
@@ -251,6 +250,9 @@ def main():
         "boundary_head32.",
         "boundary_head64.",
         "boundary_head128.",
+        "structural_boundary_head32.",
+        "structural_boundary_head64.",
+        "structural_boundary_head128.",
     )
     missing = [
         key for key in incompatible.missing_keys
@@ -394,17 +396,15 @@ def main():
         full_assignment[~full_union] = -1
         core_assignment = masks128["assignment"].clone()
         core_assignment[~core_union] = -1
-        gt_line128 = _resize_lines(batch["gt_line"], (128, 128))[0]
-        boundary_target128 = boundary_target_from_labels_and_lines(
+        boundary_target128 = structural_boundary_target_from_labels(
             F.interpolate(
                 batch["gt_plane"][:, None].float(),
                 size=(128, 128),
                 mode="nearest",
             )[0, 0].long(),
-            gt_line128,
             band_size=5,
         )
-        boundary_probability = output.get("boundary_logits_128")
+        boundary_probability = output.get("structural_boundary_logits_128")
         if boundary_probability is None:
             boundary_probability = torch.zeros_like(output["background_logits_128"])
         boundary_probability = boundary_probability[0, 0].sigmoid()
@@ -428,8 +428,8 @@ def main():
             (colorize(scale_assignments[128].cpu().numpy()), "Fine 128"),
             (colorize(full_assignment.cpu().numpy()), "Full support"),
             (colorize(core_assignment.cpu().numpy()), "Core fit support"),
-            (boundary_gt_rgb, "GT boundary/line"),
-            (boundary_pred_rgb, "Pred boundary"),
+            (boundary_gt_rgb, "GT structural boundary"),
+            (boundary_pred_rgb, "Pred structural boundary"),
             (error_rgb, "Fine errors (magenta)"),
         ]
         for axis, (image, title) in zip(axes.flat, panels):

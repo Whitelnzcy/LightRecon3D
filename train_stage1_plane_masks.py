@@ -67,7 +67,9 @@ def parse_args():
     parser.add_argument("--aux_existence_min_iou", type=float, default=0.05)
     parser.add_argument("--boundary_loss_weight", type=float, default=1.0)
     parser.add_argument("--boundary_head_weight", type=float, default=0.5)
+    parser.add_argument("--structural_boundary_head_weight", type=float, default=0.5)
     parser.add_argument("--boundary_head_pos_weight_max", type=float, default=12.0)
+    parser.add_argument("--decorative_line_weight", type=float, default=0.05)
     parser.add_argument("--boundary_pair_weight", type=float, default=0.5)
     parser.add_argument("--boundary_pair_same_margin", type=float, default=0.05)
     parser.add_argument("--separation_weight", type=float, default=0.5)
@@ -400,17 +402,53 @@ def dilate_mask(mask, band_size):
 
 
 def boundary_target_from_labels_and_lines(labels, lines, band_size):
-    pp_boundary, pb_boundary = typed_boundary_maps(labels)
-    plane_boundary = pp_boundary | pb_boundary
-    line_boundary = lines > 0.5
-    target = plane_boundary | line_boundary
+    target, _ = boundary_supervision_from_labels_and_lines(
+        labels,
+        lines,
+        band_size,
+        decorative_line_weight=0.0,
+    )
+    return target
+
+
+def structural_boundary_target_from_labels(labels, band_size):
+    pp_boundary, _ = typed_boundary_maps(labels)
+    target = pp_boundary
     if band_size > 1:
         target = dilate_mask(target, band_size)
     return target.float()
 
 
-def boundary_head_loss(logits, target, args):
+def boundary_supervision_from_labels_and_lines(
+    labels,
+    lines,
+    band_size,
+    decorative_line_weight=0.05,
+):
+    pp_boundary, pb_boundary = typed_boundary_maps(labels)
+    plane_boundary = pp_boundary | pb_boundary
+    line_boundary = lines > 0.5
+    structural_band = dilate_mask(plane_boundary, max(int(band_size), 1))
+    structural_line = line_boundary & structural_band
+    decorative_line = line_boundary & ~structural_band
+    target = plane_boundary | structural_line
+    if band_size > 1:
+        target = dilate_mask(target, band_size)
+    weight = torch.ones_like(target, dtype=torch.float32)
+    if decorative_line_weight > 0:
+        decorative_target = decorative_line
+        if band_size > 1:
+            decorative_target = dilate_mask(decorative_target, band_size)
+        target = target | decorative_target
+        decorative_only = decorative_target & ~dilate_mask(plane_boundary | structural_line, band_size)
+        weight[decorative_only] = float(decorative_line_weight)
+    return target.float(), weight
+
+
+def boundary_head_loss(logits, target, args, weight=None):
     target = target.to(dtype=logits.dtype, device=logits.device)
+    if weight is not None:
+        weight = weight.to(dtype=logits.dtype, device=logits.device)
     positive = target.sum()
     negative = target.numel() - positive
     pos_weight = (
@@ -420,6 +458,7 @@ def boundary_head_loss(logits, target, args):
         logits,
         target,
         pos_weight=pos_weight,
+        weight=weight,
     )
     probability = logits.sigmoid()
     prediction = probability > 0.5
@@ -584,6 +623,7 @@ def scale_loss(
     mask_logits,
     background_logits,
     boundary_logits,
+    structural_boundary_logits,
     labels,
     targets,
     query_ids,
@@ -650,7 +690,12 @@ def scale_loss(
         ).mean()
     else:
         separation = zero
-    boundary_probability = boundary_logits.sigmoid() if boundary_logits is not None else None
+    if structural_boundary_logits is not None:
+        boundary_probability = structural_boundary_logits.sigmoid()
+    elif boundary_logits is not None:
+        boundary_probability = boundary_logits.sigmoid()
+    else:
+        boundary_probability = None
     smoothness = interior_smoothness(
         class_logits,
         class_target,
@@ -1076,6 +1121,7 @@ def sample_loss(
                 output[f"mask_logits_{scale}"][batch_id],
                 output[f"background_logits_{scale}"][batch_id],
                 output[f"boundary_logits_{scale}"][batch_id, 0],
+                output[f"structural_boundary_logits_{scale}"][batch_id, 0],
                 labels_by_scale[scale],
                 targets_by_scale[scale],
                 query_ids,
@@ -1098,20 +1144,41 @@ def sample_loss(
                     aux_stats["aux_match_iou"].detach()
                 )
 
-            boundary_target = boundary_target_from_labels_and_lines(
+            boundary_target, boundary_weight = boundary_supervision_from_labels_and_lines(
                 labels_by_scale[scale],
                 lines_by_scale[scale],
                 args.boundary_band,
+                decorative_line_weight=args.decorative_line_weight,
             )
             boundary_value, boundary_stats = boundary_head_loss(
                 output[f"boundary_logits_{scale}"][batch_id, 0],
                 boundary_target,
                 args,
+                weight=boundary_weight,
             )
             sample_total = sample_total + args.boundary_head_weight * boundary_value
             stats[f"boundary_head_loss_{scale}"] += float(boundary_value.detach())
             for key, value in boundary_stats.items():
                 stats[f"{key}_{scale}"] += float(value.detach())
+
+            structural_target = structural_boundary_target_from_labels(
+                labels_by_scale[scale],
+                args.boundary_band,
+            )
+            structural_value, structural_stats = boundary_head_loss(
+                output[f"structural_boundary_logits_{scale}"][batch_id, 0],
+                structural_target,
+                args,
+            )
+            sample_total = (
+                sample_total
+                + args.structural_boundary_head_weight * structural_value
+            )
+            stats[f"structural_boundary_head_loss_{scale}"] += float(
+                structural_value.detach()
+            )
+            for key, value in structural_stats.items():
+                stats[f"structural_{key}_{scale}"] += float(value.detach())
 
         fit_point_map = resize_point_map(
             point_map[batch_id : batch_id + 1],
@@ -1354,6 +1421,9 @@ def load_multiscale_state_dict_allow_boundary_init(head, state_dict):
         "boundary_head32.",
         "boundary_head64.",
         "boundary_head128.",
+        "structural_boundary_head32.",
+        "structural_boundary_head64.",
+        "structural_boundary_head128.",
     )
     unexpected = list(incompatible.unexpected_keys)
     missing = [
