@@ -63,6 +63,8 @@ def parse_args():
     parser.add_argument("--plane_count_recall_weight", type=float, default=0.25)
     parser.add_argument("--plane_count_over_weight", type=float, default=0.15)
     parser.add_argument("--aux_scale_match_weight", type=float, default=0.25)
+    parser.add_argument("--aux_existence_target", type=float, default=0.7)
+    parser.add_argument("--aux_existence_min_iou", type=float, default=0.05)
     parser.add_argument("--boundary_loss_weight", type=float, default=1.0)
     parser.add_argument("--boundary_head_weight", type=float, default=0.5)
     parser.add_argument("--boundary_head_pos_weight_max", type=float, default=12.0)
@@ -750,6 +752,23 @@ def auxiliary_scale_matching_loss(mask_logits, targets, args):
     return focal + tversky, {"aux_match_iou": mean_iou}
 
 
+def matched_query_ious(mask_logits, targets, query_ids, target_ids):
+    if len(query_ids) == 0:
+        return []
+    predicted = mask_logits.argmax(dim=0)
+    ious = []
+    for query_id, target_id in zip(query_ids, target_ids):
+        pred_mask = predicted == int(query_id)
+        target_mask = targets[target_id] > 0.5
+        union = (pred_mask | target_mask).sum()
+        if union > 0:
+            iou = (pred_mask & target_mask).sum().float() / union
+        else:
+            iou = mask_logits.sum() * 0.0
+        ious.append(iou)
+    return ious
+
+
 def prediction_masks(
     mask_logits,
     background_logits,
@@ -966,11 +985,14 @@ def sample_loss(
             )[0]
             targets_by_scale[scale] = _stack_masks(masks[0], logits[batch_id])
 
-        query_ids, target_ids = match_queries(
-            output["mask_logits_32"][batch_id],
-            targets_by_scale[32],
-            args,
-        )
+        matches_by_scale = {}
+        for scale in SCALES:
+            matches_by_scale[scale] = match_queries(
+                output[f"mask_logits_{scale}"][batch_id],
+                targets_by_scale[scale],
+                args,
+            )
+        query_ids, target_ids = matches_by_scale[32]
         existence_target = torch.zeros_like(output["existence_logits"][batch_id])
         existence_weight = torch.ones_like(output["existence_logits"][batch_id])
         if len(query_ids):
@@ -982,6 +1004,50 @@ def sample_loss(
                 max=float(args.small_existence_max_weight)
             )
             existence_weight[query_ids_t] = target_weights
+        aux_existence_queries = 0
+        for scale in (64, 128):
+            aux_query_ids, aux_target_ids = matches_by_scale[scale]
+            aux_ious = matched_query_ious(
+                output[f"mask_logits_{scale}"][batch_id],
+                targets_by_scale[scale],
+                aux_query_ids,
+                aux_target_ids,
+            )
+            if not aux_ious:
+                continue
+            aux_query_ids_t = torch.as_tensor(
+                aux_query_ids,
+                device=existence_target.device,
+                dtype=torch.long,
+            )
+            aux_target_ids_t = torch.as_tensor(
+                aux_target_ids,
+                device=existence_target.device,
+                dtype=torch.long,
+            )
+            aux_keep = torch.stack(aux_ious).detach() >= float(args.aux_existence_min_iou)
+            if not bool(aux_keep.any()):
+                continue
+            kept_query_ids = aux_query_ids_t[aux_keep]
+            kept_target_ids = aux_target_ids_t[aux_keep]
+            old_targets = existence_target[kept_query_ids].clone()
+            weak_target = existence_target.new_full(
+                kept_query_ids.shape,
+                float(args.aux_existence_target),
+            )
+            existence_target[kept_query_ids] = torch.maximum(
+                existence_target[kept_query_ids],
+                weak_target,
+            )
+            target_areas = targets_by_scale[scale][kept_target_ids].sum(dim=(1, 2)).clamp_min(1.0)
+            target_weights = torch.sqrt(target_areas.max() / target_areas).clamp(
+                max=float(args.small_existence_max_weight)
+            )
+            existence_weight[kept_query_ids] = torch.maximum(
+                existence_weight[kept_query_ids],
+                target_weights,
+            )
+            aux_existence_queries += int((existence_target[kept_query_ids] > old_targets).sum().item())
         existence_raw = F.binary_cross_entropy_with_logits(
             output["existence_logits"][batch_id],
             existence_target,
@@ -1003,6 +1069,7 @@ def sample_loss(
         stats["existence"] += float(existence.detach())
         stats["plane_count_loss"] += float(count_recall.detach())
         stats["pred_planes_soft"] += float(predicted_count_soft.detach())
+        stats["aux_existence_queries"] += float(aux_existence_queries)
 
         for scale in SCALES:
             scale_value, scale_stats = scale_loss(
