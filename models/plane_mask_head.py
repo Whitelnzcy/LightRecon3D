@@ -71,6 +71,7 @@ class PlaneMaskHead(nn.Module):
         self.middle_delta = nn.Conv2d(hidden_dim, num_queries + 1, kernel_size=1)
         self.boundary_head64 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
         self.structural_boundary_head64 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
+        self.structural_condition64 = nn.Conv2d(1, hidden_dim, kernel_size=1)
 
         self.fine_semantic_up = _pixel_shuffle_block(
             hidden_dim * 3 + num_queries + 1,
@@ -96,10 +97,17 @@ class PlaneMaskHead(nn.Module):
         self.fine_delta = nn.Conv2d(hidden_dim, num_queries + 1, kernel_size=1)
         self.boundary_head128 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
         self.structural_boundary_head128 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
+        self.structural_condition128 = nn.Conv2d(1, hidden_dim, kernel_size=1)
 
         # Zero gates preserve the old coarse result at initialization.
         self.alpha64 = nn.Parameter(torch.zeros(()))
         self.alpha128 = nn.Parameter(torch.zeros(()))
+        self.structural_gate64 = nn.Parameter(torch.zeros(()))
+        self.structural_gate128 = nn.Parameter(torch.zeros(()))
+        nn.init.zeros_(self.structural_condition64.weight)
+        nn.init.zeros_(self.structural_condition64.bias)
+        nn.init.zeros_(self.structural_condition128.weight)
+        nn.init.zeros_(self.structural_condition128.bias)
 
     def coarse_modules(self):
         return (
@@ -135,6 +143,8 @@ class PlaneMaskHead(nn.Module):
                     "rgb_edge_",
                     "boundary_",
                     "structural_boundary_",
+                    "structural_condition",
+                    "structural_gate",
                     "alpha64",
                     "alpha128",
                 )
@@ -204,6 +214,7 @@ class PlaneMaskHead(nn.Module):
             self._assert_spatial(encoder_feature, coarse_hw, "encoder_feature")
 
         class32 = torch.cat((mask32, background32), dim=1)
+        structural32 = self.structural_boundary_head32(coarse_pixels)
         middle_pixels = self.middle_up(
             torch.cat(
                 (
@@ -214,6 +225,13 @@ class PlaneMaskHead(nn.Module):
                 dim=1,
             )
         )
+        structural64_prior = F.interpolate(
+            structural32.sigmoid().detach(),
+            size=middle_pixels.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        )
+        middle_pixels = middle_pixels + self.structural_condition64(structural64_prior)
         class64_base = F.interpolate(
             class32,
             scale_factor=2.0,
@@ -226,10 +244,12 @@ class PlaneMaskHead(nn.Module):
             mode="bilinear",
             align_corners=False,
         )
+        gate64 = (gate64 + self.structural_gate64 * structural64_prior).clamp(0.0, 1.0)
         class64 = (
             class64_base
             + self.alpha64 * gate64 * self.middle_delta(middle_pixels)
         )
+        structural64 = self.structural_boundary_head64(middle_pixels)
 
         shallow64 = F.interpolate(
             self.shallow_proj(shallow_feature),
@@ -249,6 +269,13 @@ class PlaneMaskHead(nn.Module):
         fine_semantic = self.fine_semantic_up(
             torch.cat((middle_pixels, shallow64, encoder64, class64), dim=1)
         )
+        structural128_prior = F.interpolate(
+            structural64.sigmoid().detach(),
+            size=fine_semantic.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        )
+        fine_semantic = fine_semantic + self.structural_condition128(structural128_prior)
         class128_base = F.interpolate(
             class64,
             scale_factor=2.0,
@@ -287,6 +314,7 @@ class PlaneMaskHead(nn.Module):
             mode="bilinear",
             align_corners=False,
         )
+        gate128 = (gate128 + self.structural_gate128 * structural128_prior).clamp(0.0, 1.0)
         class128 = (
             class128_base
             + self.alpha128 * gate128 * self.fine_delta(fine_pixels)
@@ -311,12 +339,14 @@ class PlaneMaskHead(nn.Module):
             "boundary_logits_64": self.boundary_head64(middle_pixels),
             "boundary_logits_128": self.boundary_head128(fine_pixels),
             "boundary_logits": self.boundary_head128(fine_pixels),
-            "structural_boundary_logits_32": self.structural_boundary_head32(coarse_pixels),
-            "structural_boundary_logits_64": self.structural_boundary_head64(middle_pixels),
+            "structural_boundary_logits_32": structural32,
+            "structural_boundary_logits_64": structural64,
             "structural_boundary_logits_128": self.structural_boundary_head128(fine_pixels),
             "structural_boundary_logits": self.structural_boundary_head128(fine_pixels),
             "refinement_alpha64": self.alpha64,
             "refinement_alpha128": self.alpha128,
+            "structural_gate_weight64": self.structural_gate64,
+            "structural_gate_weight128": self.structural_gate128,
             "refinement_gate64": gate64,
             "refinement_gate128": gate128,
         }

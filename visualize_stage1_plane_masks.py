@@ -253,6 +253,10 @@ def main():
         "structural_boundary_head32.",
         "structural_boundary_head64.",
         "structural_boundary_head128.",
+        "structural_condition64.",
+        "structural_condition128.",
+        "structural_gate64",
+        "structural_gate128",
     )
     missing = [
         key for key in incompatible.missing_keys

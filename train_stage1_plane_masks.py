@@ -1246,9 +1246,11 @@ def sample_loss(
 
     stats["alpha64"] = float(output["refinement_alpha64"].detach())
     stats["alpha128"] = float(output["refinement_alpha128"].detach())
+    stats["structural_gate64"] = float(output["structural_gate_weight64"].detach())
+    stats["structural_gate128"] = float(output["structural_gate_weight128"].detach())
     return total / batch_size, {
         key: value / batch_size
-        if key not in ("alpha64", "alpha128")
+        if key not in ("alpha64", "alpha128", "structural_gate64", "structural_gate128")
         else value
         for key, value in stats.items()
     }
@@ -1449,6 +1451,10 @@ def load_multiscale_state_dict_allow_boundary_init(head, state_dict):
         "structural_boundary_head32.",
         "structural_boundary_head64.",
         "structural_boundary_head128.",
+        "structural_condition64.",
+        "structural_condition128.",
+        "structural_gate64",
+        "structural_gate128",
     )
     unexpected = list(incompatible.unexpected_keys)
     missing = [
