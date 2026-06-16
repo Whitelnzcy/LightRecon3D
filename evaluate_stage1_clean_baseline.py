@@ -13,12 +13,15 @@ from torch.utils.data import DataLoader, Subset
 from dataloaders.s3d_dataset import Structured3DDataset
 from models.build_backbone import build_dust3r_backbone
 from models.clean_plane_mask_head import CleanPlaneMaskHead
+from models.differentiable_plane_fit import differentiable_weighted_plane_fit, point_to_plane_distance
 from train_stage1_clean_baseline import class_target_from_matches, move_batch
 from train_stage1_plane_masks import (
     build_views,
     feature_maps_from_result,
     masks_for_plane_ids,
     match_queries,
+    point_map_from_result,
+    resize_point_map,
     select_plane_ids,
     typed_boundary_maps,
 )
@@ -77,7 +80,62 @@ def boundary_f1(predicted, target, tolerance):
     return float((2 * precision * recall / (precision + recall).clamp_min(1e-6)).cpu())
 
 
-def evaluate_one(output, labels, args_like):
+def plane_fit_diagnostics(points_map, targets, predicted, query_ids, target_ids, min_points=20):
+    points = points_map.reshape(-1, 3).float()
+    valid_points = torch.isfinite(points).all(dim=-1) & (points.abs().amax(dim=-1) < 1e4)
+    normal_angles = []
+    offset_errors = []
+    gt_residuals = []
+    pred_residuals_on_gt = []
+    pred_residuals_on_pred = []
+    valid_fits = 0
+    for query_id, target_id in zip(query_ids, target_ids):
+        gt_mask = (targets[target_id] > 0.5).reshape(-1)
+        pred_mask = (predicted == int(query_id)).reshape(-1)
+        if int((gt_mask & valid_points).sum()) < min_points or int((pred_mask & valid_points).sum()) < min_points:
+            continue
+        gt_weights = gt_mask.float()[:, None]
+        pred_weights = pred_mask.float()[:, None]
+        gt_n, gt_d, _, _, gt_mass = differentiable_weighted_plane_fit(points, gt_weights, valid_points)
+        pred_n, pred_d, _, _, pred_mass = differentiable_weighted_plane_fit(points, pred_weights, valid_points)
+        if float(gt_mass[0]) < min_points or float(pred_mass[0]) < min_points:
+            continue
+        if torch.dot(gt_n[0], pred_n[0]) < 0:
+            pred_n = -pred_n
+            pred_d = -pred_d
+        cos = torch.dot(gt_n[0], pred_n[0]).abs().clamp(0, 1)
+        normal_angles.append(float(torch.rad2deg(torch.acos(cos)).cpu()))
+        offset_errors.append(float((gt_d[0] - pred_d[0]).abs().cpu()))
+        gt_dist = point_to_plane_distance(points, gt_n, gt_d)[:, 0]
+        pred_dist = point_to_plane_distance(points, pred_n, pred_d)[:, 0]
+        gt_residuals.append(float(gt_dist[gt_mask & valid_points].mean().cpu()))
+        pred_residuals_on_gt.append(float(pred_dist[gt_mask & valid_points].mean().cpu()))
+        pred_residuals_on_pred.append(float(pred_dist[pred_mask & valid_points].mean().cpu()))
+        valid_fits += 1
+    if not valid_fits:
+        return {
+            "fit_valid_planes": 0,
+            "fit_normal_angle_deg": "",
+            "fit_offset_abs_error": "",
+            "fit_gt_residual": "",
+            "fit_pred_residual_on_gt": "",
+            "fit_pred_residual_on_pred": "",
+            "fit_residual_delta": "",
+        }
+    gt_residual = float(np.mean(gt_residuals))
+    pred_residual_on_gt = float(np.mean(pred_residuals_on_gt))
+    return {
+        "fit_valid_planes": valid_fits,
+        "fit_normal_angle_deg": float(np.mean(normal_angles)),
+        "fit_offset_abs_error": float(np.mean(offset_errors)),
+        "fit_gt_residual": gt_residual,
+        "fit_pred_residual_on_gt": pred_residual_on_gt,
+        "fit_pred_residual_on_pred": float(np.mean(pred_residuals_on_pred)),
+        "fit_residual_delta": pred_residual_on_gt - gt_residual,
+    }
+
+
+def evaluate_one(output, labels, points_map, args_like):
     _, plane_ids = select_plane_ids(labels[None], output["mask_logits"].shape[-2:], args_like.num_queries, args_like.min_plane_pixels)
     labels32, masks = masks_for_plane_ids(labels[None], output["mask_logits"].shape[-2:], plane_ids)
     targets = torch.stack(masks[0]) if masks[0] else output["mask_logits"].new_zeros((0, *output["mask_logits"].shape[-2:]))
@@ -121,6 +179,7 @@ def evaluate_one(output, labels, args_like):
         "boundary_f1_t2": boundary_f1(predicted, gt_query, 2),
         "boundary_f1_t4": boundary_f1(predicted, gt_query, 4),
     }
+    metrics.update(plane_fit_diagnostics(points_map, targets, predicted, query_ids, target_ids))
     return metrics, predicted, gt_query, confusion, query_ids, target_ids
 
 
@@ -145,8 +204,26 @@ def classify_failure(metrics):
     return failures
 
 
-def save_figure(path, rgb, gt_query, predicted, error, existence, confusion):
-    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+def save_figure(path, rgb, gt_query, predicted, error, existence, confusion, metrics):
+    fig, axes = plt.subplots(2, 4, figsize=(20, 9))
+    def fmt_value(key, suffix="", precision=4):
+        value = metrics[key]
+        if value == "":
+            return "n/a"
+        return f"{float(value):.{precision}f}{suffix}"
+
+    fit_text = "\n".join(
+        [
+            f"IoU: {metrics['mean_iou']:.3f}",
+            f"Failures: {metrics.get('failure_types', '')}",
+            f"Fit planes: {metrics['fit_valid_planes']}",
+            f"Normal angle: {fmt_value('fit_normal_angle_deg', ' deg', 2)}",
+            f"Offset err: {fmt_value('fit_offset_abs_error')}",
+            f"GT residual: {fmt_value('fit_gt_residual')}",
+            f"Pred on GT residual: {fmt_value('fit_pred_residual_on_gt')}",
+            f"Residual delta: {fmt_value('fit_residual_delta')}",
+        ]
+    )
     panels = [
         (rgb, "Input RGB"),
         (colorize(gt_query.cpu().numpy()), "GT matched query"),
@@ -154,10 +231,16 @@ def save_figure(path, rgb, gt_query, predicted, error, existence, confusion):
         (error, "Error map"),
         (np.tile((existence[None, :, None] * 255).astype(np.uint8), (64, 1, 3)), "Existence"),
         (confusion, "Confusion"),
+        (fit_text, "Plane fit diagnostics"),
     ]
     for axis, (image, title) in zip(axes.flat, panels):
-        axis.imshow(image, cmap=None if image.ndim == 3 else "magma")
+        if isinstance(image, str):
+            axis.text(0.02, 0.98, image, va="top", ha="left", fontsize=11, family="monospace")
+        else:
+            axis.imshow(image, cmap=None if image.ndim == 3 else "magma")
         axis.set_title(title)
+        axis.axis("off")
+    for axis in axes.flat[len(panels) :]:
         axis.axis("off")
     fig.tight_layout()
     fig.savefig(path, dpi=160)
@@ -196,9 +279,14 @@ def main():
         result1, _ = backbone(view1, view2)
         features = feature_maps_from_result(result1, view1["img"], (0, 6, 9, config.get("feature_index", 12)))
         output = head(features["deep"])
+        point_map = resize_point_map(
+            point_map_from_result(result1),
+            output["mask_logits"].shape[-2:],
+        )[0]
         metrics, predicted, gt_query, confusion, _, _ = evaluate_one(
             {key: value[0] if value.ndim > 1 else value for key, value in output.items()},
             batch.get("gt_plane1", batch["gt_plane"])[0],
+            point_map,
             args_like,
         )
         metrics["sample_idx"] = local_idx
@@ -223,6 +311,7 @@ def main():
             error_rgb,
             output["existence_logits"][0].sigmoid().detach().cpu().numpy(),
             confusion,
+            metrics,
         )
     fieldnames = list(rows[0].keys()) if rows else []
     with (output_dir / "diagnostics_summary.csv").open("w", newline="", encoding="utf-8") as handle:
