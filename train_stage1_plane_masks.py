@@ -60,6 +60,10 @@ def parse_args():
     parser.add_argument("--partition_weight", type=float, default=1.0)
     parser.add_argument("--existence_weight", type=float, default=1.0)
     parser.add_argument("--boundary_loss_weight", type=float, default=1.0)
+    parser.add_argument("--boundary_head_weight", type=float, default=0.5)
+    parser.add_argument("--boundary_head_pos_weight_max", type=float, default=12.0)
+    parser.add_argument("--boundary_pair_weight", type=float, default=0.5)
+    parser.add_argument("--boundary_pair_same_margin", type=float, default=0.05)
     parser.add_argument("--separation_weight", type=float, default=0.5)
     parser.add_argument("--smoothness_weight", type=float, default=0.05)
     parser.add_argument("--boundary_band", type=int, default=5)
@@ -257,6 +261,14 @@ def _resize_labels(labels, target_hw):
     )[:, 0].long()
 
 
+def _resize_lines(lines, target_hw):
+    return F.interpolate(
+        lines.float(),
+        size=target_hw,
+        mode="nearest",
+    )[:, 0].float()
+
+
 def select_plane_ids(labels, target_hw, max_planes, min_pixels):
     coarse_labels = _resize_labels(labels, target_hw)
     batch_ids = []
@@ -381,6 +393,42 @@ def dilate_mask(mask, band_size):
     )[0, 0] > 0
 
 
+def boundary_target_from_labels_and_lines(labels, lines, band_size):
+    pp_boundary, pb_boundary = typed_boundary_maps(labels)
+    plane_boundary = pp_boundary | pb_boundary
+    line_boundary = lines > 0.5
+    target = plane_boundary | line_boundary
+    if band_size > 1:
+        target = dilate_mask(target, band_size)
+    return target.float()
+
+
+def boundary_head_loss(logits, target, args):
+    target = target.to(dtype=logits.dtype, device=logits.device)
+    positive = target.sum()
+    negative = target.numel() - positive
+    pos_weight = (
+        negative / positive.clamp_min(1.0)
+    ).clamp(max=float(args.boundary_head_pos_weight_max))
+    bce = F.binary_cross_entropy_with_logits(
+        logits,
+        target,
+        pos_weight=pos_weight,
+    )
+    probability = logits.sigmoid()
+    prediction = probability > 0.5
+    target_bool = target > 0.5
+    true_positive = (prediction & target_bool).sum().float()
+    precision = true_positive / prediction.sum().clamp_min(1).float()
+    recall = true_positive / target_bool.sum().clamp_min(1).float()
+    f1 = 2.0 * precision * recall / (precision + recall).clamp_min(1e-6)
+    return bce, {
+        "boundary_head_precision": precision,
+        "boundary_head_recall": recall,
+        "boundary_head_f1": f1,
+    }
+
+
 def _stack_masks(mask_list, reference):
     if mask_list:
         return torch.stack(mask_list)
@@ -441,6 +489,43 @@ def interior_smoothness(class_logits, class_target):
     if same_v.any():
         diff_v = (probabilities[:, 1:, :] - probabilities[:, :-1, :]).abs().mean(dim=0)
         total = total + diff_v[same_v].mean()
+        count += 1
+    return total / max(count, 1)
+
+
+def boundary_pair_separation(class_logits, class_target, num_queries, margin):
+    probabilities = class_logits.softmax(dim=0)[:num_queries]
+    total = class_logits.sum() * 0.0
+    count = 0
+
+    def pair_loss(left_target, right_target, left_prob, right_prob):
+        valid = (
+            (left_target < num_queries)
+            & (right_target < num_queries)
+            & (left_target != right_target)
+        )
+        if not valid.any():
+            return None
+        same_query_probability = (left_prob[:, valid] * right_prob[:, valid]).sum(dim=0)
+        return F.relu(same_query_probability - float(margin)).mean()
+
+    horizontal = pair_loss(
+        class_target[:, :-1],
+        class_target[:, 1:],
+        probabilities[:, :, :-1],
+        probabilities[:, :, 1:],
+    )
+    if horizontal is not None:
+        total = total + horizontal
+        count += 1
+    vertical = pair_loss(
+        class_target[:-1, :],
+        class_target[1:, :],
+        probabilities[:, :-1, :],
+        probabilities[:, 1:, :],
+    )
+    if vertical is not None:
+        total = total + vertical
         count += 1
     return total / max(count, 1)
 
@@ -515,12 +600,19 @@ def scale_loss(
     else:
         separation = zero
     smoothness = interior_smoothness(class_logits, class_target)
+    boundary_pair = boundary_pair_separation(
+        class_logits,
+        class_target,
+        args.num_queries,
+        args.boundary_pair_same_margin,
+    )
 
     loss = (
         args.mask_focal_weight * focal
         + args.mask_tversky_weight * tversky
         + args.partition_weight * partition
         + args.boundary_loss_weight * boundary_loss
+        + args.boundary_pair_weight * boundary_pair
         + args.separation_weight * separation
         + args.smoothness_weight * smoothness
     )
@@ -556,6 +648,7 @@ def scale_loss(
         "tversky": tversky,
         "partition": partition,
         "boundary_loss": boundary_loss,
+        "boundary_pair": boundary_pair,
         "separation": separation,
         "smoothness": smoothness,
         "mask_accuracy": accuracy,
@@ -749,7 +842,15 @@ def plane_fit_supervision(
     return loss, stats
 
 
-def sample_loss(output, raw_labels, plane_ids, point_map, args, plane_fit_scale=1.0):
+def sample_loss(
+    output,
+    raw_labels,
+    raw_lines,
+    plane_ids,
+    point_map,
+    args,
+    plane_fit_scale=1.0,
+):
     total = output["mask_logits"].sum() * 0.0
     stats = defaultdict(float)
     batch_size = output["mask_logits"].shape[0]
@@ -757,6 +858,7 @@ def sample_loss(output, raw_labels, plane_ids, point_map, args, plane_fit_scale=
 
     for batch_id in range(batch_size):
         labels_by_scale = {}
+        lines_by_scale = {}
         targets_by_scale = {}
         for scale in SCALES:
             logits = output[f"mask_logits_{scale}"]
@@ -766,6 +868,10 @@ def sample_loss(output, raw_labels, plane_ids, point_map, args, plane_fit_scale=
                 [plane_ids[batch_id]],
             )
             labels_by_scale[scale] = labels[0]
+            lines_by_scale[scale] = _resize_lines(
+                raw_lines[batch_id : batch_id + 1],
+                logits.shape[-2:],
+            )[0]
             targets_by_scale[scale] = _stack_masks(masks[0], logits[batch_id])
 
         query_ids, target_ids = match_queries(
@@ -797,6 +903,21 @@ def sample_loss(output, raw_labels, plane_ids, point_map, args, plane_fit_scale=
             )
             sample_total = sample_total + scale_weights[scale] * scale_value
             for key, value in scale_stats.items():
+                stats[f"{key}_{scale}"] += float(value.detach())
+
+            boundary_target = boundary_target_from_labels_and_lines(
+                labels_by_scale[scale],
+                lines_by_scale[scale],
+                args.boundary_band,
+            )
+            boundary_value, boundary_stats = boundary_head_loss(
+                output[f"boundary_logits_{scale}"][batch_id, 0],
+                boundary_target,
+                args,
+            )
+            sample_total = sample_total + args.boundary_head_weight * boundary_value
+            stats[f"boundary_head_loss_{scale}"] += float(boundary_value.detach())
+            for key, value in boundary_stats.items():
                 stats[f"{key}_{scale}"] += float(value.detach())
 
         fit_point_map = resize_point_map(
@@ -897,11 +1018,12 @@ def run_epoch(backbone, head, loader, optimizer, device, args, train, epoch=0):
                 features1,
                 view1["img"],
                 batch.get("gt_plane1", batch["gt_plane"]),
+                batch.get("gt_line1", batch["gt_line"]),
                 points1,
             )
         ]
         if args.input_mode == "pair" and "gt_plane2" in batch:
-            views.append((features2, view2["img"], batch["gt_plane2"], points2))
+            views.append((features2, view2["img"], batch["gt_plane2"], batch["gt_line2"], points2))
 
         losses = []
         rows = []
@@ -910,7 +1032,7 @@ def run_epoch(backbone, head, loader, optimizer, device, args, train, epoch=0):
             if train and epoch <= args.plane_fit_warmup_epochs
             else 1.0
         )
-        for features, image, gt_plane, point_map in views:
+        for features, image, gt_plane, gt_line, point_map in views:
             output = head(
                 features["deep"],
                 middle_feature=features["middle"],
@@ -927,6 +1049,7 @@ def run_epoch(backbone, head, loader, optimizer, device, args, train, epoch=0):
             loss, row = sample_loss(
                 output,
                 gt_plane,
+                gt_line,
                 plane_ids,
                 point_map,
                 args,
@@ -961,6 +1084,7 @@ def run_epoch(backbone, head, loader, optimizer, device, args, train, epoch=0):
                 f"iou64={np.mean([row['mean_iou_64'] for row in rows]):.3f} "
                 f"iou128={np.mean([row['mean_iou_128'] for row in rows]):.3f} "
                 f"pp128={np.mean([row['plane_plane_boundary_accuracy_128'] for row in rows]):.3f} "
+                f"bf128={np.mean([row['boundary_head_f1_128'] for row in rows]):.3f} "
                 f"angle={np.mean([row['plane_normal_angle_deg'] for row in rows]):.2f} "
                 f"offset={np.mean([row['plane_offset_abs_error'] for row in rows]):.4f} "
                 f"alpha=({float(head.alpha64.detach()):.4f},"
@@ -1031,6 +1155,26 @@ def verify_zero_refinement(head, device, args):
     print(f"Zero-refinement equivalence passed: max_error={max_error:.3e}", flush=True)
 
 
+def load_multiscale_state_dict_allow_boundary_init(head, state_dict):
+    incompatible = head.load_state_dict(state_dict, strict=False)
+    allowed_missing = (
+        "boundary_head32.",
+        "boundary_head64.",
+        "boundary_head128.",
+    )
+    unexpected = list(incompatible.unexpected_keys)
+    missing = [
+        key for key in incompatible.missing_keys
+        if not key.startswith(allowed_missing)
+    ]
+    if unexpected or missing:
+        raise RuntimeError(
+            "Incompatible multiscale checkpoint: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    return incompatible
+
+
 def main():
     args = parse_args()
     from models.build_backbone import build_dust3r_backbone
@@ -1060,11 +1204,20 @@ def main():
         checkpoint = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
         source_state = checkpoint["head"]
         if "alpha64" in source_state and "alpha128" in source_state:
-            head.load_state_dict(source_state)
+            incompatible = load_multiscale_state_dict_allow_boundary_init(
+                head,
+                source_state,
+            )
             verify_coarse_equivalence = False
             if args.resume_joint:
                 args.refine_only_epochs = 0
             print(f"Resumed multiscale mask head from {args.init_checkpoint}", flush=True)
+            if incompatible.missing_keys:
+                print(
+                    "Initialized missing boundary head weights: "
+                    f"{list(incompatible.missing_keys)}",
+                    flush=True,
+                )
         else:
             head.load_coarse_state_dict(source_state)
             print(f"Initialized coarse mask head from {args.init_checkpoint}", flush=True)

@@ -10,6 +10,8 @@ import torch.nn.functional as F
 from dataloaders.s3d_dataset import Structured3DDataset
 from models.plane_mask_head import PlaneMaskHead
 from train_stage1_plane_masks import (
+    _resize_lines,
+    boundary_target_from_labels_and_lines,
     build_views,
     feature_maps_from_result,
     masks_for_plane_ids,
@@ -244,7 +246,21 @@ def main():
         use_rgb_edge=not config.get("disable_rgb_edge", False),
         refinement_margin=config.get("refinement_margin", 0.55),
     ).to(device)
-    head.load_state_dict(checkpoint["head"])
+    incompatible = head.load_state_dict(checkpoint["head"], strict=False)
+    allowed_missing = (
+        "boundary_head32.",
+        "boundary_head64.",
+        "boundary_head128.",
+    )
+    missing = [
+        key for key in incompatible.missing_keys
+        if not key.startswith(allowed_missing)
+    ]
+    if missing or incompatible.unexpected_keys:
+        raise RuntimeError(
+            "Incompatible checkpoint: "
+            f"missing={missing}, unexpected={incompatible.unexpected_keys}"
+        )
     head.eval()
     thresholds = {
         "existence_threshold": (
@@ -378,8 +394,32 @@ def main():
         full_assignment[~full_union] = -1
         core_assignment = masks128["assignment"].clone()
         core_assignment[~core_union] = -1
+        gt_line128 = _resize_lines(batch["gt_line"], (128, 128))[0]
+        boundary_target128 = boundary_target_from_labels_and_lines(
+            F.interpolate(
+                batch["gt_plane"][:, None].float(),
+                size=(128, 128),
+                mode="nearest",
+            )[0, 0].long(),
+            gt_line128,
+            band_size=5,
+        )
+        boundary_probability = output.get("boundary_logits_128")
+        if boundary_probability is None:
+            boundary_probability = torch.zeros_like(output["background_logits_128"])
+        boundary_probability = boundary_probability[0, 0].sigmoid()
+        boundary_gt_rgb = np.repeat(
+            (boundary_target128.detach().cpu().numpy()[..., None] * 255).astype(np.uint8),
+            3,
+            axis=2,
+        )
+        boundary_pred_rgb = np.repeat(
+            (boundary_probability.detach().cpu().numpy()[..., None] * 255).astype(np.uint8),
+            3,
+            axis=2,
+        )
 
-        fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+        fig, axes = plt.subplots(2, 5, figsize=(24, 10))
         panels = [
             (rgb, "Input RGB"),
             (colorize(scale_gt[128].cpu().numpy()), f"GT ({len(targets32)})"),
@@ -388,6 +428,8 @@ def main():
             (colorize(scale_assignments[128].cpu().numpy()), "Fine 128"),
             (colorize(full_assignment.cpu().numpy()), "Full support"),
             (colorize(core_assignment.cpu().numpy()), "Core fit support"),
+            (boundary_gt_rgb, "GT boundary/line"),
+            (boundary_pred_rgb, "Pred boundary"),
             (error_rgb, "Fine errors (magenta)"),
         ]
         for axis, (image, title) in zip(axes.flat, panels):
