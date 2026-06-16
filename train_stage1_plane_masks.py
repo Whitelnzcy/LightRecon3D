@@ -70,6 +70,7 @@ def parse_args():
     parser.add_argument("--structural_boundary_head_weight", type=float, default=0.5)
     parser.add_argument("--boundary_head_pos_weight_max", type=float, default=12.0)
     parser.add_argument("--decorative_line_weight", type=float, default=0.05)
+    parser.add_argument("--structural_line_negative_weight", type=float, default=4.0)
     parser.add_argument("--boundary_pair_weight", type=float, default=0.5)
     parser.add_argument("--boundary_pair_same_margin", type=float, default=0.05)
     parser.add_argument("--separation_weight", type=float, default=0.5)
@@ -417,6 +418,25 @@ def structural_boundary_target_from_labels(labels, band_size):
     if band_size > 1:
         target = dilate_mask(target, band_size)
     return target.float()
+
+
+def structural_boundary_supervision_from_labels_and_lines(
+    labels,
+    lines,
+    band_size,
+    hard_negative_weight=4.0,
+):
+    pp_boundary, _ = typed_boundary_maps(labels)
+    target = pp_boundary
+    if band_size > 1:
+        target = dilate_mask(target, band_size)
+
+    line_boundary = lines > 0.5
+    nearby_structural = dilate_mask(pp_boundary, max(int(band_size) * 2, 1))
+    line_hard_negative = line_boundary & ~nearby_structural
+    weight = torch.ones_like(target, dtype=torch.float32)
+    weight[line_hard_negative] = float(hard_negative_weight)
+    return target.float(), weight
 
 
 def boundary_supervision_from_labels_and_lines(
@@ -1161,14 +1181,19 @@ def sample_loss(
             for key, value in boundary_stats.items():
                 stats[f"{key}_{scale}"] += float(value.detach())
 
-            structural_target = structural_boundary_target_from_labels(
-                labels_by_scale[scale],
-                args.boundary_band,
+            structural_target, structural_weight = (
+                structural_boundary_supervision_from_labels_and_lines(
+                    labels_by_scale[scale],
+                    lines_by_scale[scale],
+                    args.boundary_band,
+                    hard_negative_weight=args.structural_line_negative_weight,
+                )
             )
             structural_value, structural_stats = boundary_head_loss(
                 output[f"structural_boundary_logits_{scale}"][batch_id, 0],
                 structural_target,
                 args,
+                weight=structural_weight,
             )
             sample_total = (
                 sample_total
