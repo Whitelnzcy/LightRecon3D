@@ -59,6 +59,10 @@ def parse_args():
     parser.add_argument("--mask_tversky_weight", type=float, default=2.0)
     parser.add_argument("--partition_weight", type=float, default=1.0)
     parser.add_argument("--existence_weight", type=float, default=1.0)
+    parser.add_argument("--small_existence_max_weight", type=float, default=3.0)
+    parser.add_argument("--plane_count_recall_weight", type=float, default=0.25)
+    parser.add_argument("--plane_count_over_weight", type=float, default=0.15)
+    parser.add_argument("--aux_scale_match_weight", type=float, default=0.25)
     parser.add_argument("--boundary_loss_weight", type=float, default=1.0)
     parser.add_argument("--boundary_head_weight", type=float, default=0.5)
     parser.add_argument("--boundary_head_pos_weight_max", type=float, default=12.0)
@@ -476,7 +480,7 @@ def make_class_target(labels, targets, query_ids, target_ids, num_queries):
     return class_target
 
 
-def interior_smoothness(class_logits, class_target):
+def interior_smoothness(class_logits, class_target, boundary_probability=None):
     probabilities = class_logits.softmax(dim=0)
     total = class_logits.sum() * 0.0
     count = 0
@@ -484,21 +488,47 @@ def interior_smoothness(class_logits, class_target):
     same_v = class_target[1:, :] == class_target[:-1, :]
     if same_h.any():
         diff_h = (probabilities[:, :, 1:] - probabilities[:, :, :-1]).abs().mean(dim=0)
-        total = total + diff_h[same_h].mean()
+        if boundary_probability is not None:
+            boundary_h = torch.maximum(
+                boundary_probability[:, 1:],
+                boundary_probability[:, :-1],
+            ).detach()
+            weight_h = (1.0 - boundary_h).clamp_min(0.05)
+            total = total + (diff_h[same_h] * weight_h[same_h]).sum() / (
+                weight_h[same_h].sum().clamp_min(1e-6)
+            )
+        else:
+            total = total + diff_h[same_h].mean()
         count += 1
     if same_v.any():
         diff_v = (probabilities[:, 1:, :] - probabilities[:, :-1, :]).abs().mean(dim=0)
-        total = total + diff_v[same_v].mean()
+        if boundary_probability is not None:
+            boundary_v = torch.maximum(
+                boundary_probability[1:, :],
+                boundary_probability[:-1, :],
+            ).detach()
+            weight_v = (1.0 - boundary_v).clamp_min(0.05)
+            total = total + (diff_v[same_v] * weight_v[same_v]).sum() / (
+                weight_v[same_v].sum().clamp_min(1e-6)
+            )
+        else:
+            total = total + diff_v[same_v].mean()
         count += 1
     return total / max(count, 1)
 
 
-def boundary_pair_separation(class_logits, class_target, num_queries, margin):
+def boundary_pair_separation(
+    class_logits,
+    class_target,
+    num_queries,
+    margin,
+    boundary_probability=None,
+):
     probabilities = class_logits.softmax(dim=0)[:num_queries]
     total = class_logits.sum() * 0.0
     count = 0
 
-    def pair_loss(left_target, right_target, left_prob, right_prob):
+    def pair_loss(left_target, right_target, left_prob, right_prob, pair_boundary):
         valid = (
             (left_target < num_queries)
             & (right_target < num_queries)
@@ -507,13 +537,30 @@ def boundary_pair_separation(class_logits, class_target, num_queries, margin):
         if not valid.any():
             return None
         same_query_probability = (left_prob[:, valid] * right_prob[:, valid]).sum(dim=0)
-        return F.relu(same_query_probability - float(margin)).mean()
+        raw = F.relu(same_query_probability - float(margin))
+        if pair_boundary is None:
+            return raw.mean()
+        weight = (1.0 + pair_boundary[valid].detach()).clamp_min(1.0)
+        return (raw * weight).sum() / weight.sum().clamp_min(1e-6)
+
+    boundary_h = None
+    boundary_v = None
+    if boundary_probability is not None:
+        boundary_h = torch.maximum(
+            boundary_probability[:, :-1],
+            boundary_probability[:, 1:],
+        )
+        boundary_v = torch.maximum(
+            boundary_probability[:-1, :],
+            boundary_probability[1:, :],
+        )
 
     horizontal = pair_loss(
         class_target[:, :-1],
         class_target[:, 1:],
         probabilities[:, :, :-1],
         probabilities[:, :, 1:],
+        boundary_h,
     )
     if horizontal is not None:
         total = total + horizontal
@@ -523,6 +570,7 @@ def boundary_pair_separation(class_logits, class_target, num_queries, margin):
         class_target[1:, :],
         probabilities[:, :-1, :],
         probabilities[:, 1:, :],
+        boundary_v,
     )
     if vertical is not None:
         total = total + vertical
@@ -533,6 +581,7 @@ def boundary_pair_separation(class_logits, class_target, num_queries, margin):
 def scale_loss(
     mask_logits,
     background_logits,
+    boundary_logits,
     labels,
     targets,
     query_ids,
@@ -599,12 +648,18 @@ def scale_loss(
         ).mean()
     else:
         separation = zero
-    smoothness = interior_smoothness(class_logits, class_target)
+    boundary_probability = boundary_logits.sigmoid() if boundary_logits is not None else None
+    smoothness = interior_smoothness(
+        class_logits,
+        class_target,
+        boundary_probability=boundary_probability,
+    )
     boundary_pair = boundary_pair_separation(
         class_logits,
         class_target,
         args.num_queries,
         args.boundary_pair_same_margin,
+        boundary_probability=boundary_probability,
     )
 
     loss = (
@@ -656,6 +711,43 @@ def scale_loss(
         "plane_background_boundary_accuracy": pb_accuracy,
         "mean_iou": mean_iou,
     }
+
+
+def auxiliary_scale_matching_loss(mask_logits, targets, args):
+    zero = mask_logits.sum() * 0.0
+    if targets.shape[0] == 0:
+        return zero, {"aux_match_iou": zero}
+    query_ids, target_ids = match_queries(mask_logits, targets, args)
+    if len(query_ids) == 0:
+        return zero, {"aux_match_iou": zero}
+    query_ids_t = torch.as_tensor(query_ids, device=mask_logits.device, dtype=torch.long)
+    target_ids_t = torch.as_tensor(target_ids, device=mask_logits.device, dtype=torch.long)
+    matched_logits = mask_logits[query_ids_t]
+    matched_targets = targets[target_ids_t]
+    area_weights = _area_weights(matched_targets, args.small_plane_max_weight)
+    focal = (
+        focal_bce_loss(matched_logits, matched_targets, args.focal_gamma)
+        * area_weights
+    ).mean()
+    tversky = (
+        tversky_loss(
+            matched_logits,
+            matched_targets,
+            args.tversky_fp_weight,
+            args.tversky_fn_weight,
+        )
+        * area_weights
+    ).mean()
+    predicted = mask_logits.argmax(dim=0)
+    ious = []
+    for query_id, target_id in zip(query_ids, target_ids):
+        pred_mask = predicted == int(query_id)
+        target_mask = targets[target_id] > 0.5
+        union = (pred_mask | target_mask).sum()
+        if union > 0:
+            ious.append((pred_mask & target_mask).sum().float() / union)
+    mean_iou = torch.stack(ious).mean() if ious else zero
+    return focal + tversky, {"aux_match_iou": mean_iou}
 
 
 def prediction_masks(
@@ -880,21 +972,43 @@ def sample_loss(
             args,
         )
         existence_target = torch.zeros_like(output["existence_logits"][batch_id])
+        existence_weight = torch.ones_like(output["existence_logits"][batch_id])
         if len(query_ids):
-            existence_target[
-                torch.as_tensor(query_ids, device=existence_target.device)
-            ] = 1.0
-        existence = F.binary_cross_entropy_with_logits(
+            query_ids_t = torch.as_tensor(query_ids, device=existence_target.device)
+            target_ids_t = torch.as_tensor(target_ids, device=existence_target.device)
+            existence_target[query_ids_t] = 1.0
+            target_areas = targets_by_scale[32][target_ids_t].sum(dim=(1, 2)).clamp_min(1.0)
+            target_weights = torch.sqrt(target_areas.max() / target_areas).clamp(
+                max=float(args.small_existence_max_weight)
+            )
+            existence_weight[query_ids_t] = target_weights
+        existence_raw = F.binary_cross_entropy_with_logits(
             output["existence_logits"][batch_id],
             existence_target,
+            reduction="none",
+        )
+        existence = (existence_raw * existence_weight).sum() / existence_weight.sum().clamp_min(1e-6)
+        predicted_count_soft = output["existence_logits"][batch_id].sigmoid().sum()
+        target_count = output["existence_logits"][batch_id].new_tensor(
+            float(len(plane_ids[batch_id]))
+        )
+        count_under = F.relu(target_count - predicted_count_soft).pow(2)
+        count_over = F.relu(predicted_count_soft - target_count).pow(2)
+        count_recall = (
+            args.plane_count_recall_weight * count_under
+            + args.plane_count_over_weight * count_over
         )
         sample_total = args.existence_weight * existence
+        sample_total = sample_total + count_recall
         stats["existence"] += float(existence.detach())
+        stats["plane_count_loss"] += float(count_recall.detach())
+        stats["pred_planes_soft"] += float(predicted_count_soft.detach())
 
         for scale in SCALES:
             scale_value, scale_stats = scale_loss(
                 output[f"mask_logits_{scale}"][batch_id],
                 output[f"background_logits_{scale}"][batch_id],
+                output[f"boundary_logits_{scale}"][batch_id, 0],
                 labels_by_scale[scale],
                 targets_by_scale[scale],
                 query_ids,
@@ -904,6 +1018,18 @@ def sample_loss(
             sample_total = sample_total + scale_weights[scale] * scale_value
             for key, value in scale_stats.items():
                 stats[f"{key}_{scale}"] += float(value.detach())
+
+            if scale in (64, 128) and args.aux_scale_match_weight > 0:
+                aux_value, aux_stats = auxiliary_scale_matching_loss(
+                    output[f"mask_logits_{scale}"][batch_id],
+                    targets_by_scale[scale],
+                    args,
+                )
+                sample_total = sample_total + args.aux_scale_match_weight * aux_value
+                stats[f"aux_match_loss_{scale}"] += float(aux_value.detach())
+                stats[f"aux_match_iou_{scale}"] += float(
+                    aux_stats["aux_match_iou"].detach()
+                )
 
             boundary_target = boundary_target_from_labels_and_lines(
                 labels_by_scale[scale],
