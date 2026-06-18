@@ -3,10 +3,6 @@ import csv
 import json
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -45,6 +41,14 @@ def parse_args():
     parser.add_argument("--inactive_area_threshold", type=int, default=16)
     parser.add_argument("--focus_indices", default="6,10,44,72,74")
     parser.add_argument("--top_k_visuals", type=int, default=16)
+    parser.add_argument(
+        "--gt_audit_pair_csv",
+        default="local_outputs/gt_audit_structured3d/pair_audit_summary.csv",
+        help="Optional GT audit CSV used to flag coarse annotations that can make oracle merge look better than it is.",
+    )
+    parser.add_argument("--coarse_gt_largest_threshold", type=float, default=0.9)
+    parser.add_argument("--coarse_gt_visible_threshold", type=int, default=2)
+    parser.add_argument("--no_visuals", action="store_true")
     return parser.parse_args()
 
 
@@ -80,6 +84,37 @@ def compute_compact_iou(predicted_compact, gt_compact, target_count):
         union = (gt | pred).sum().clamp_min(1)
         ious.append(float(((gt & pred).sum() / union).detach().cpu()))
     return float(np.mean(ious)) if ious else 0.0
+
+
+def load_gt_audit(path, largest_threshold, visible_threshold):
+    path = Path(path)
+    if not path.exists():
+        return {}
+    audit = {}
+    with path.open("r", newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            sample_idx = int(row["cache_idx"])
+            view1_largest = float(row.get("view1_legacy_largest", 0.0))
+            view2_largest = float(row.get("view2_legacy_largest", 0.0))
+            view1_visible = int(float(row.get("view1_legacy_visible", 0)))
+            view2_visible = int(float(row.get("view2_legacy_visible", 0)))
+            max_largest = max(view1_largest, view2_largest)
+            min_visible = min(view1_visible, view2_visible)
+            gt_coarse = (
+                max_largest >= largest_threshold
+                or min_visible <= visible_threshold
+            )
+            audit[sample_idx] = {
+                "gt_audit_mean_iou": float(row.get("mean_iou", 0.0)),
+                "gt_audit_leakage": float(row.get("leakage", 0.0)),
+                "gt_audit_view_gap": float(row.get("view_gap", 0.0)),
+                "view1_legacy_largest": view1_largest,
+                "view2_legacy_largest": view2_largest,
+                "view1_legacy_visible": view1_visible,
+                "view2_legacy_visible": view2_visible,
+                "gt_coarse_flag": int(gt_coarse),
+            }
+    return audit
 
 
 def summarize_assignment(predicted, gt_compact, num_queries, target_count, min_pixels, purity):
@@ -257,6 +292,11 @@ def analyze_view(output, labels, config, args):
 
 
 def render_case(case, path, num_queries):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     figure, axes = plt.subplots(2, 5, figsize=(22, 9))
     for row_index, view_name in enumerate(("view1", "view2")):
         view = case[view_name]
@@ -313,8 +353,10 @@ def render_case(case, path, num_queries):
                 axis.set_title(title)
 
     row = case["metrics"]
+    coarse_note = "GT_COARSE" if row.get("gt_coarse_flag", 0) else "GT_regular"
     figure.suptitle(
         f"cache_idx={row['sample_idx']} scene={row.get('scene_name', '')} "
+        f"{coarse_note} "
         f"raw={row['raw_mean_iou']:.3f} merged={row['merged_mean_iou']:.3f} "
         f"delta={row['iou_delta']:.3f} rawK={row['raw_active_query_count']:.2f} "
         f"finalK={row['final_k_pred']:.2f}",
@@ -353,6 +395,11 @@ def main():
     samples = cache[args.split]
     metadata = load_cache_metadata(cache_config, args.split, len(samples))
     num_queries = int(config.get("num_queries", 8))
+    gt_audit = load_gt_audit(
+        args.gt_audit_pair_csv,
+        args.coarse_gt_largest_threshold,
+        args.coarse_gt_visible_threshold,
+    )
 
     rows = []
     cases = {}
@@ -397,6 +444,10 @@ def main():
                 args,
             )
             row = {"sample_idx": sample_idx, **metadata[sample_idx]}
+            if sample_idx in gt_audit:
+                row.update(gt_audit[sample_idx])
+            else:
+                row["gt_coarse_flag"] = 0
             for metric_name in (
                 "raw_mean_iou",
                 "merged_mean_iou",
@@ -436,11 +487,27 @@ def main():
 
     rows_by_delta = sorted(rows, key=lambda row: row["iou_delta"], reverse=True)
     rows_by_bad = sorted(rows, key=lambda row: row["merged_mean_iou"])
+    def mean_metric(items, name):
+        return float(np.mean([row[name] for row in items])) if items else None
+
+    def count_delta(items, sign):
+        if sign == "improved":
+            return int(sum(row["iou_delta"] > 1e-6 for row in items))
+        if sign == "degraded":
+            return int(sum(row["iou_delta"] < -1e-6 for row in items))
+        return int(sum(abs(row["iou_delta"]) <= 1e-6 for row in items))
+
+    coarse_rows = [row for row in rows if int(row.get("gt_coarse_flag", 0))]
+    reliable_rows = [row for row in rows if not int(row.get("gt_coarse_flag", 0))]
+
     summary = {
         "checkpoint": args.checkpoint,
         "feature_cache_path": args.feature_cache_path,
         "split": args.split,
         "pair_count": len(rows),
+        "gt_audit_pair_csv": args.gt_audit_pair_csv,
+        "coarse_gt_pair_count": len(coarse_rows),
+        "reliable_gt_pair_count": len(reliable_rows),
         "raw_mean_iou": float(np.mean([row["raw_mean_iou"] for row in rows])),
         "merged_mean_iou": float(np.mean([row["merged_mean_iou"] for row in rows])),
         "mean_iou_delta": float(np.mean([row["iou_delta"] for row in rows])),
@@ -459,6 +526,24 @@ def main():
         "improved_pairs": int(sum(row["iou_delta"] > 1e-6 for row in rows)),
         "degraded_pairs": int(sum(row["iou_delta"] < -1e-6 for row in rows)),
         "same_pairs": int(sum(abs(row["iou_delta"]) <= 1e-6 for row in rows)),
+        "coarse_gt_subset": {
+            "pair_count": len(coarse_rows),
+            "raw_mean_iou": mean_metric(coarse_rows, "raw_mean_iou"),
+            "merged_mean_iou": mean_metric(coarse_rows, "merged_mean_iou"),
+            "mean_iou_delta": mean_metric(coarse_rows, "iou_delta"),
+            "improved_pairs": count_delta(coarse_rows, "improved"),
+            "degraded_pairs": count_delta(coarse_rows, "degraded"),
+            "same_pairs": count_delta(coarse_rows, "same"),
+        },
+        "reliable_gt_subset": {
+            "pair_count": len(reliable_rows),
+            "raw_mean_iou": mean_metric(reliable_rows, "raw_mean_iou"),
+            "merged_mean_iou": mean_metric(reliable_rows, "merged_mean_iou"),
+            "mean_iou_delta": mean_metric(reliable_rows, "iou_delta"),
+            "improved_pairs": count_delta(reliable_rows, "improved"),
+            "degraded_pairs": count_delta(reliable_rows, "degraded"),
+            "same_pairs": count_delta(reliable_rows, "same"),
+        },
         "top_improved": rows_by_delta[:20],
         "worst_after_merge": rows_by_bad[:20],
     }
@@ -467,30 +552,34 @@ def main():
     )
     write_csv(output_dir / "dynamic_query_metrics.csv", rows)
 
-    focus = set()
-    if args.focus_indices:
-        focus.update(
-            int(value.strip())
-            for value in args.focus_indices.split(",")
-            if value.strip()
-        )
-    focus.update(int(row["sample_idx"]) for row in rows_by_delta[: args.top_k_visuals])
-    focus.update(int(row["sample_idx"]) for row in rows_by_bad[: min(args.top_k_visuals, 8)])
-    for sample_idx in sorted(focus):
-        if sample_idx in cases:
-            render_case(
-                cases[sample_idx],
-                output_dir / "visuals" / f"cache_{sample_idx:06d}_dynamic_query.png",
-                num_queries,
+    if not args.no_visuals:
+        focus = set()
+        if args.focus_indices:
+            focus.update(
+                int(value.strip())
+                for value in args.focus_indices.split(",")
+                if value.strip()
             )
+        focus.update(int(row["sample_idx"]) for row in rows_by_delta[: args.top_k_visuals])
+        focus.update(int(row["sample_idx"]) for row in rows_by_bad[: min(args.top_k_visuals, 8)])
+        for sample_idx in sorted(focus):
+            if sample_idx in cases:
+                render_case(
+                    cases[sample_idx],
+                    output_dir / "visuals" / f"cache_{sample_idx:06d}_dynamic_query.png",
+                    num_queries,
+                )
 
     report = [
         "# Dynamic Query Postprocess Ablation",
         "",
         "This is an oracle merge ablation: query groups are merged by their GT-majority attribution.",
         "It estimates whether dynamic K can fix current query splitting before implementing a no-GT rule.",
+        "Coarse-GT cases are flagged because GT-majority merge can improve the metric while destroying useful structural splits.",
         "",
         f"- pair_count: {summary['pair_count']}",
+        f"- coarse_gt_pair_count: {summary['coarse_gt_pair_count']}",
+        f"- reliable_gt_pair_count: {summary['reliable_gt_pair_count']}",
         f"- raw_mean_iou: {summary['raw_mean_iou']:.6f}",
         f"- merged_mean_iou: {summary['merged_mean_iou']:.6f}",
         f"- mean_iou_delta: {summary['mean_iou_delta']:.6f}",
@@ -505,12 +594,13 @@ def main():
         "",
         "## Top Improved Cases",
         "",
-        "| sample_idx | raw_iou | merged_iou | delta | rawK | finalK | raw_split |",
-        "|---:|---:|---:|---:|---:|---:|---:|",
+        "| sample_idx | gt_coarse | raw_iou | merged_iou | delta | rawK | finalK | raw_split |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows_by_delta[:20]:
         report.append(
-            f"| {row['sample_idx']} | {row['raw_mean_iou']:.3f} "
+            f"| {row['sample_idx']} | {int(row.get('gt_coarse_flag', 0))} "
+            f"| {row['raw_mean_iou']:.3f} "
             f"| {row['merged_mean_iou']:.3f} | {row['iou_delta']:.3f} "
             f"| {row['raw_active_query_count']:.2f} | {row['final_k_pred']:.2f} "
             f"| {row['raw_split_gt_count']:.2f} |"
