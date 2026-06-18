@@ -5,7 +5,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -41,6 +40,7 @@ def parse_args():
     parser.add_argument(
         "--metrics_path",
         default="local_outputs/vis_multiscale_balanced512/all_metrics.json",
+        help="Optional model metrics JSON used only for cross-reference; leave empty for GT-only audit.",
     )
     parser.add_argument(
         "--output_dir",
@@ -57,6 +57,17 @@ def parse_args():
         help="Cache indices to render in detail",
     )
     parser.add_argument("--max_focus", type=int, default=16)
+    parser.add_argument(
+        "--max_pairs",
+        type=int,
+        default=0,
+        help="Audit only the first N selected cache pairs; 0 means all selected pairs.",
+    )
+    parser.add_argument(
+        "--no_visuals",
+        action="store_true",
+        help="Skip PNG rendering so the audit can run in minimal Python environments.",
+    )
     return parser.parse_args()
 
 
@@ -228,6 +239,8 @@ def audit_view(view_info, image_size):
 
 
 def save_view_audit_figure(path, title, metrics, visuals):
+    import matplotlib.pyplot as plt
+
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     panels = [
         (visuals["rgb"], "RGB"),
@@ -299,6 +312,8 @@ def summarize(rows):
 def save_overview(path, rows):
     if not rows:
         return
+    import matplotlib.pyplot as plt
+
     overlap = np.asarray([float(row["overlap_pixel_ratio"]) for row in rows])
     covered = np.asarray([float(row["fully_covered_plane_count"]) for row in rows])
     dominance = np.asarray([float(row["legacy_largest_plane_ratio"]) for row in rows])
@@ -324,11 +339,14 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     visual_dir = output_dir / "visuals"
-    visual_dir.mkdir(parents=True, exist_ok=True)
+    if not args.no_visuals:
+        visual_dir.mkdir(parents=True, exist_ok=True)
 
     config = load_cache_config(args.cache_path)
     selected_key = f"selected_{args.split}_indices"
     selected_indices = config[selected_key]
+    if args.max_pairs > 0:
+        selected_indices = selected_indices[: args.max_pairs]
     dataset = Structured3DDataset(
         root_dir=args.root_dir,
         split=args.split,
@@ -340,8 +358,12 @@ def main():
         if args.pair_max_view_id_gap is not None
         else config.get("pair_max_view_id_gap"),
     )
-    metrics_rows = json.loads(Path(args.metrics_path).read_text(encoding="utf-8"))
-    metrics_by_idx = {int(row["sample_idx"]): row for row in metrics_rows}
+    metrics_by_idx = {}
+    if args.metrics_path and args.metrics_path.lower() not in ("none", "null"):
+        metrics_path = Path(args.metrics_path)
+        if metrics_path.exists():
+            metrics_rows = json.loads(metrics_path.read_text(encoding="utf-8"))
+            metrics_by_idx = {int(row["sample_idx"]): row for row in metrics_rows}
     focus_indices = [
         int(value.strip())
         for value in args.focus_indices.split(",")
@@ -379,7 +401,7 @@ def main():
             }
             rows.append(row)
             view_summaries.append(metrics)
-            if cache_idx in focus_indices:
+            if not args.no_visuals and cache_idx in focus_indices:
                 title = (
                     f"cache_idx={cache_idx} dataset_idx={dataset_idx} "
                     f"{view_name} view_id={view_info['view_id']}"
@@ -428,7 +450,8 @@ def main():
         json.dumps({"summary": summary, "views": rows, "pairs": pair_rows}, indent=2),
         encoding="utf-8",
     )
-    save_overview(output_dir / "gt_audit_overview.png", rows)
+    if not args.no_visuals:
+        save_overview(output_dir / "gt_audit_overview.png", rows)
 
     report = [
         "# Structured3D Plane GT Audit",

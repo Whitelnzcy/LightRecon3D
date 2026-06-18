@@ -11,7 +11,6 @@ from torch.utils.data import DataLoader, Subset
 
 from dataloaders.s3d_dataset import Structured3DDataset
 from models.clean_plane_mask_head import CleanPlaneMaskHead
-from models.build_backbone import build_dust3r_backbone
 from train_stage1_plane_masks import (
     build_views,
     feature_maps_from_result,
@@ -356,6 +355,8 @@ def main():
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from models.build_backbone import build_dust3r_backbone
+
     backbone = build_dust3r_backbone(args.weights_path, device=device)
     for parameter in backbone.parameters():
         parameter.requires_grad_(False)

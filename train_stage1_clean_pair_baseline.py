@@ -7,7 +7,6 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 from dataloaders.s3d_dataset import Structured3DDataset
-from models.build_backbone import build_dust3r_backbone
 from models.clean_plane_mask_head import CleanPlaneMaskHead
 from train_stage1_clean_baseline import sample_loss_and_metrics, set_seed
 from train_stage1_plane_masks import build_views, feature_maps_from_result
@@ -342,6 +341,8 @@ def main():
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from models.build_backbone import build_dust3r_backbone
+
     backbone = build_dust3r_backbone(args.weights_path, device=device)
     for parameter in backbone.parameters():
         parameter.requires_grad_(False)

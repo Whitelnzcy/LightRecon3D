@@ -22,6 +22,16 @@ def parse_args():
     )
     parser.add_argument("--feature_cache_path", required=True)
     parser.add_argument("--save_dir", required=True)
+    parser.add_argument(
+        "--train_quality_indices",
+        default="",
+        help="Optional cache-index list for filtering train samples, one index per line or comma-separated.",
+    )
+    parser.add_argument(
+        "--val_quality_indices",
+        default="",
+        help="Optional cache-index list for filtering val samples, one index per line or comma-separated.",
+    )
     parser.add_argument("--init_checkpoint", default="")
     parser.add_argument(
         "--resume_checkpoint",
@@ -79,6 +89,35 @@ def iter_sample_batches(samples, batch_size, shuffle, seed):
         random.Random(seed).shuffle(indices)
     for start in range(0, len(indices), batch_size):
         yield [samples[index] for index in indices[start : start + batch_size]]
+
+
+def load_cache_index_filter(path_or_text):
+    if not path_or_text:
+        return None
+    path = Path(path_or_text)
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+    else:
+        text = path_or_text
+    values = []
+    for part in text.replace(",", "\n").splitlines():
+        part = part.strip()
+        if part:
+            values.append(int(part))
+    return set(values)
+
+
+def filter_cached_samples(samples, index_filter, split_name):
+    if index_filter is None:
+        return samples
+    filtered = [sample for index, sample in enumerate(samples) if index in index_filter]
+    if not filtered:
+        raise RuntimeError(f"{split_name} quality filter removed all cached samples")
+    print(
+        f"[{split_name} quality filter] kept {len(filtered)}/{len(samples)} samples",
+        flush=True,
+    )
+    return filtered
 
 
 def cat_feature_batch(items, key, device):
@@ -306,6 +345,16 @@ def main():
     input_dims = tuple(int(value) for value in config.get("input_dims", (1024, 768, 768, 768)))
     train_samples = cache["train"]
     val_samples = cache["val"]
+    train_samples = filter_cached_samples(
+        train_samples,
+        load_cache_index_filter(args.train_quality_indices),
+        "train",
+    )
+    val_samples = filter_cached_samples(
+        val_samples,
+        load_cache_index_filter(args.val_quality_indices),
+        "val",
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     head = MultiScalePlaneMaskHead(
