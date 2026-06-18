@@ -52,6 +52,9 @@ def parse_args():
     parser.add_argument("--mask_dice_weight", type=float, default=2.0)
     parser.add_argument("--existence_weight", type=float, default=1.0)
     parser.add_argument("--background_weight", type=float, default=1.0)
+    parser.add_argument("--query_margin_weight", type=float, default=0.0)
+    parser.add_argument("--query_margin", type=float, default=0.75)
+    parser.add_argument("--unmatched_query_weight", type=float, default=0.0)
     parser.add_argument("--focal_gamma", type=float, default=2.0)
     parser.add_argument("--existence_threshold", type=float, default=0.5)
     parser.add_argument("--log_every", type=int, default=20)
@@ -155,6 +158,59 @@ def instance_metrics(mask_logits, background_logits, existence_logits, targets, 
     }
 
 
+def query_deduplication_loss(mask_logits, targets, query_ids, target_ids, args):
+    """Penalize multiple queries explaining the same GT plane region.
+
+    Hungarian matching assigns at most one query to each target, but pixel CE can
+    be too weak to suppress all competing query logits inside the same plane.
+    This term makes the matched query win by a margin on its target pixels and
+    optionally suppresses unmatched queries on the union of all GT plane pixels.
+    """
+    zero = mask_logits.sum() * 0.0
+    if len(query_ids) == 0 or targets.numel() == 0:
+        return zero, zero
+
+    margin_weight = float(getattr(args, "query_margin_weight", 0.0))
+    unmatched_weight = float(getattr(args, "unmatched_query_weight", 0.0))
+    if margin_weight <= 0.0 and unmatched_weight <= 0.0:
+        return zero, zero
+
+    device = mask_logits.device
+    query_ids_t = torch.as_tensor(query_ids, device=device, dtype=torch.long)
+    target_ids_t = torch.as_tensor(target_ids, device=device, dtype=torch.long)
+
+    margin_loss = zero
+    if margin_weight > 0.0:
+        per_target = []
+        for query_id, target_id in zip(query_ids_t, target_ids_t):
+            target_mask = targets[target_id] > 0.5
+            if not target_mask.any():
+                continue
+            correct = mask_logits[query_id][target_mask]
+            wrong_logits = mask_logits[:, target_mask]
+            wrong_query_mask = torch.ones(
+                mask_logits.shape[0], dtype=torch.bool, device=device
+            )
+            wrong_query_mask[query_id] = False
+            strongest_wrong = wrong_logits[wrong_query_mask].max(dim=0).values
+            per_target.append(
+                F.relu(float(getattr(args, "query_margin", 0.75)) + strongest_wrong - correct).mean()
+            )
+        if per_target:
+            margin_loss = torch.stack(per_target).mean()
+
+    unmatched_loss = zero
+    if unmatched_weight > 0.0:
+        matched = torch.zeros(mask_logits.shape[0], dtype=torch.bool, device=device)
+        matched[query_ids_t] = True
+        unmatched = ~matched
+        gt_union = targets[target_ids_t].amax(dim=0) > 0.5
+        if unmatched.any() and gt_union.any():
+            unmatched_loss = F.softplus(mask_logits[unmatched][:, gt_union]).mean()
+
+    return margin_loss, unmatched_loss
+
+
 def sample_loss_and_metrics(output, labels, args):
     _, plane_ids = select_plane_ids(
         labels,
@@ -199,7 +255,20 @@ def sample_loss_and_metrics(output, labels, args):
             torch.cat((output["mask_logits"][batch_id], output["background_logits"][batch_id]), dim=0)[None],
             class_target[None],
         )
-        loss = mask_loss + args.existence_weight * existence + args.background_weight * background
+        query_margin, unmatched_query = query_deduplication_loss(
+            output["mask_logits"][batch_id],
+            targets,
+            query_ids,
+            target_ids,
+            args,
+        )
+        loss = (
+            mask_loss
+            + args.existence_weight * existence
+            + args.background_weight * background
+            + float(getattr(args, "query_margin_weight", 0.0)) * query_margin
+            + float(getattr(args, "unmatched_query_weight", 0.0)) * unmatched_query
+        )
         losses.append(loss)
         row = instance_metrics(
             output["mask_logits"][batch_id],
@@ -213,6 +282,8 @@ def sample_loss_and_metrics(output, labels, args):
         )
         row["loss"] = float(loss.detach())
         row["existence_loss"] = float(existence.detach())
+        row["query_margin_loss"] = float(query_margin.detach())
+        row["unmatched_query_loss"] = float(unmatched_query.detach())
         rows.append(row)
     mean_loss = torch.stack(losses).mean()
     totals = defaultdict(float)

@@ -23,6 +23,11 @@ def parse_args():
     parser.add_argument("--feature_cache_path", required=True)
     parser.add_argument("--save_dir", required=True)
     parser.add_argument("--init_checkpoint", default="")
+    parser.add_argument(
+        "--resume_checkpoint",
+        default="",
+        help="Strictly resume a MultiScalePlaneMaskHead checkpoint for finetuning.",
+    )
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--num_queries", type=int, default=8)
@@ -41,6 +46,22 @@ def parse_args():
     parser.add_argument("--mask_dice_weight", type=float, default=2.0)
     parser.add_argument("--existence_weight", type=float, default=0.1)
     parser.add_argument("--background_weight", type=float, default=1.0)
+    parser.add_argument(
+        "--query_margin_weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalize competing query logits inside the matched GT plane. "
+            "This targets query over-splitting without changing matching."
+        ),
+    )
+    parser.add_argument("--query_margin", type=float, default=0.75)
+    parser.add_argument(
+        "--unmatched_query_weight",
+        type=float,
+        default=0.0,
+        help="Suppress unmatched query logits on the union of GT plane pixels.",
+    )
     parser.add_argument("--focal_gamma", type=float, default=2.0)
     parser.add_argument("--existence_threshold", type=float, default=0.5)
     parser.add_argument("--min_plane_pixels", type=int, default=4)
@@ -107,6 +128,8 @@ def resize_output(output, target_hw):
 def aux_args(args):
     cloned = copy.copy(args)
     cloned.existence_weight = 0.0
+    cloned.query_margin_weight = 0.0
+    cloned.unmatched_query_weight = 0.0
     return cloned
 
 
@@ -154,6 +177,20 @@ def initialize_from_clean(head, checkpoint_path):
         f"copied={len(copied)}, skipped={len(skipped)}",
         flush=True,
     )
+
+
+def resume_multiscale_checkpoint(head, checkpoint_path):
+    if not checkpoint_path:
+        return None
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state = checkpoint.get("head", checkpoint)
+    head.load_state_dict(state, strict=True)
+    print(
+        f"Resumed MultiScalePlaneMaskHead from {checkpoint_path} "
+        f"(epoch={checkpoint.get('epoch', 'unknown')})",
+        flush=True,
+    )
+    return checkpoint
 
 
 def run_epoch(head, samples, optimizer, device, args, train, epoch):
@@ -281,6 +318,7 @@ def main():
         use_rgb_skip=not args.disable_rgb_skip,
     ).to(device)
     initialize_from_clean(head, args.init_checkpoint)
+    resume_multiscale_checkpoint(head, args.resume_checkpoint)
 
     optimizer = torch.optim.AdamW(
         head.parameters(),
