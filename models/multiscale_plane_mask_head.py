@@ -30,6 +30,12 @@ class ResidualRefineBlock(nn.Module):
         return self.activation(x + self.block(x))
 
 
+def make_refine_stack(channels, num_blocks):
+    return nn.Sequential(
+        *[ResidualRefineBlock(channels) for _ in range(max(int(num_blocks), 1))]
+    )
+
+
 class MultiScalePlaneMaskHead(nn.Module):
     """Query-based plane mask head with multi-layer DUSt3R fusion.
 
@@ -49,6 +55,12 @@ class MultiScalePlaneMaskHead(nn.Module):
         num_heads=8,
         output_size=128,
         use_rgb_skip=True,
+        use_geometry=False,
+        geometry_dim=9,
+        use_masked_query_refine=False,
+        decoder_ffn_multiplier=4,
+        fuse_refine_blocks=1,
+        pixel_refine_blocks=1,
     ):
         super().__init__()
         if output_size not in (32, 64, 128):
@@ -59,6 +71,12 @@ class MultiScalePlaneMaskHead(nn.Module):
         self.num_queries = int(num_queries)
         self.output_size = int(output_size)
         self.use_rgb_skip = bool(use_rgb_skip)
+        self.use_geometry = bool(use_geometry)
+        self.geometry_dim = int(geometry_dim)
+        self.use_masked_query_refine = bool(use_masked_query_refine)
+        self.decoder_ffn_multiplier = int(decoder_ffn_multiplier)
+        self.fuse_refine_blocks = int(fuse_refine_blocks)
+        self.pixel_refine_blocks = int(pixel_refine_blocks)
 
         self.stage_names = ("encoder", "shallow", "middle", "deep")
         self.lateral = nn.ModuleDict(
@@ -70,14 +88,14 @@ class MultiScalePlaneMaskHead(nn.Module):
         self.stage_logits = nn.Parameter(torch.zeros(len(self.stage_names)))
         self.fuse = nn.Sequential(
             ConvNormAct(hidden_dim * len(self.stage_names), hidden_dim, 3),
-            ResidualRefineBlock(hidden_dim),
+            make_refine_stack(hidden_dim, self.fuse_refine_blocks),
         )
 
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
+            dim_feedforward=hidden_dim * self.decoder_ffn_multiplier,
             dropout=0.1,
             activation="gelu",
             batch_first=True,
@@ -94,16 +112,61 @@ class MultiScalePlaneMaskHead(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
         )
         self.existence_head = nn.Linear(hidden_dim, 1)
+        if self.use_masked_query_refine:
+            self.masked_query_refine = nn.Sequential(
+                nn.LayerNorm(hidden_dim * 2),
+                nn.Linear(hidden_dim * 2, hidden_dim),
+                nn.GELU(),
+                nn.Linear(hidden_dim, hidden_dim),
+            )
+            nn.init.zeros_(self.masked_query_refine[-1].weight)
+            nn.init.zeros_(self.masked_query_refine[-1].bias)
 
-        self.refine32 = ResidualRefineBlock(hidden_dim)
+        self.refine32 = make_refine_stack(hidden_dim, self.pixel_refine_blocks)
         self.up64 = nn.Sequential(
             ConvNormAct(hidden_dim, hidden_dim, 3),
-            ResidualRefineBlock(hidden_dim),
+            make_refine_stack(hidden_dim, self.pixel_refine_blocks),
         )
         self.up128 = nn.Sequential(
             ConvNormAct(hidden_dim, hidden_dim, 3),
-            ResidualRefineBlock(hidden_dim),
+            make_refine_stack(hidden_dim, self.pixel_refine_blocks),
         )
+
+        if self.use_geometry:
+            self.geometry_memory_proj = nn.Sequential(
+                ConvNormAct(self.geometry_dim, hidden_dim, 3),
+                ConvNormAct(hidden_dim, hidden_dim, 3),
+            )
+            self.geometry_memory_out = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1)
+            nn.init.zeros_(self.geometry_memory_out.weight)
+            nn.init.zeros_(self.geometry_memory_out.bias)
+            self.geometry_alpha = nn.Parameter(torch.zeros(()))
+            self.rgb_gate_alpha = nn.Parameter(torch.zeros(()))
+            geo_channels = max(hidden_dim // 4, 32)
+            self.geometry_proj = nn.Sequential(
+                ConvNormAct(self.geometry_dim, geo_channels, 3),
+                ConvNormAct(geo_channels, geo_channels, 3),
+            )
+            self.geometry_fuse = nn.Sequential(
+                ConvNormAct(hidden_dim + geo_channels, hidden_dim, 3),
+                ResidualRefineBlock(hidden_dim),
+            )
+            self.geometry_out = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1)
+            nn.init.zeros_(self.geometry_out.weight)
+            nn.init.zeros_(self.geometry_out.bias)
+            self.geometry_rgb_gate = nn.Sequential(
+                nn.Conv2d(self.geometry_dim, geo_channels, kernel_size=3, padding=1),
+                nn.GELU(),
+                nn.Conv2d(geo_channels, 1, kernel_size=1),
+                nn.Sigmoid(),
+            )
+            self.rgb_gate_delta = nn.Sequential(
+                nn.Conv2d(self.geometry_dim, geo_channels, kernel_size=3, padding=1),
+                nn.GELU(),
+                nn.Conv2d(geo_channels, 1, kernel_size=1),
+            )
+            nn.init.zeros_(self.rgb_gate_delta[-1].weight)
+            nn.init.zeros_(self.rgb_gate_delta[-1].bias)
 
         if self.use_rgb_skip:
             rgb_channels = max(hidden_dim // 4, 32)
@@ -151,8 +214,31 @@ class MultiScalePlaneMaskHead(nn.Module):
             normalized_pixels,
         ) / math.sqrt(pixel_features.shape[1])
 
-    def forward(self, features, rgb=None):
+    def _refine_queries_from_masks(self, decoded, mask_logits, pixel_features):
+        if not self.use_masked_query_refine:
+            return decoded
+        weights = mask_logits.sigmoid()
+        normalizer = weights.sum(dim=(2, 3), keepdim=True).clamp_min(1e-6)
+        weights = weights / normalizer
+        pooled = torch.einsum("bqhw,bchw->bqc", weights, pixel_features)
+        update = self.masked_query_refine(torch.cat((decoded, pooled), dim=-1))
+        return decoded + update
+
+    def forward(self, features, rgb=None, geometry=None):
         fused32, stage_weights = self._fuse_features(features)
+        geometry32 = None
+        if self.use_geometry:
+            if geometry is None:
+                raise ValueError("geometry is required when use_geometry=True")
+            geometry32 = F.interpolate(
+                geometry,
+                size=fused32.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+            geometry_memory = self.geometry_memory_proj(geometry32)
+            fused32 = fused32 + self.geometry_memory_out(geometry_memory)
+
         batch_size = fused32.shape[0]
         memory = fused32.flatten(2).transpose(1, 2)
         queries = self.query_embed.weight.unsqueeze(0).expand(batch_size, -1, -1)
@@ -189,6 +275,17 @@ class MultiScalePlaneMaskHead(nn.Module):
             align_corners=False,
         )
         pixel128 = self.up128(pixel128)
+        if self.use_geometry:
+            geometry = F.interpolate(
+                geometry,
+                size=pixel128.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+            geometry_delta = self.geometry_fuse(
+                torch.cat((pixel128, self.geometry_proj(geometry)), dim=1)
+            )
+            pixel128 = pixel128 + self.geometry_out(geometry_delta)
         if self.use_rgb_skip:
             if rgb is None:
                 raise ValueError("rgb is required when use_rgb_skip=True")
@@ -198,8 +295,12 @@ class MultiScalePlaneMaskHead(nn.Module):
                 mode="bilinear",
                 align_corners=False,
             )
+            rgb_feature = self.rgb_proj(rgb)
+            if self.use_geometry:
+                gate_delta = torch.tanh(self.rgb_gate_delta(geometry))
+                rgb_feature = rgb_feature * (1.0 + gate_delta)
             pixel128 = self.rgb_fuse(
-                torch.cat((pixel128, self.rgb_proj(rgb)), dim=1)
+                torch.cat((pixel128, rgb_feature), dim=1)
             )
         outputs.append(
             {
@@ -207,6 +308,22 @@ class MultiScalePlaneMaskHead(nn.Module):
                 "background_logits": self.background128(pixel128),
             }
         )
+
+        if self.use_masked_query_refine:
+            # The update MLP is zero-initialized, so enabling this branch keeps
+            # old checkpoints functionally unchanged before finetuning.
+            decoded = self._refine_queries_from_masks(
+                decoded,
+                outputs[-1]["mask_logits"].detach(),
+                pixel128,
+            )
+            mask_embeddings = self.mask_embed(decoded)
+            pixel_features = (pixel32, pixel64, pixel128)
+            for index, pixel_feature in enumerate(pixel_features):
+                outputs[index]["mask_logits"] = self._mask_logits(
+                    mask_embeddings,
+                    pixel_feature,
+                )
 
         level_index = {32: 0, 64: 1, 128: 2}[self.output_size]
         selected = dict(outputs[level_index])

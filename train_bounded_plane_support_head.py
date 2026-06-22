@@ -322,10 +322,17 @@ def export_case(model, case, output_dir, args, device):
         )
     patch_assign = assign.argmax(dim=-1).detach().cpu().numpy().astype(np.int32)
     patch_assign[patch_assign >= len(aux_normals_np)] = -1
+    teacher_patch_labels = case["patch_labels"].astype(np.int32)
+    valid_teacher = teacher_patch_labels >= 0
+    teacher_patch_acc = (
+        float(np.mean(patch_assign[valid_teacher] == teacher_patch_labels[valid_teacher]))
+        if np.any(valid_teacher)
+        else 1.0
+    )
     if args.boundary_strict_decode:
         patch_assign = boundary_strict_decode(
             patch_assign,
-            case["patch_labels"].astype(np.int32),
+            teacher_patch_labels,
             case["patch_label_conf"].astype(np.float32),
             case["patch_edge_i"].astype(np.int64),
             case["patch_edge_j"].astype(np.int64),
@@ -333,6 +340,13 @@ def export_case(model, case, output_dir, args, device):
             min_conf=args.boundary_strict_label_conf,
             min_edge_conf=args.boundary_strict_edge_conf,
         )
+    used_teacher_fallback = False
+    if (
+        args.teacher_fallback_min_patch_acc > 0.0
+        and teacher_patch_acc < args.teacher_fallback_min_patch_acc
+    ):
+        patch_assign = teacher_patch_labels.copy()
+        used_teacher_fallback = True
     point_assignment = np.full(len(case["points"]), -1, dtype=np.int32)
     for patch_id, plane_id in enumerate(patch_assign):
         point_assignment[case["point_to_patch"] == patch_id] = int(plane_id)
@@ -383,9 +397,23 @@ def export_case(model, case, output_dir, args, device):
                 offset = -offset
             normals.append(normal)
             offsets_norm.append(float(offset))
-            dist = np.abs(case["points_norm"][mask].astype(np.float32) @ normal + float(offset))
-            active = True
+            selected_points = case["points_norm"][mask].astype(np.float32)
+            dist = np.abs((selected_points * normal[None, :]).sum(axis=1) + float(offset))
             mean_res = float(dist.mean())
+            fit_conf_mean = (
+                float(fit_confidence_np[patch_assign == plane_id, plane_id].mean())
+                if np.any(patch_assign == plane_id)
+                else None
+            )
+            active = True
+            if args.max_active_mean_residual > 0.0 and mean_res > args.max_active_mean_residual:
+                active = False
+            if (
+                args.min_active_fit_confidence > 0.0
+                and fit_conf_mean is not None
+                and fit_conf_mean < args.min_active_fit_confidence
+            ):
+                active = False
         planes.append(
             {
                 "id": int(plane_id),
@@ -395,17 +423,17 @@ def export_case(model, case, output_dir, args, device):
                 "assigned_patch_count": int((patch_assign == plane_id).sum()),
                 "assigned_ratio": float(mask.mean()),
                 "mean_abs_distance_normalized": mean_res,
-                "fit_confidence_mean": (
-                    float(fit_confidence_np[patch_assign == plane_id, plane_id].mean())
-                    if np.any(patch_assign == plane_id)
-                    else None
-                ),
+                "fit_confidence_mean": fit_conf_mean,
                 "fit_effective_mass": float(fitted_mass_np[plane_id]),
                 "active": bool(active),
             }
         )
     normals = np.stack(normals).astype(np.float32) if normals else np.zeros((0, 3), dtype=np.float32)
     offsets_norm = np.asarray(offsets_norm, dtype=np.float32)
+    inactive_ids = np.asarray([p["id"] for p in planes if not p["active"]], dtype=np.int32)
+    if len(inactive_ids):
+        point_assignment[np.isin(point_assignment, inactive_ids)] = -1
+        patch_assign[np.isin(patch_assign, inactive_ids)] = -1
     offsets_world = np.asarray(
         [float(d * case["scale"] - float(np.dot(n, case["center"]))) for n, d in zip(normals, offsets_norm)],
         dtype=np.float32,
@@ -423,6 +451,8 @@ def export_case(model, case, output_dir, args, device):
         "num_patches": int(len(case["patch_features"])),
         "num_planes": int(len(aux_normals_np)),
         "active_planes": int(sum(p["active"] for p in planes)),
+        "teacher_patch_acc_before_fallback": float(teacher_patch_acc),
+        "used_teacher_fallback": bool(used_teacher_fallback),
         "background_point_count": int((point_assignment < 0).sum()),
         "background_ratio": float((point_assignment < 0).mean()),
         "planes": planes,
@@ -452,6 +482,10 @@ def export_case(model, case, output_dir, args, device):
         plane_offsets=offsets_world.astype(np.float32),
         plane_offsets_normalized=offsets_norm.astype(np.float32),
         active_planes=np.asarray([p["active"] for p in planes], dtype=np.bool_),
+        gt_point_plane_ids=case.get(
+            "gt_point_plane_ids",
+            np.full(len(case["points"]), -1, dtype=np.int32),
+        ).astype(np.int32),
     )
     return summary
 
@@ -539,6 +573,9 @@ def main():
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--refit_min_points", type=int, default=300)
     parser.add_argument("--refit_min_effective_mass", type=float, default=50.0)
+    parser.add_argument("--max_active_mean_residual", type=float, default=0.0)
+    parser.add_argument("--min_active_fit_confidence", type=float, default=0.0)
+    parser.add_argument("--teacher_fallback_min_patch_acc", type=float, default=0.0)
     parser.add_argument("--boundary_strict_decode", action="store_true")
     parser.add_argument("--boundary_strict_label_conf", type=float, default=0.65)
     parser.add_argument("--boundary_strict_edge_conf", type=float, default=0.25)

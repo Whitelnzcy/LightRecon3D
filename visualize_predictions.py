@@ -29,7 +29,7 @@ from dataloaders.s3d_dataset import Structured3DDataset
 from models.build_backbone import build_dust3r_backbone
 from models.lightrecon_net import LightReconModel
 from models.multiscale_plane_mask_head import MultiScalePlaneMaskHead
-from train_stage1_clean_baseline import class_target_from_matches
+from train_stage1_clean_baseline import apply_query_class_scores, class_target_from_matches
 from train_stage1_plane_masks import masks_for_plane_ids, match_queries, select_plane_ids
 
 
@@ -368,6 +368,18 @@ def flatten_cached_samples(cache_samples):
                     "rgb2": cache_item["rgb2"][batch_index : batch_index + 1],
                     "gt_plane1": cache_item["gt_plane1"][batch_index : batch_index + 1],
                     "gt_plane2": cache_item["gt_plane2"][batch_index : batch_index + 1],
+                    **(
+                        {
+                            "geometry1": cache_item["geometry1"][
+                                batch_index : batch_index + 1
+                            ],
+                            "geometry2": cache_item["geometry2"][
+                                batch_index : batch_index + 1
+                            ],
+                        }
+                        if "geometry1" in cache_item and "geometry2" in cache_item
+                        else {}
+                    ),
                 }
             )
     return flattened
@@ -401,6 +413,12 @@ def build_multiscale_head(checkpoint, cache_config, device):
         num_heads=int(config.get("decoder_heads", 8)),
         output_size=int(config.get("output_size", 128)),
         use_rgb_skip=not bool(config.get("disable_rgb_skip", False)),
+        use_geometry=bool(config.get("use_geometry", False)),
+        geometry_dim=int(cache_config.get("geometry_channels", 9)),
+        use_masked_query_refine=bool(config.get("use_masked_query_refine", False)),
+        decoder_ffn_multiplier=int(config.get("decoder_ffn_multiplier", 4)),
+        fuse_refine_blocks=int(config.get("fuse_refine_blocks", 1)),
+        pixel_refine_blocks=int(config.get("pixel_refine_blocks", 1)),
     ).to(device)
     head.load_state_dict(checkpoint["head"], strict=True)
     head.eval()
@@ -421,6 +439,10 @@ def analyze_view(output, labels, config):
     match_args = argparse.Namespace(
         match_bce_weight=float(config.get("match_bce_weight", 1.0)),
         match_dice_weight=float(config.get("match_dice_weight", 2.0)),
+        match_existence_weight=float(config.get("match_existence_weight", 0.0)),
+    )
+    score_args = argparse.Namespace(
+        class_score_weight=float(config.get("class_score_weight", 0.0))
     )
     target_hw = output["mask_logits"].shape[-2:]
     _, plane_ids = select_plane_ids(
@@ -434,10 +456,23 @@ def analyze_view(output, labels, config):
         if masks[0]
         else output["mask_logits"].new_zeros((0, *target_hw))
     )
-    query_ids, target_ids = match_queries(output["mask_logits"], targets, match_args)
+    query_ids, target_ids = match_queries(
+        output["mask_logits"],
+        targets,
+        match_args,
+        existence_logits=output["existence_logits"],
+    )
 
     class_logits = torch.cat(
-        (output["mask_logits"], output["background_logits"]), dim=0
+        (
+            apply_query_class_scores(
+                output["mask_logits"],
+                output["existence_logits"],
+                score_args,
+            ),
+            output["background_logits"],
+        ),
+        dim=0,
     )
     predicted = class_logits.argmax(dim=0)
     gt_query = class_target_from_matches(
@@ -549,7 +584,21 @@ def collect_multiscale_records(head, samples, metadata, config, device, batch_si
         rgb2 = torch.cat([item["rgb2"] for item in items], dim=0).to(
             device=device, dtype=torch.float32
         )
-        output = head(features, torch.cat((rgb1, rgb2), dim=0))
+        if bool(config.get("use_geometry", False)):
+            if "geometry1" not in items[0] or "geometry2" not in items[0]:
+                raise RuntimeError(
+                    "This checkpoint requires geometry1/geometry2 in the feature cache"
+                )
+            geometry1 = torch.cat([item["geometry1"] for item in items], dim=0).to(
+                device=device, dtype=torch.float32
+            )
+            geometry2 = torch.cat([item["geometry2"] for item in items], dim=0).to(
+                device=device, dtype=torch.float32
+            )
+            geometry = torch.cat((geometry1, geometry2), dim=0)
+        else:
+            geometry = None
+        output = head(features, torch.cat((rgb1, rgb2), dim=0), geometry=geometry)
 
         for local_index, item in enumerate(items):
             sample_index = start + local_index

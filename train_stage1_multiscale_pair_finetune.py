@@ -20,6 +20,22 @@ def initialize_head(head, checkpoint_path):
     if checkpoint.get("model_type") == "MultiScalePlaneMaskHead":
         state = checkpoint.get("head", checkpoint)
         missing, unexpected = head.load_state_dict(state, strict=False)
+        allowed_missing_prefixes = (
+            "geometry_alpha",
+            "rgb_gate_alpha",
+            "geometry_memory_proj.",
+            "geometry_memory_out.",
+            "geometry_proj.",
+            "geometry_fuse.",
+            "geometry_out.",
+            "geometry_rgb_gate.",
+            "rgb_gate_delta.",
+        )
+        missing = [
+            key
+            for key in missing
+            if not key.startswith(allowed_missing_prefixes)
+        ]
         if missing or unexpected:
             raise RuntimeError(
                 "Multiscale checkpoint mismatch: "
@@ -60,6 +76,12 @@ def main():
         num_heads=args.decoder_heads,
         output_size=args.output_size,
         use_rgb_skip=not args.disable_rgb_skip,
+        use_geometry=args.use_geometry,
+        geometry_dim=int(config.get("geometry_channels", 9)),
+        use_masked_query_refine=args.use_masked_query_refine,
+        decoder_ffn_multiplier=args.decoder_ffn_multiplier,
+        fuse_refine_blocks=args.fuse_refine_blocks,
+        pixel_refine_blocks=args.pixel_refine_blocks,
     ).to(device)
     initialization_mode = initialize_head(head, args.init_checkpoint)
 

@@ -31,6 +31,16 @@ def main():
     saved_args = argparse.Namespace(**checkpoint["args"])
     saved_args.batch_size = cli.batch_size
     saved_args.log_every = cli.log_every
+    if not hasattr(saved_args, "use_geometry"):
+        saved_args.use_geometry = False
+    if not hasattr(saved_args, "use_masked_query_refine"):
+        saved_args.use_masked_query_refine = False
+    if not hasattr(saved_args, "decoder_ffn_multiplier"):
+        saved_args.decoder_ffn_multiplier = 4
+    if not hasattr(saved_args, "fuse_refine_blocks"):
+        saved_args.fuse_refine_blocks = 1
+    if not hasattr(saved_args, "pixel_refine_blocks"):
+        saved_args.pixel_refine_blocks = 1
 
     input_dims = tuple(
         int(value)
@@ -48,6 +58,12 @@ def main():
         num_heads=saved_args.decoder_heads,
         output_size=saved_args.output_size,
         use_rgb_skip=not saved_args.disable_rgb_skip,
+        use_geometry=saved_args.use_geometry,
+        geometry_dim=int(cache.get("config", {}).get("geometry_channels", 9)),
+        use_masked_query_refine=saved_args.use_masked_query_refine,
+        decoder_ffn_multiplier=saved_args.decoder_ffn_multiplier,
+        fuse_refine_blocks=saved_args.fuse_refine_blocks,
+        pixel_refine_blocks=saved_args.pixel_refine_blocks,
     ).to(device)
     head.load_state_dict(checkpoint["head"], strict=True)
 

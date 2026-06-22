@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from models.multiscale_plane_mask_head import MultiScalePlaneMaskHead
 from train_stage1_clean_baseline import sample_loss_and_metrics, set_seed
 from train_stage1_clean_pair_baseline import combine_view_rows, slice_output
+from train_stage1_plane_masks import select_plane_ids
 
 
 STAGE_NAMES = ("encoder", "shallow", "middle", "deep")
@@ -38,23 +39,68 @@ def parse_args():
         default="",
         help="Strictly resume a MultiScalePlaneMaskHead checkpoint for finetuning.",
     )
+    parser.add_argument(
+        "--allow_query_expansion_resume",
+        action="store_true",
+        help="Allow loading a checkpoint with fewer queries by copying overlapping query rows.",
+    )
+    parser.add_argument(
+        "--allow_partial_resume",
+        action="store_true",
+        help=(
+            "Allow warm-starting a larger head by copying overlapping tensor "
+            "slices from a smaller checkpoint. New channels/layers stay randomly initialized."
+        ),
+    )
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--num_queries", type=int, default=8)
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--decoder_layers", type=int, default=3)
     parser.add_argument("--decoder_heads", type=int, default=8)
+    parser.add_argument("--decoder_ffn_multiplier", type=int, default=4)
+    parser.add_argument("--fuse_refine_blocks", type=int, default=1)
+    parser.add_argument("--pixel_refine_blocks", type=int, default=1)
     parser.add_argument("--output_size", type=int, default=128, choices=(32, 64, 128))
     parser.add_argument("--disable_rgb_skip", action="store_true")
+    parser.add_argument(
+        "--use_geometry",
+        action="store_true",
+        help="Fuse cached DUSt3R pointmap-derived geometry into the 128x128 decoder.",
+    )
+    parser.add_argument(
+        "--use_masked_query_refine",
+        action="store_true",
+        help=(
+            "Run a zero-initialized second query pass using mask-pooled pixel "
+            "features. This should preserve old checkpoints at step 0."
+        ),
+    )
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--min_lr", type=float, default=1e-6)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--match_bce_weight", type=float, default=1.0)
     parser.add_argument("--match_dice_weight", type=float, default=2.0)
+    parser.add_argument(
+        "--match_existence_weight",
+        type=float,
+        default=0.0,
+        help="Add plane-existence probability to Hungarian matching cost.",
+    )
     parser.add_argument("--mask_focal_weight", type=float, default=1.0)
     parser.add_argument("--mask_dice_weight", type=float, default=2.0)
+    parser.add_argument("--mask_tversky_fp_weight", type=float, default=0.5)
+    parser.add_argument("--mask_tversky_fn_weight", type=float, default=0.5)
     parser.add_argument("--existence_weight", type=float, default=0.1)
+    parser.add_argument("--existence_positive_weight", type=float, default=1.0)
+    parser.add_argument("--existence_negative_weight", type=float, default=1.0)
+    parser.add_argument(
+        "--class_score_weight",
+        type=float,
+        default=0.0,
+        help="Add query objectness logits to mask logits for partition loss and prediction.",
+    )
     parser.add_argument("--background_weight", type=float, default=1.0)
     parser.add_argument(
         "--query_margin_weight",
@@ -72,23 +118,111 @@ def parse_args():
         default=0.0,
         help="Suppress unmatched query logits on the union of GT plane pixels.",
     )
+    parser.add_argument(
+        "--query_separation_weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalize matched plane queries leaking into each other's GT region. "
+            "This targets query merging without changing the architecture."
+        ),
+    )
+    parser.add_argument("--query_separation_margin", type=float, default=0.5)
+    parser.add_argument(
+        "--ownership_loss_weight",
+        type=float,
+        default=0.0,
+        help="Target-aware loss for duplicate-query splits and multi-GT query merges.",
+    )
+    parser.add_argument("--ownership_overlap_threshold", type=float, default=0.08)
+    parser.add_argument("--ownership_merge_threshold", type=float, default=0.25)
     parser.add_argument("--focal_gamma", type=float, default=2.0)
     parser.add_argument("--existence_threshold", type=float, default=0.5)
     parser.add_argument("--min_plane_pixels", type=int, default=4)
     parser.add_argument("--aux32_weight", type=float, default=0.25)
     parser.add_argument("--aux64_weight", type=float, default=0.5)
+    parser.add_argument(
+        "--train_hflip_prob",
+        type=float,
+        default=0.0,
+        help="Randomly flip cached features/RGB/geometry/GT horizontally during training.",
+    )
+    parser.add_argument(
+        "--rgb_jitter_strength",
+        type=float,
+        default=0.0,
+        help="Apply lightweight brightness/contrast jitter to RGB skip input during training.",
+    )
+    parser.add_argument(
+        "--hard_case_sampling",
+        action="store_true",
+        help="Oversample cached samples with more planes, small planes, and imbalanced plane areas.",
+    )
+    parser.add_argument(
+        "--hard_case_strength",
+        type=float,
+        default=1.0,
+        help="Multiplier for hard-case oversampling. Weights are capped to avoid collapse.",
+    )
     parser.add_argument("--eval_before_train", action="store_true")
     parser.add_argument("--log_every", type=int, default=16)
     parser.add_argument("--seed", type=int, default=20260617)
     return parser.parse_args()
 
 
-def iter_sample_batches(samples, batch_size, shuffle, seed):
+def iter_sample_batches(samples, batch_size, shuffle, seed, weights=None):
     indices = list(range(len(samples)))
-    if shuffle:
+    if shuffle and weights is not None:
+        rng = random.Random(seed)
+        indices = rng.choices(indices, weights=weights, k=len(indices))
+    elif shuffle:
         random.Random(seed).shuffle(indices)
     for start in range(0, len(indices), batch_size):
         yield [samples[index] for index in indices[start : start + batch_size]]
+
+
+def _view_hard_case_score(labels, args):
+    target_hw = (int(args.output_size), int(args.output_size))
+    resized, batch_plane_ids = select_plane_ids(
+        labels,
+        target_hw,
+        args.num_queries,
+        args.min_plane_pixels,
+    )
+    if not batch_plane_ids or not batch_plane_ids[0]:
+        return 0.0
+    label_map = resized[0]
+    total = float(label_map.numel())
+    areas = []
+    for plane_id in batch_plane_ids[0]:
+        areas.append(float((label_map == int(plane_id)).sum().item()) / total)
+    plane_count = len(areas)
+    small_count = sum(area < 0.035 for area in areas)
+    imbalance = max(areas) / max(min(areas), 1.0 / total) if len(areas) >= 2 else 1.0
+    many_planes_score = max(0.0, float(plane_count - 3)) / 5.0
+    small_plane_score = min(1.0, float(small_count) / 3.0)
+    imbalance_score = min(1.0, max(0.0, imbalance - 4.0) / 8.0)
+    return 0.45 * many_planes_score + 0.35 * small_plane_score + 0.20 * imbalance_score
+
+
+def build_hard_case_weights(samples, args):
+    if not args.hard_case_sampling:
+        return None
+    weights = []
+    for sample in samples:
+        view1 = _view_hard_case_score(sample["gt_plane1"], args)
+        view2 = _view_hard_case_score(sample["gt_plane2"], args)
+        score = 0.5 * (view1 + view2)
+        weight = 1.0 + float(args.hard_case_strength) * score
+        weights.append(min(5.0, max(0.2, weight)))
+    mean_weight = sum(weights) / max(len(weights), 1)
+    print(
+        "[hard-case sampling] "
+        f"enabled strength={args.hard_case_strength:g} "
+        f"min={min(weights):.3f} mean={mean_weight:.3f} max={max(weights):.3f}",
+        flush=True,
+    )
+    return weights
 
 
 def load_cache_index_filter(path_or_text):
@@ -138,6 +272,41 @@ def cat_tensor_batch(items, key, device, dtype=None):
     return value.to(dtype=dtype) if dtype is not None else value
 
 
+def cat_optional_tensor_batch(items, key, device, dtype=None):
+    if key not in items[0]:
+        return None
+    return cat_tensor_batch(items, key, device, dtype)
+
+
+def apply_cached_augmentation(features, rgb, geometry, gt, args, train):
+    if not train:
+        return features, rgb, geometry, gt
+
+    hflip_prob = float(getattr(args, "train_hflip_prob", 0.0))
+    if hflip_prob > 0.0:
+        batch_size = rgb.shape[0]
+        flip_mask = torch.rand(batch_size, device=rgb.device) < hflip_prob
+        if flip_mask.any():
+            for stage in STAGE_NAMES:
+                features[stage][flip_mask] = torch.flip(
+                    features[stage][flip_mask],
+                    dims=(-1,),
+                )
+            rgb[flip_mask] = torch.flip(rgb[flip_mask], dims=(-1,))
+            gt[flip_mask] = torch.flip(gt[flip_mask], dims=(-1,))
+            if geometry is not None:
+                geometry[flip_mask] = torch.flip(geometry[flip_mask], dims=(-1,))
+
+    jitter = float(getattr(args, "rgb_jitter_strength", 0.0))
+    if jitter > 0.0:
+        batch_size = rgb.shape[0]
+        contrast = 1.0 + (torch.rand(batch_size, 1, 1, 1, device=rgb.device) * 2.0 - 1.0) * jitter
+        brightness = (torch.rand(batch_size, 1, 1, 1, device=rgb.device) * 2.0 - 1.0) * jitter
+        rgb = (rgb * contrast + brightness).clamp(0.0, 1.0)
+
+    return features, rgb, geometry, gt
+
+
 def primary_output(output):
     return {
         "mask_logits": output["mask_logits"],
@@ -169,6 +338,8 @@ def aux_args(args):
     cloned.existence_weight = 0.0
     cloned.query_margin_weight = 0.0
     cloned.unmatched_query_weight = 0.0
+    cloned.query_separation_weight = 0.0
+    cloned.ownership_loss_weight = 0.0
     return cloned
 
 
@@ -218,11 +389,52 @@ def initialize_from_clean(head, checkpoint_path):
     )
 
 
-def resume_multiscale_checkpoint(head, checkpoint_path):
+def _copy_overlapping_tensor(target, source):
+    slices = tuple(slice(0, min(dst, src)) for dst, src in zip(target.shape, source.shape))
+    copied = target.clone()
+    copied[slices].copy_(source[slices])
+    return copied
+
+
+def resume_multiscale_checkpoint(
+    head,
+    checkpoint_path,
+    allow_query_expansion=False,
+    allow_partial_resume=False,
+):
     if not checkpoint_path:
         return None
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state = checkpoint.get("head", checkpoint)
+    if allow_query_expansion or allow_partial_resume:
+        own_state = head.state_dict()
+        copied = []
+        expanded = []
+        skipped = []
+        query_prefixes = ("query_embed.", "existence_head.")
+        for key, value in state.items():
+            if key not in own_state:
+                skipped.append(key)
+                continue
+            if own_state[key].shape == value.shape:
+                own_state[key] = value
+                copied.append(key)
+            elif key.startswith(query_prefixes) and own_state[key].ndim == value.ndim:
+                own_state[key] = _copy_overlapping_tensor(own_state[key], value)
+                expanded.append(key)
+            elif allow_partial_resume and own_state[key].ndim == value.ndim:
+                own_state[key] = _copy_overlapping_tensor(own_state[key], value)
+                expanded.append(key)
+            else:
+                skipped.append(key)
+        head.load_state_dict(own_state, strict=True)
+        print(
+            f"Partially-resumed MultiScalePlaneMaskHead from {checkpoint_path} "
+            f"(epoch={checkpoint.get('epoch', 'unknown')}, "
+            f"copied={len(copied)}, expanded={len(expanded)}, skipped={len(skipped)})",
+            flush=True,
+        )
+        return checkpoint
     head.load_state_dict(state, strict=True)
     print(
         f"Resumed MultiScalePlaneMaskHead from {checkpoint_path} "
@@ -232,7 +444,7 @@ def resume_multiscale_checkpoint(head, checkpoint_path):
     return checkpoint
 
 
-def run_epoch(head, samples, optimizer, device, args, train, epoch):
+def run_epoch(head, samples, optimizer, device, args, train, epoch, sample_weights=None):
     head.train(train)
     rows = []
     batches = list(
@@ -241,6 +453,7 @@ def run_epoch(head, samples, optimizer, device, args, train, epoch):
             args.batch_size,
             shuffle=train,
             seed=args.seed + epoch,
+            weights=sample_weights if train else None,
         )
     )
     auxiliary_args = aux_args(args)
@@ -250,6 +463,8 @@ def run_epoch(head, samples, optimizer, device, args, train, epoch):
         features2 = cat_feature_batch(items, "features2", device)
         rgb1 = cat_tensor_batch(items, "rgb1", device, torch.float32)
         rgb2 = cat_tensor_batch(items, "rgb2", device, torch.float32)
+        geometry1 = cat_optional_tensor_batch(items, "geometry1", device, torch.float32)
+        geometry2 = cat_optional_tensor_batch(items, "geometry2", device, torch.float32)
         gt1 = cat_tensor_batch(items, "gt_plane1", device)
         gt2 = cat_tensor_batch(items, "gt_plane2", device)
 
@@ -258,12 +473,35 @@ def run_epoch(head, samples, optimizer, device, args, train, epoch):
             for stage in STAGE_NAMES
         }
         rgb = torch.cat((rgb1, rgb2), dim=0)
+        if args.use_geometry:
+            if geometry1 is None or geometry2 is None:
+                raise RuntimeError(
+                    "--use_geometry requires a cache generated with geometry1/geometry2"
+                )
+            geometry = torch.cat((geometry1, geometry2), dim=0)
+        else:
+            geometry = None
+        gt = torch.cat((gt1, gt2), dim=0)
+        features, rgb, geometry, gt = apply_cached_augmentation(
+            features,
+            rgb,
+            geometry,
+            gt,
+            args,
+            train,
+        )
+        gt1 = gt[: gt1.shape[0]]
+        gt2 = gt[gt1.shape[0] :]
 
         if train:
             optimizer.zero_grad(set_to_none=True)
 
         with torch.set_grad_enabled(train):
-            full_output = head(features, rgb=None if args.disable_rgb_skip else rgb)
+            full_output = head(
+                features,
+                rgb=None if args.disable_rgb_skip else rgb,
+                geometry=geometry,
+            )
             final_output = primary_output(full_output)
             final_loss, row = evaluate_two_views(final_output, gt1, gt2, args)
             loss = final_loss
@@ -319,7 +557,9 @@ def run_epoch(head, samples, optimizer, device, args, train, epoch):
                 f"iou32={row['benchmark32_mean_iou']:.3f} "
                 f"v1={row['view1_mean_iou']:.3f} "
                 f"v2={row['view2_mean_iou']:.3f} "
-                f"leak={row['leakage_rate']:.3f}",
+                f"leak={row['leakage_rate']:.3f} "
+                f"dup={row.get('ownership_duplicate_gt_rate', 0.0):.3f} "
+                f"merge={row.get('ownership_merge_query_rate', 0.0):.3f}",
                 flush=True,
             )
 
@@ -355,6 +595,7 @@ def main():
         load_cache_index_filter(args.val_quality_indices),
         "val",
     )
+    train_sample_weights = build_hard_case_weights(train_samples, args)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     head = MultiScalePlaneMaskHead(
@@ -365,9 +606,39 @@ def main():
         num_heads=args.decoder_heads,
         output_size=args.output_size,
         use_rgb_skip=not args.disable_rgb_skip,
+        use_geometry=args.use_geometry,
+        geometry_dim=int(config.get("geometry_channels", 9)),
+        use_masked_query_refine=args.use_masked_query_refine,
+        decoder_ffn_multiplier=args.decoder_ffn_multiplier,
+        fuse_refine_blocks=args.fuse_refine_blocks,
+        pixel_refine_blocks=args.pixel_refine_blocks,
     ).to(device)
+    trainable_params = sum(parameter.numel() for parameter in head.parameters() if parameter.requires_grad)
+    total_params = sum(parameter.numel() for parameter in head.parameters())
+    print(
+        json.dumps(
+            {
+                "model_params": {
+                    "total": int(total_params),
+                    "trainable": int(trainable_params),
+                    "hidden_dim": int(args.hidden_dim),
+                    "num_queries": int(args.num_queries),
+                    "decoder_layers": int(args.decoder_layers),
+                    "decoder_ffn_multiplier": int(args.decoder_ffn_multiplier),
+                    "fuse_refine_blocks": int(args.fuse_refine_blocks),
+                    "pixel_refine_blocks": int(args.pixel_refine_blocks),
+                }
+            }
+        ),
+        flush=True,
+    )
     initialize_from_clean(head, args.init_checkpoint)
-    resume_multiscale_checkpoint(head, args.resume_checkpoint)
+    resume_multiscale_checkpoint(
+        head,
+        args.resume_checkpoint,
+        allow_query_expansion=args.allow_query_expansion_resume,
+        allow_partial_resume=args.allow_partial_resume,
+    )
 
     optimizer = torch.optim.AdamW(
         head.parameters(),
@@ -380,6 +651,7 @@ def main():
         eta_min=args.min_lr,
     )
 
+    initial = None
     if args.eval_before_train:
         initial = run_epoch(
             head,
@@ -393,7 +665,18 @@ def main():
         print(json.dumps({"epoch": 0, "val": initial}, ensure_ascii=False), flush=True)
 
     history = []
-    best_iou = -1.0
+    best_iou = float(initial["mean_iou"]) if initial is not None else -1.0
+    if initial is not None:
+        payload = {
+            "model_type": "MultiScalePlaneMaskHead",
+            "head": head.state_dict(),
+            "args": vars(args),
+            "cache_config": config,
+            "input_dims": list(input_dims),
+            "epoch": 0,
+            "val": initial,
+        }
+        torch.save(payload, save_dir / "best.pt")
     for epoch in range(1, args.num_epochs + 1):
         print(
             f"Epoch {epoch}/{args.num_epochs} lr={optimizer.param_groups[0]['lr']:.6g}",
@@ -407,6 +690,7 @@ def main():
             args,
             train=True,
             epoch=epoch,
+            sample_weights=train_sample_weights,
         )
         val_stats = run_epoch(
             head,
