@@ -1,5 +1,7 @@
 import argparse
 import copy
+import gc
+import glob
 import json
 import random
 from collections import defaultdict
@@ -21,7 +23,17 @@ def parse_args():
     parser = argparse.ArgumentParser(
         "Train a high-resolution multi-layer plane mask head on cached SymRef pairs"
     )
-    parser.add_argument("--feature_cache_path", required=True)
+    parser.add_argument("--feature_cache_path", default="")
+    parser.add_argument(
+        "--feature_cache_glob",
+        default="",
+        help="Optional glob for sharded train caches. Each shard is loaded and released per epoch.",
+    )
+    parser.add_argument(
+        "--val_cache_path",
+        default="",
+        help="Optional validation cache path when training from sharded train caches.",
+    )
     parser.add_argument("--save_dir", required=True)
     parser.add_argument(
         "--train_quality_indices",
@@ -580,22 +592,54 @@ def main():
         encoding="utf-8",
     )
 
-    cache = torch.load(args.feature_cache_path, map_location="cpu", weights_only=False)
+    train_cache_paths = []
+    if args.feature_cache_glob:
+        train_cache_paths = sorted(glob.glob(args.feature_cache_glob))
+        if not train_cache_paths:
+            raise FileNotFoundError(f"No train cache shards matched: {args.feature_cache_glob}")
+        if not args.val_cache_path:
+            raise ValueError("--val_cache_path is required when using --feature_cache_glob")
+        cache_for_config = torch.load(train_cache_paths[0], map_location="cpu", weights_only=False)
+        val_cache_path = args.val_cache_path
+        val_cache = torch.load(val_cache_path, map_location="cpu", weights_only=False)
+        print(
+            json.dumps(
+                {
+                    "sharded_training": {
+                        "train_cache_glob": args.feature_cache_glob,
+                        "train_shards": len(train_cache_paths),
+                        "val_cache_path": val_cache_path,
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+    else:
+        if not args.feature_cache_path:
+            raise ValueError("Provide --feature_cache_path or --feature_cache_glob")
+        cache_for_config = torch.load(args.feature_cache_path, map_location="cpu", weights_only=False)
+        val_cache = cache_for_config
+
+    cache = cache_for_config
     config = cache.get("config", {})
     input_dims = tuple(int(value) for value in config.get("input_dims", (1024, 768, 768, 768)))
-    train_samples = cache["train"]
-    val_samples = cache["val"]
-    train_samples = filter_cached_samples(
-        train_samples,
-        load_cache_index_filter(args.train_quality_indices),
-        "train",
-    )
+    if not train_cache_paths:
+        train_samples = cache["train"]
+        train_samples = filter_cached_samples(
+            train_samples,
+            load_cache_index_filter(args.train_quality_indices),
+            "train",
+        )
+        train_sample_weights = build_hard_case_weights(train_samples, args)
+    else:
+        train_samples = None
+        train_sample_weights = None
     val_samples = filter_cached_samples(
-        val_samples,
+        val_cache["val"],
         load_cache_index_filter(args.val_quality_indices),
         "val",
     )
-    train_sample_weights = build_hard_case_weights(train_samples, args)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     head = MultiScalePlaneMaskHead(
@@ -691,7 +735,39 @@ def main():
             train=True,
             epoch=epoch,
             sample_weights=train_sample_weights,
-        )
+        ) if not train_cache_paths else None
+        if train_cache_paths:
+            shard_stats = []
+            for shard_index, shard_path in enumerate(train_cache_paths, start=1):
+                print(
+                    f"[Shard] epoch={epoch} {shard_index}/{len(train_cache_paths)} path={shard_path}",
+                    flush=True,
+                )
+                shard_cache = torch.load(shard_path, map_location="cpu", weights_only=False)
+                shard_samples = filter_cached_samples(
+                    shard_cache["train"],
+                    load_cache_index_filter(args.train_quality_indices),
+                    "train",
+                )
+                shard_weights = build_hard_case_weights(shard_samples, args)
+                shard_stats.append(
+                    run_epoch(
+                        head,
+                        shard_samples,
+                        optimizer,
+                        device,
+                        args,
+                        train=True,
+                        epoch=epoch,
+                        sample_weights=shard_weights,
+                    )
+                )
+                del shard_cache, shard_samples, shard_weights
+                gc.collect()
+            train_stats = {
+                key: sum(float(row.get(key, 0.0)) for row in shard_stats) / max(len(shard_stats), 1)
+                for key in shard_stats[0].keys()
+            }
         val_stats = run_epoch(
             head,
             val_samples,

@@ -36,6 +36,28 @@ def parse_args():
     parser.add_argument("--train_indices", default="")
     parser.add_argument("--val_indices", default="")
     parser.add_argument(
+        "--skip_train",
+        action="store_true",
+        help="Do not cache the train split. Useful for making a standalone val cache.",
+    )
+    parser.add_argument(
+        "--skip_val",
+        action="store_true",
+        help="Do not cache the val split. Useful for making train shards.",
+    )
+    parser.add_argument(
+        "--train_num_shards",
+        type=int,
+        default=1,
+        help="Split the selected train indices into this many shards.",
+    )
+    parser.add_argument(
+        "--train_shard_index",
+        type=int,
+        default=0,
+        help="Train shard index to cache, in [0, train_num_shards).",
+    )
+    parser.add_argument(
         "--sampling_strategy",
         default="first",
         choices=("first", "space_balanced"),
@@ -155,12 +177,29 @@ def make_cache_loader(args, split, count, explicit_text):
         indices = list(range(min(count, len(dataset))))
         strategy = "first"
 
+    full_count = len(indices)
+    if split == "train" and args.train_num_shards > 1:
+        if args.train_shard_index < 0 or args.train_shard_index >= args.train_num_shards:
+            raise ValueError(
+                f"train_shard_index must be in [0, {args.train_num_shards}), "
+                f"got {args.train_shard_index}"
+            )
+        shard_size = (len(indices) + args.train_num_shards - 1) // args.train_num_shards
+        start = args.train_shard_index * shard_size
+        end = min(start + shard_size, len(indices))
+        indices = indices[start:end]
+        strategy = f"{strategy}_shard_{args.train_shard_index}_of_{args.train_num_shards}"
+
     if not indices:
         raise RuntimeError(f"No valid {split} indices were selected")
 
     summary = summarize_indices(dataset, indices)
     summary["strategy"] = strategy
     summary["dataset_pair_count"] = len(dataset)
+    summary["selected_pair_count_before_shard"] = full_count
+    if split == "train":
+        summary["train_num_shards"] = int(args.train_num_shards)
+        summary["train_shard_index"] = int(args.train_shard_index)
     print(
         f"[{split} selection] "
         + json.dumps(summary, ensure_ascii=False),
@@ -422,18 +461,29 @@ def main():
     for parameter in backbone.parameters():
         parameter.requires_grad_(False)
 
-    train_loader, train_indices, train_selection = make_cache_loader(
-        args,
-        "train",
-        args.small_train_size,
-        args.train_indices,
-    )
-    val_loader, val_indices, val_selection = make_cache_loader(
-        args,
-        "val",
-        args.small_val_size,
-        args.val_indices,
-    )
+    if args.skip_train and args.skip_val:
+        raise ValueError("At least one split must be cached")
+
+    train_loader = None
+    val_loader = None
+    train_indices = []
+    val_indices = []
+    train_selection = {"pair_count": 0, "strategy": "skipped"}
+    val_selection = {"pair_count": 0, "strategy": "skipped"}
+    if not args.skip_train:
+        train_loader, train_indices, train_selection = make_cache_loader(
+            args,
+            "train",
+            args.small_train_size,
+            args.train_indices,
+        )
+    if not args.skip_val:
+        val_loader, val_indices, val_selection = make_cache_loader(
+            args,
+            "val",
+            args.small_val_size,
+            args.val_indices,
+        )
 
     train_cached_initial = []
     val_cached_initial = []
@@ -510,43 +560,52 @@ def main():
             flush=True,
         )
 
-    train_cached, train_shapes = cache_split(
-        backbone,
-        train_loader,
-        device,
-        args,
-        feature_indices,
-        "train",
-        cached=train_cached_initial,
-        feature_shapes=train_shapes_initial,
-        save_partial=save_partial,
-    )
-    train_cached_for_save = train_cached
-    train_shapes_for_save = train_shapes
-    val_cached, val_shapes = cache_split(
-        backbone,
-        val_loader,
-        device,
-        args,
-        feature_indices,
-        "val",
-        cached=val_cached_initial,
-        feature_shapes=val_shapes_initial,
-        save_partial=save_partial,
-    )
-    if train_shapes != val_shapes:
+    train_cached = []
+    val_cached = []
+    train_shapes = None
+    val_shapes = None
+    if train_loader is not None:
+        train_cached, train_shapes = cache_split(
+            backbone,
+            train_loader,
+            device,
+            args,
+            feature_indices,
+            "train",
+            cached=train_cached_initial,
+            feature_shapes=train_shapes_initial,
+            save_partial=save_partial,
+        )
+        train_cached_for_save = train_cached
+        train_shapes_for_save = train_shapes
+    if val_loader is not None:
+        val_cached, val_shapes = cache_split(
+            backbone,
+            val_loader,
+            device,
+            args,
+            feature_indices,
+            "val",
+            cached=val_cached_initial,
+            feature_shapes=val_shapes_initial or train_shapes,
+            save_partial=save_partial,
+        )
+    feature_shapes = train_shapes or val_shapes
+    if feature_shapes is None:
+        raise RuntimeError("No feature shapes were cached")
+    if train_shapes is not None and val_shapes is not None and train_shapes != val_shapes:
         raise RuntimeError(
             f"Train and val feature shapes differ: {train_shapes} vs {val_shapes}"
         )
 
-    input_dims = [int(train_shapes[name][0]) for name in STAGE_NAMES]
+    input_dims = [int(feature_shapes[name][0]) for name in STAGE_NAMES]
     payload = build_payload(
         args,
         train_indices,
         val_indices,
         train_selection,
         val_selection,
-        train_shapes,
+        feature_shapes,
         train_cached,
         val_cached,
         feature_indices,
