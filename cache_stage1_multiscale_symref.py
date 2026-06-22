@@ -11,7 +11,11 @@ from torch.utils.data import DataLoader, Subset
 from dataloaders.s3d_dataset import Structured3DDataset
 from models.build_backbone import build_dust3r_backbone
 from train_stage1_clean_pair_baseline import move_batch, parse_indices
-from train_stage1_plane_masks import build_views, feature_maps_from_result
+from train_stage1_plane_masks import (
+    build_views,
+    feature_maps_from_result,
+    point_map_from_result,
+)
 
 
 STAGE_NAMES = ("encoder", "shallow", "middle", "deep")
@@ -52,6 +56,17 @@ def parse_args():
     )
     parser.add_argument("--rgb_cache_size", type=int, default=128)
     parser.add_argument("--log_every", type=int, default=16)
+    parser.add_argument(
+        "--flush_every",
+        type=int,
+        default=64,
+        help="Write a resumable partial cache every N cached pairs. Use 0 to disable.",
+    )
+    parser.add_argument(
+        "--resume_partial",
+        action="store_true",
+        help="Resume from output_path.partial.pt when it exists.",
+    )
     return parser.parse_args()
 
 
@@ -169,13 +184,109 @@ def half_cpu_feature_dict(features):
     }
 
 
+def _normalize_per_sample(value, valid, eps=1e-6):
+    mask = valid.to(dtype=value.dtype)
+    denom = mask.sum(dim=(1, 2), keepdim=True).clamp_min(1.0)
+    mean = (value * mask).sum(dim=(1, 2), keepdim=True) / denom
+    centered = value - mean
+    var = ((centered.square() * mask).sum(dim=(1, 2), keepdim=True) / denom).clamp_min(eps)
+    return centered / var.sqrt()
+
+
+def _point_normals(point_map, valid):
+    padded = F.pad(point_map.permute(0, 3, 1, 2), (1, 1, 1, 1), mode="replicate")
+    padded = padded.permute(0, 2, 3, 1)
+    dx = padded[:, 1:-1, 2:, :] - padded[:, 1:-1, :-2, :]
+    dy = padded[:, 2:, 1:-1, :] - padded[:, :-2, 1:-1, :]
+    normal = torch.linalg.cross(dx, dy, dim=-1)
+    normal = F.normalize(normal, dim=-1, eps=1e-6)
+    return normal * valid
+
+
+def _gradient_magnitude(value):
+    padded = F.pad(value, (1, 1, 1, 1), mode="replicate")
+    dx = padded[:, :, 1:-1, 2:] - padded[:, :, 1:-1, :-2]
+    dy = padded[:, :, 2:, 1:-1] - padded[:, :, :-2, 1:-1]
+    return (dx.square() + dy.square()).sum(dim=1, keepdim=True).sqrt()
+
+
+def geometry_from_result(result, target_hw):
+    point_map = point_map_from_result(result)
+    point_map = F.interpolate(
+        point_map.permute(0, 3, 1, 2),
+        size=target_hw,
+        mode="nearest",
+    ).permute(0, 2, 3, 1).contiguous()
+    valid = torch.isfinite(point_map).all(dim=-1, keepdim=True)
+    point_map = torch.nan_to_num(point_map, nan=0.0, posinf=0.0, neginf=0.0)
+    point_map = point_map * valid
+
+    xyz = _normalize_per_sample(point_map, valid)
+    depth = point_map.norm(dim=-1, keepdim=True)
+    depth = _normalize_per_sample(depth, valid)
+    normals = _point_normals(point_map, valid)
+
+    conf = result.get("conf")
+    if conf is None:
+        conf = torch.ones_like(depth)
+    elif conf.ndim == 3:
+        conf = conf[:, None]
+    elif conf.ndim == 4 and conf.shape[-1] == 1:
+        conf = conf.permute(0, 3, 1, 2)
+    elif conf.ndim == 4 and conf.shape[1] != 1:
+        conf = conf[:, :1]
+    conf = F.interpolate(
+        conf.float(),
+        size=target_hw,
+        mode="bilinear",
+        align_corners=False,
+    )
+    conf = torch.log1p(torch.relu(conf))
+    conf = _normalize_per_sample(conf.permute(0, 2, 3, 1), valid)
+
+    depth_edge = _gradient_magnitude(depth.permute(0, 3, 1, 2))
+    normal_edge = _gradient_magnitude(normals.permute(0, 3, 1, 2))
+    geo_edge = torch.maximum(depth_edge, normal_edge)
+    geo_edge = geo_edge / geo_edge.flatten(1).amax(dim=1).clamp_min(1e-6)[:, None, None, None]
+
+    geometry = torch.cat(
+        (
+            xyz.permute(0, 3, 1, 2),
+            depth.permute(0, 3, 1, 2),
+            normals.permute(0, 3, 1, 2),
+            conf.permute(0, 3, 1, 2),
+            geo_edge,
+        ),
+        dim=1,
+    )
+    return geometry.detach().to(dtype=torch.float16, device="cpu")
+
+
 @torch.no_grad()
-def cache_split(backbone, loader, device, args, feature_indices, split):
+def cache_split(
+    backbone,
+    loader,
+    device,
+    args,
+    feature_indices,
+    split,
+    cached=None,
+    feature_shapes=None,
+    save_partial=None,
+):
     backbone.eval()
-    cached = []
-    feature_shapes = None
+    cached = list(cached or [])
+    start_step = len(cached)
+    if start_step:
+        print(
+            f"[Multiscale cache {split}] resume from {start_step}/{len(loader)}",
+            flush=True,
+        )
 
     for step, batch in enumerate(loader, start=1):
+        if step <= start_step:
+            continue
+
         batch = move_batch(batch, device)
         view1, view2 = build_views(batch, f"multiscale_symref_{split}")
 
@@ -219,6 +330,14 @@ def cache_split(backbone, loader, device, args, feature_indices, split):
             mode="bilinear",
             align_corners=False,
         ).detach().to(dtype=torch.float16, device="cpu")
+        geometry1 = geometry_from_result(
+            forward_ref,
+            (args.rgb_cache_size, args.rgb_cache_size),
+        )
+        geometry2 = geometry_from_result(
+            reverse_ref,
+            (args.rgb_cache_size, args.rgb_cache_size),
+        )
 
         cached.append(
             {
@@ -226,6 +345,8 @@ def cache_split(backbone, loader, device, args, feature_indices, split):
                 "features2": half_cpu_feature_dict(features2),
                 "rgb1": rgb1,
                 "rgb2": rgb2,
+                "geometry1": geometry1,
+                "geometry2": geometry2,
                 "gt_plane1": batch["gt_plane1"].detach().cpu(),
                 "gt_plane2": batch["gt_plane2"].detach().cpu(),
             }
@@ -233,55 +354,28 @@ def cache_split(backbone, loader, device, args, feature_indices, split):
 
         if step == 1 or step % args.log_every == 0 or step == len(loader):
             print(f"[Multiscale cache {split}] {step}/{len(loader)}", flush=True)
+        if (
+            save_partial is not None
+            and args.flush_every > 0
+            and (step % args.flush_every == 0 or step == len(loader))
+        ):
+            save_partial(split, cached, feature_shapes, step, len(loader))
 
     return cached, feature_shapes
 
 
-def main():
-    args = parse_args()
-    feature_indices = parse_feature_indices(args.feature_indices)
-    output_path = Path(args.output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    backbone = build_dust3r_backbone(args.weights_path, device=device)
-    for parameter in backbone.parameters():
-        parameter.requires_grad_(False)
-
-    train_loader, train_indices, train_selection = make_cache_loader(
-        args,
-        "train",
-        args.small_train_size,
-        args.train_indices,
-    )
-    val_loader, val_indices, val_selection = make_cache_loader(
-        args,
-        "val",
-        args.small_val_size,
-        args.val_indices,
-    )
-
-    train_cached, train_shapes = cache_split(
-        backbone,
-        train_loader,
-        device,
-        args,
-        feature_indices,
-        "train",
-    )
-    val_cached, val_shapes = cache_split(
-        backbone,
-        val_loader,
-        device,
-        args,
-        feature_indices,
-        "val",
-    )
-    if train_shapes != val_shapes:
-        raise RuntimeError(
-            f"Train and val feature shapes differ: {train_shapes} vs {val_shapes}"
-        )
-
+def build_payload(
+    args,
+    train_indices,
+    val_indices,
+    train_selection,
+    val_selection,
+    train_shapes,
+    train_cached,
+    val_cached,
+    feature_indices,
+    partial=None,
+):
     input_dims = [int(train_shapes[name][0]) for name in STAGE_NAMES]
     payload = {
         "config": {
@@ -303,13 +397,163 @@ def main():
             "feature_shapes": train_shapes,
             "input_dims": input_dims,
             "rgb_cache_size": int(args.rgb_cache_size),
+            "geometry_cache_size": int(args.rgb_cache_size),
+            "geometry_channels": 9,
             "image_size": 512,
             "feature_extraction": "symmetrized_reference_branch_multilayer",
         },
         "train": train_cached,
         "val": val_cached,
     }
+    if partial is not None:
+        payload["partial"] = partial
+    return payload
+
+
+def main():
+    args = parse_args()
+    feature_indices = parse_feature_indices(args.feature_indices)
+    output_path = Path(args.output_path)
+    partial_path = output_path.with_suffix(output_path.suffix + ".partial.pt")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    backbone = build_dust3r_backbone(args.weights_path, device=device)
+    for parameter in backbone.parameters():
+        parameter.requires_grad_(False)
+
+    train_loader, train_indices, train_selection = make_cache_loader(
+        args,
+        "train",
+        args.small_train_size,
+        args.train_indices,
+    )
+    val_loader, val_indices, val_selection = make_cache_loader(
+        args,
+        "val",
+        args.small_val_size,
+        args.val_indices,
+    )
+
+    train_cached_initial = []
+    val_cached_initial = []
+    train_shapes_initial = None
+    val_shapes_initial = None
+    if args.resume_partial and partial_path.exists():
+        partial_payload = torch.load(partial_path, map_location="cpu", weights_only=False)
+        train_cached_initial = partial_payload.get("train", [])
+        val_cached_initial = partial_payload.get("val", [])
+        partial_config = partial_payload.get("config", {})
+        train_shapes_initial = partial_config.get("feature_shapes")
+        val_shapes_initial = train_shapes_initial if val_cached_initial else None
+        print(
+            "[partial resume] "
+            + json.dumps(
+                {
+                    "path": str(partial_path),
+                    "train_cached": len(train_cached_initial),
+                    "val_cached": len(val_cached_initial),
+                    "feature_shapes": train_shapes_initial,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+
+    train_cached_for_save = train_cached_initial
+    val_cached_for_save = val_cached_initial
+    train_shapes_for_save = train_shapes_initial
+
+    def save_partial(split, cached, feature_shapes, step, total):
+        nonlocal train_cached_for_save, val_cached_for_save, train_shapes_for_save
+        if split == "train":
+            train_cached_for_save = cached
+            train_shapes_for_save = feature_shapes
+        else:
+            val_cached_for_save = cached
+        if train_shapes_for_save is None:
+            return
+        payload = build_payload(
+            args,
+            train_indices,
+            val_indices,
+            train_selection,
+            val_selection,
+            train_shapes_for_save,
+            train_cached_for_save,
+            val_cached_for_save,
+            feature_indices,
+            partial={
+                "split": split,
+                "step": int(step),
+                "total": int(total),
+                "train_cached": len(train_cached_for_save),
+                "val_cached": len(val_cached_for_save),
+            },
+        )
+        tmp_path = partial_path.with_suffix(partial_path.suffix + ".tmp")
+        torch.save(payload, tmp_path)
+        tmp_path.replace(partial_path)
+        print(
+            "[partial save] "
+            + json.dumps(
+                {
+                    "path": str(partial_path),
+                    "split": split,
+                    "step": int(step),
+                    "total": int(total),
+                    "train_cached": len(train_cached_for_save),
+                    "val_cached": len(val_cached_for_save),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+
+    train_cached, train_shapes = cache_split(
+        backbone,
+        train_loader,
+        device,
+        args,
+        feature_indices,
+        "train",
+        cached=train_cached_initial,
+        feature_shapes=train_shapes_initial,
+        save_partial=save_partial,
+    )
+    train_cached_for_save = train_cached
+    train_shapes_for_save = train_shapes
+    val_cached, val_shapes = cache_split(
+        backbone,
+        val_loader,
+        device,
+        args,
+        feature_indices,
+        "val",
+        cached=val_cached_initial,
+        feature_shapes=val_shapes_initial,
+        save_partial=save_partial,
+    )
+    if train_shapes != val_shapes:
+        raise RuntimeError(
+            f"Train and val feature shapes differ: {train_shapes} vs {val_shapes}"
+        )
+
+    input_dims = [int(train_shapes[name][0]) for name in STAGE_NAMES]
+    payload = build_payload(
+        args,
+        train_indices,
+        val_indices,
+        train_selection,
+        val_selection,
+        train_shapes,
+        train_cached,
+        val_cached,
+        feature_indices,
+    )
     torch.save(payload, output_path)
+    if partial_path.exists():
+        partial_path.unlink()
     print(
         json.dumps(
             {
