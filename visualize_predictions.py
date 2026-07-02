@@ -29,7 +29,6 @@ from dataloaders.s3d_dataset import Structured3DDataset
 from models.build_backbone import build_dust3r_backbone
 from models.lightrecon_net import LightReconModel
 from models.multiscale_plane_mask_head import MultiScalePlaneMaskHead
-from train_stage1_clean_baseline import apply_query_class_scores, class_target_from_matches
 from train_stage1_plane_masks import masks_for_plane_ids, match_queries, select_plane_ids
 
 
@@ -66,6 +65,25 @@ ERROR_COLORS = np.asarray(
     ],
     dtype=np.float32,
 )
+
+
+def class_target_from_matches(labels, targets, query_ids, target_ids, num_queries):
+    class_target = torch.full(
+        labels.shape,
+        num_queries,
+        device=labels.device,
+        dtype=torch.long,
+    )
+    for query_id, target_id in zip(query_ids, target_ids):
+        class_target[targets[target_id] > 0.5] = int(query_id)
+    return class_target
+
+
+def apply_query_class_scores(mask_logits, existence_logits, args):
+    weight = float(getattr(args, "class_score_weight", 0.0))
+    if weight <= 0.0:
+        return mask_logits
+    return mask_logits + weight * existence_logits[:, None, None]
 
 
 def parse_args():
