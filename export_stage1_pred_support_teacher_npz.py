@@ -170,12 +170,71 @@ def apply_safe_geometry_merges(prediction, candidates, point_map, valid, image, 
     corrected, remap = merge_query_ids(prediction, merge_edges)
     return corrected, [
         {
+            "type": "adjacent_safe",
             "query_a": int(a),
             "query_b": int(b),
             "merged_to": int(remap.get(int(a), int(a))),
         }
         for a, b in merge_edges
     ]
+
+
+def apply_duplicate_geometry_merges(prediction, candidates, point_map, valid, args):
+    if not args.enable_duplicate_geometry_merge:
+        return prediction, []
+    query_points = {}
+    query_masks = {}
+    candidate_by_query = {}
+    for row in candidates:
+        query_id = int(row["query_id"])
+        mask = (prediction == query_id) & valid
+        if int(mask.sum()) < args.min_plane_points:
+            continue
+        query_masks[query_id] = mask
+        query_points[query_id] = point_map[mask]
+        candidate_by_query[query_id] = row
+
+    merge_edges = []
+    merge_rows = []
+    query_ids = sorted(query_masks)
+    for i, query_a in enumerate(query_ids):
+        for query_b in query_ids[i + 1 :]:
+            mask_a, mask_b = query_masks[query_a], query_masks[query_b]
+            area_a, area_b = int(mask_a.sum()), int(mask_b.sum())
+            area_ratio = min(area_a, area_b) / max(max(area_a, area_b), 1)
+            if area_ratio < args.duplicate_merge_min_area_ratio:
+                continue
+            plane_a = candidate_by_query[query_a]
+            plane_b = candidate_by_query[query_b]
+            angle = plane_angle_deg(plane_a["normal"], plane_b["normal"])
+            offset = abs(abs(float(plane_a["offset"])) - abs(float(plane_b["offset"])))
+            residual = mutual_plane_residual(
+                query_points[query_a],
+                plane_a,
+                query_points[query_b],
+                plane_b,
+            )
+            if (
+                angle <= args.duplicate_merge_angle_deg
+                and offset <= args.duplicate_merge_offset
+                and residual <= args.duplicate_merge_residual
+            ):
+                merge_edges.append((query_a, query_b))
+                merge_rows.append(
+                    {
+                        "type": "near_duplicate",
+                        "query_a": int(query_a),
+                        "query_b": int(query_b),
+                        "angle_deg": float(angle),
+                        "offset_abs_diff": float(offset),
+                        "mutual_residual": float(residual),
+                        "area_ratio": float(area_ratio),
+                    }
+                )
+    corrected, remap = merge_query_ids(prediction, merge_edges)
+    for row in merge_rows:
+        row["merged_to"] = int(remap.get(int(row["query_a"]), int(row["query_a"])))
+    return corrected, merge_rows
 
 
 def build_dataset(args, cache_config=None):
@@ -359,6 +418,11 @@ def main():
     parser.add_argument("--geometry_merge_max_boundary_rgb_edge", type=float, default=0.05)
     parser.add_argument("--geometry_merge_min_area_ratio", type=float, default=0.05)
     parser.add_argument("--geometry_merge_adjacency_radius", type=int, default=2)
+    parser.add_argument("--enable_duplicate_geometry_merge", action="store_true")
+    parser.add_argument("--duplicate_merge_angle_deg", type=float, default=3.0)
+    parser.add_argument("--duplicate_merge_offset", type=float, default=0.02)
+    parser.add_argument("--duplicate_merge_residual", type=float, default=0.025)
+    parser.add_argument("--duplicate_merge_min_area_ratio", type=float, default=0.015)
     parser.add_argument("--max_points", type=int, default=24000)
     parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
@@ -416,6 +480,19 @@ def main():
             candidates = remap_and_fit_planes(prediction, confidence, margin, point_map, valid, args)
             if not candidates:
                 print(f"skip sample={sample_idx}: no predicted planes after geometry merge")
+                continue
+        duplicate_merge_records = []
+        if args.enable_duplicate_geometry_merge:
+            prediction, duplicate_merge_records = apply_duplicate_geometry_merges(
+                prediction,
+                candidates,
+                point_map,
+                valid,
+                args,
+            )
+            candidates = remap_and_fit_planes(prediction, confidence, margin, point_map, valid, args)
+            if not candidates:
+                print(f"skip sample={sample_idx}: no predicted planes after duplicate geometry merge")
                 continue
 
         remap = {row["query_id"]: i for i, row in enumerate(candidates)}
@@ -514,6 +591,8 @@ def main():
             "stage1_epoch": int(checkpoint.get("epoch", -1)),
             "safe_geometry_merge_enabled": bool(args.enable_safe_geometry_merge),
             "safe_geometry_merge_pairs": merge_records,
+            "duplicate_geometry_merge_enabled": bool(args.enable_duplicate_geometry_merge),
+            "duplicate_geometry_merge_pairs": duplicate_merge_records,
             "mean_teacher_iou": float(np.mean(ious)) if ious else 0.0,
             "leakage": float(leakage),
             "plane_fits": [

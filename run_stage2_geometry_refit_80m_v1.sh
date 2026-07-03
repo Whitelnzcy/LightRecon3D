@@ -45,6 +45,11 @@ CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} PYTHONUNBUFFERED=1 "$PYTHON" \
   --geometry_merge_max_boundary_rgb_edge 0.05 \
   --geometry_merge_min_area_ratio 0.05 \
   --geometry_merge_adjacency_radius 2 \
+  --enable_duplicate_geometry_merge \
+  --duplicate_merge_angle_deg 3.0 \
+  --duplicate_merge_offset 0.02 \
+  --duplicate_merge_residual 0.025 \
+  --duplicate_merge_min_area_ratio 0.015 \
   --max_points 28000 \
   --num_workers 2 \
   2>&1 | tee "$LOGDIR/export_teacher.log"
