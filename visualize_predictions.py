@@ -474,12 +474,19 @@ def analyze_view(output, labels, config):
         if masks[0]
         else output["mask_logits"].new_zeros((0, *target_hw))
     )
-    query_ids, target_ids = match_queries(
-        output["mask_logits"],
-        targets,
-        match_args,
-        existence_logits=output["existence_logits"],
-    )
+    try:
+        query_ids, target_ids = match_queries(
+            output["mask_logits"],
+            targets,
+            match_args,
+            existence_logits=output["existence_logits"],
+        )
+    except TypeError:
+        query_ids, target_ids = match_queries(
+            output["mask_logits"],
+            targets,
+            match_args,
+        )
 
     class_logits = torch.cat(
         (
