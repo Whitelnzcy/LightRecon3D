@@ -11,12 +11,22 @@ from cache_stage1_multiscale_symref import geometry_from_result
 from dataloaders.s3d_dataset import Structured3DDataset
 from models.build_backbone import build_dust3r_backbone
 from models.multiscale_plane_mask_head import MultiScalePlaneMaskHead
-from train_stage1_clean_baseline import apply_query_class_scores
 from train_stage1_clean_pair_baseline import move_batch, parse_indices
 from train_stage1_plane_masks import build_views, feature_maps_from_result, point_map_from_result
 
 
 STAGE_NAMES = ("encoder", "shallow", "middle", "deep")
+
+
+def apply_query_class_scores(mask_logits, existence_logits, args):
+    weight = float(getattr(args, "class_score_weight", 0.0))
+    if weight <= 0.0:
+        return mask_logits
+    if mask_logits.dim() == 4:
+        return mask_logits + weight * existence_logits[:, :, None, None]
+    if mask_logits.dim() == 3:
+        return mask_logits + weight * existence_logits[:, None, None]
+    raise ValueError(f"Unsupported mask logits shape: {tuple(mask_logits.shape)}")
 
 
 def resize_label(label, target_hw):
