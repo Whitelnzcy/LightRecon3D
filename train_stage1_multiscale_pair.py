@@ -41,6 +41,15 @@ def parse_args():
         help="Optional cache-index list for filtering train samples, one index per line or comma-separated.",
     )
     parser.add_argument(
+        "--train_quality_index_dir",
+        default="",
+        help=(
+            "Optional directory containing per-shard cache-index lists named "
+            "<shard_stem>_cache_indices.txt. This is preferred for sharded caches "
+            "because --train_quality_indices is interpreted relative to each loaded cache."
+        ),
+    )
+    parser.add_argument(
         "--val_quality_indices",
         default="",
         help="Optional cache-index list for filtering val samples, one index per line or comma-separated.",
@@ -264,6 +273,23 @@ def filter_cached_samples(samples, index_filter, split_name):
         flush=True,
     )
     return filtered
+
+
+def shard_quality_index_path(index_dir, shard_path):
+    if not index_dir:
+        return ""
+    return str(Path(index_dir) / f"{Path(shard_path).stem}_cache_indices.txt")
+
+
+def load_shard_quality_index_filter(index_dir, shard_path):
+    path = shard_quality_index_path(index_dir, shard_path)
+    if not path:
+        return None
+    if not Path(path).exists():
+        raise FileNotFoundError(
+            f"Missing per-shard quality index file for {shard_path}: {path}"
+        )
+    return load_cache_index_filter(path)
 
 
 def cat_feature_batch(items, key, device):
@@ -744,9 +770,14 @@ def main():
                     flush=True,
                 )
                 shard_cache = torch.load(shard_path, map_location="cpu", weights_only=False)
+                shard_index_filter = (
+                    load_shard_quality_index_filter(args.train_quality_index_dir, shard_path)
+                    if args.train_quality_index_dir
+                    else load_cache_index_filter(args.train_quality_indices)
+                )
                 shard_samples = filter_cached_samples(
                     shard_cache["train"],
-                    load_cache_index_filter(args.train_quality_indices),
+                    shard_index_filter,
                     "train",
                 )
                 shard_weights = build_hard_case_weights(shard_samples, args)
