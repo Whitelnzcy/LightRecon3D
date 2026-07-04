@@ -21,10 +21,11 @@ VAL_TEACHER=$OUTROOT/val_teacher
 CKPT_DIR=$OUTROOT/checkpoint
 MERGED_NPZ=$OUTROOT/learned_merge_npz
 HTML_DIR=$OUTROOT/html
+EVAL_DIR=$OUTROOT/eval
 LOGDIR=$OUTROOT/logs
 
 cd "$PROJ"
-mkdir -p "$TRAIN_TEACHER" "$VAL_TEACHER" "$CKPT_DIR" "$MERGED_NPZ" "$HTML_DIR" "$LOGDIR"
+mkdir -p "$TRAIN_TEACHER" "$VAL_TEACHER" "$CKPT_DIR" "$MERGED_NPZ" "$HTML_DIR" "$EVAL_DIR" "$LOGDIR"
 
 echo "[1/5] Export Stage1 train teachers"
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} PYTHONUNBUFFERED=1 "$PYTHON" \
@@ -70,30 +71,31 @@ CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} PYTHONUNBUFFERED=1 "$PYTHON" \
   --threshold 0.5 \
   2>&1 | tee "$LOGDIR/train_region_merge.log"
 
-echo "[4/5] Apply learned merge/refit on selected val samples"
-CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} PYTHONUNBUFFERED=1 "$PYTHON" \
-  export_stage1_pred_support_teacher_npz.py \
-  --root_dir "$ROOT" \
-  --weights_path "$WEIGHTS" \
-  --stage1_checkpoint "$STAGE1_CKPT" \
-  --feature_cache_path "$VAL_CACHE" \
-  --output_dir "$VAL_TEACHER/selected" \
-  --split val \
-  --indices "$VIS_INDICES" \
-  --max_planes 8 \
-  --max_points 24000 \
-  2>&1 | tee "$LOGDIR/export_selected_teacher.log"
-
+echo "[4/5] Apply learned merge/refit on full val teachers"
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} PYTHONUNBUFFERED=1 "$PYTHON" \
   export_stage2_learned_region_merge_editables.py \
-  --input_dir "$VAL_TEACHER/selected" \
+  --input_dir "$VAL_TEACHER" \
   --checkpoint "$CKPT_DIR/best.pt" \
   --output_dir "$MERGED_NPZ" \
   --threshold 0.5 \
   --use_safety_gate \
   2>&1 | tee "$LOGDIR/apply_learned_merge.log"
 
-echo "[5/5] Export editable HTML/PLY"
+echo "[5/5] Evaluate and export editable HTML/PLY"
+PYTHONUNBUFFERED=1 "$PYTHON" \
+  evaluate_stage2_support_against_gt.py \
+  --input_dir "$VAL_TEACHER" \
+  --output_dir "$EVAL_DIR/stage1_teacher" \
+  --pattern "*_full_pointcloud_editable_planes_data.npz" \
+  2>&1 | tee "$LOGDIR/evaluate_stage1_teacher.log"
+
+PYTHONUNBUFFERED=1 "$PYTHON" \
+  evaluate_stage2_support_against_gt.py \
+  --input_dir "$MERGED_NPZ" \
+  --output_dir "$EVAL_DIR/stage2_learned_merge" \
+  --pattern "*_learned_region_merge_full_pointcloud_editable_planes_data.npz" \
+  2>&1 | tee "$LOGDIR/evaluate_stage2_learned_merge.log"
+
 PYTHONUNBUFFERED=1 "$PYTHON" \
   export_stage2_geometry_refit_editables.py \
   --input_dir "$MERGED_NPZ" \
@@ -104,4 +106,5 @@ PYTHONUNBUFFERED=1 "$PYTHON" \
 
 echo "Done."
 echo "Checkpoint: $CKPT_DIR/best.pt"
+echo "Eval: $EVAL_DIR"
 echo "HTML: $HTML_DIR"
