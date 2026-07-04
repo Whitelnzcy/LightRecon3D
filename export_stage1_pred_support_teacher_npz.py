@@ -29,6 +29,13 @@ def apply_query_class_scores(mask_logits, existence_logits, args):
     raise ValueError(f"Unsupported mask logits shape: {tuple(mask_logits.shape)}")
 
 
+def batch_string(batch, key):
+    value = batch.get(key, "")
+    if isinstance(value, (list, tuple)):
+        return str(value[0]) if value else ""
+    return str(value)
+
+
 def resize_label(label, target_hw):
     if label.shape[-2:] == target_hw:
         return label.long()
@@ -574,6 +581,11 @@ def main():
             points=flat_points[valid_indices].cpu().numpy().astype(np.float32),
             colors=flat_colors[valid_indices].cpu().numpy().astype(np.uint8),
             original_colors=flat_colors[valid_indices].cpu().numpy().astype(np.uint8),
+            scene_name=np.asarray(batch_string(batch, "scene_name")),
+            pair_group=np.asarray(batch_string(batch, "pair_group")),
+            rgb_path1=np.asarray(batch_string(batch, "rgb_path1")),
+            rgb_path2=np.asarray(batch_string(batch, "rgb_path2")),
+            sample_idx=np.asarray(int(sample_idx), dtype=np.int32),
             pixel_xy=flat_pixel_xy[valid_indices].cpu().numpy().astype(np.float32),
             point_plane_ids=point_plane_ids.cpu().numpy().astype(np.int32),
             gt_point_plane_ids=sampled_gt,
