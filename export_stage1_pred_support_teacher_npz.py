@@ -457,6 +457,7 @@ def main():
     parser.add_argument("--duplicate_merge_residual", type=float, default=0.025)
     parser.add_argument("--duplicate_merge_min_area_ratio", type=float, default=0.015)
     parser.add_argument("--max_points", type=int, default=24000)
+    parser.add_argument("--export_second_view_support", action="store_true")
     parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
 
@@ -483,7 +484,7 @@ def main():
         sample_idx = indices[ordinal]
         batch = move_batch(batch, device)
         view1, view2 = build_views(batch, f"stage1_pred_support_{args.split}_{sample_idx}")
-        result1, _ = backbone(view1, view2)
+        result1, result2 = backbone(view1, view2)
         point_map = point_map_from_result(result1)[0]
         target_hw = point_map.shape[:2]
         valid = finite_points(point_map)
@@ -595,13 +596,162 @@ def main():
         sampled_pixel_xy = flat_pixel_xy[valid_indices].cpu().numpy().astype(np.float32)
         sampled_count = int(len(valid_indices))
         stage1_mask_hw = np.asarray(target_hw, dtype=np.int32)
-        empty_pixel_xy2 = np.zeros((0, 2), dtype=np.float32)
+
+        combined_points = flat_points[valid_indices].cpu().numpy().astype(np.float32)
+        combined_colors = flat_colors[valid_indices].cpu().numpy().astype(np.uint8)
+        combined_point_plane_ids = point_plane_ids.cpu().numpy().astype(np.int32)
+        combined_gt = sampled_gt
+        combined_line_prob = flat_boundary[valid_indices].cpu().numpy().astype(np.float32)
+        combined_confidence = flat_confidence[valid_indices].cpu().numpy().astype(np.float32)
+        combined_margin = flat_margin[valid_indices].cpu().numpy().astype(np.float32)
+        combined_pixel_xy = sampled_pixel_xy
+        pixel_xy1 = sampled_pixel_xy.copy()
+        pixel_xy2 = np.zeros_like(sampled_pixel_xy, dtype=np.float32)
+        support_source_view = np.ones((sampled_count,), dtype=np.int8)
+        all_candidates = list(candidates)
+        all_source_gt_ids = list(source_gt_ids)
+        query_existence1 = existence.cpu().numpy().astype(np.float32)
+        query_existence2 = np.zeros_like(query_existence1, dtype=np.float32)
+
+        if args.export_second_view_support and "gt_plane2" in batch:
+            point_map2 = point_map_from_result(result2)[0]
+            target_hw2 = point_map2.shape[:2]
+            valid2 = finite_points(point_map2)
+            prediction2, confidence2, margin2, existence2 = predict_stage1(
+                head,
+                saved_args,
+                result2,
+                view2["img"],
+                target_hw2,
+            )
+            labels2 = resize_label(batch["gt_plane2"], target_hw2)[0]
+            labels2 = torch.where((labels2 > 0) & (labels2 != 255), labels2, torch.full_like(labels2, -1))
+            candidates2 = remap_and_fit_planes(prediction2, confidence2, margin2, point_map2, valid2, args)
+            merge_records2 = []
+            duplicate_merge_records2 = []
+            if candidates2:
+                if args.enable_safe_geometry_merge:
+                    prediction2, merge_records2 = apply_safe_geometry_merges(
+                        prediction2,
+                        candidates2,
+                        point_map2,
+                        valid2,
+                        view2["img"],
+                        args,
+                    )
+                    candidates2 = remap_and_fit_planes(prediction2, confidence2, margin2, point_map2, valid2, args)
+                if candidates2 and args.enable_duplicate_geometry_merge:
+                    prediction2, duplicate_merge_records2 = apply_duplicate_geometry_merges(
+                        prediction2,
+                        candidates2,
+                        point_map2,
+                        valid2,
+                        args,
+                    )
+                    candidates2 = remap_and_fit_planes(prediction2, confidence2, margin2, point_map2, valid2, args)
+            if candidates2:
+                plane_offset = len(all_candidates)
+                remap2 = {row["query_id"]: plane_offset + i for i, row in enumerate(candidates2)}
+                source_gt_ids2 = []
+                for row in candidates2:
+                    full_mask2 = (prediction2 == row["query_id"]) & valid2
+                    gt_values2 = labels2[full_mask2]
+                    gt_values2 = gt_values2[gt_values2 >= 0]
+                    if len(gt_values2):
+                        counts2 = torch.bincount(gt_values2)
+                        source_gt_ids2.append(int(torch.argmax(counts2)))
+                    else:
+                        source_gt_ids2.append(-1)
+
+                colors2 = image_to_uint8(batch["img2"], target_hw2)
+                flat_points2 = point_map2.reshape(-1, 3)
+                flat_colors2 = colors2.reshape(-1, 3)
+                flat_valid2 = valid2.reshape(-1)
+                flat_prediction2 = prediction2.reshape(-1)
+                flat_confidence2 = confidence2.reshape(-1)
+                flat_margin2 = margin2.reshape(-1)
+                flat_labels2 = labels2.reshape(-1)
+                flat_boundary2 = plane_boundary(prediction2).reshape(-1)
+                yy2, xx2 = torch.meshgrid(
+                    torch.linspace(-1.0, 1.0, target_hw2[0], device=device),
+                    torch.linspace(-1.0, 1.0, target_hw2[1], device=device),
+                    indexing="ij",
+                )
+                flat_pixel_xy2 = torch.stack((xx2, yy2), dim=-1).reshape(-1, 2)
+                valid_indices2 = torch.nonzero(flat_valid2).flatten()
+                if args.max_points > 0 and len(valid_indices2) > args.max_points:
+                    sample_positions2 = torch.linspace(
+                        0,
+                        len(valid_indices2) - 1,
+                        steps=args.max_points,
+                        device=device,
+                    ).long()
+                    valid_indices2 = valid_indices2[sample_positions2]
+
+                sampled_prediction2 = flat_prediction2[valid_indices2]
+                point_plane_ids2 = torch.full_like(sampled_prediction2, -1, dtype=torch.int32)
+                for query_id, output_id in remap2.items():
+                    point_plane_ids2[sampled_prediction2 == int(query_id)] = int(output_id)
+
+                sampled_pixel_xy2 = flat_pixel_xy2[valid_indices2].cpu().numpy().astype(np.float32)
+                sampled_count2 = int(len(valid_indices2))
+                combined_points = np.concatenate(
+                    [combined_points, flat_points2[valid_indices2].cpu().numpy().astype(np.float32)],
+                    axis=0,
+                )
+                combined_colors = np.concatenate(
+                    [combined_colors, flat_colors2[valid_indices2].cpu().numpy().astype(np.uint8)],
+                    axis=0,
+                )
+                combined_point_plane_ids = np.concatenate(
+                    [combined_point_plane_ids, point_plane_ids2.cpu().numpy().astype(np.int32)],
+                    axis=0,
+                )
+                combined_gt = np.concatenate(
+                    [combined_gt, flat_labels2[valid_indices2].cpu().numpy().astype(np.int32)],
+                    axis=0,
+                )
+                combined_line_prob = np.concatenate(
+                    [combined_line_prob, flat_boundary2[valid_indices2].cpu().numpy().astype(np.float32)],
+                    axis=0,
+                )
+                combined_confidence = np.concatenate(
+                    [combined_confidence, flat_confidence2[valid_indices2].cpu().numpy().astype(np.float32)],
+                    axis=0,
+                )
+                combined_margin = np.concatenate(
+                    [combined_margin, flat_margin2[valid_indices2].cpu().numpy().astype(np.float32)],
+                    axis=0,
+                )
+                combined_pixel_xy = np.concatenate([combined_pixel_xy, sampled_pixel_xy2], axis=0)
+                pixel_xy1 = np.concatenate([pixel_xy1, np.zeros_like(sampled_pixel_xy2, dtype=np.float32)], axis=0)
+                pixel_xy2 = np.concatenate([pixel_xy2, sampled_pixel_xy2], axis=0)
+                support_source_view = np.concatenate(
+                    [support_source_view, np.full((sampled_count2,), 2, dtype=np.int8)],
+                    axis=0,
+                )
+                all_candidates.extend(candidates2)
+                all_source_gt_ids.extend(source_gt_ids2)
+                query_existence2 = existence2.cpu().numpy().astype(np.float32)
+                duplicate_merge_records.extend(
+                    [{**row, "view": 2} for row in duplicate_merge_records2]
+                )
+                merge_records.extend([{**row, "view": 2} for row in merge_records2])
+
+        candidates = all_candidates
+        source_gt_ids = all_source_gt_ids
+        normals = torch.stack([row["normal"] for row in candidates]).cpu().numpy().astype(np.float32)
+        offsets = np.asarray([float(row["offset"]) for row in candidates], dtype=np.float32)
+        counts = np.asarray([int((combined_point_plane_ids == i).sum()) for i in range(len(candidates))], dtype=np.int32)
+        ious, leakage = compute_teacher_iou(combined_point_plane_ids, combined_gt, source_gt_ids)
+        sampled_count = int(len(combined_point_plane_ids))
+        pixel_coordinate_view = "mixed_source_view" if np.any(support_source_view == 2) else "view1"
         np.savez_compressed(
             output_path,
             schema_version=np.asarray(STAGE2_SCHEMA_VERSION, dtype=np.int32),
-            points=flat_points[valid_indices].cpu().numpy().astype(np.float32),
-            colors=flat_colors[valid_indices].cpu().numpy().astype(np.uint8),
-            original_colors=flat_colors[valid_indices].cpu().numpy().astype(np.uint8),
+            points=combined_points,
+            colors=combined_colors,
+            original_colors=combined_colors,
             scene_name=np.asarray(batch_string(batch, "scene_name")),
             pair_group=np.asarray(batch_string(batch, "pair_group")),
             rgb_path1=np.asarray(batch_string(batch, "rgb_path1")),
@@ -619,24 +769,25 @@ def main():
             pixel_coordinate_space=np.asarray("stage1_pointmap_normalized"),
             pixel_coordinate_order=np.asarray("xy"),
             pixel_coordinate_range=np.asarray("[-1,1]"),
-            pixel_coordinate_view=np.asarray("view1"),
+            pixel_coordinate_view=np.asarray(pixel_coordinate_view),
             sample_idx=np.asarray(int(sample_idx), dtype=np.int32),
-            pixel_xy=sampled_pixel_xy,
-            pixel_xy1=sampled_pixel_xy,
-            pixel_xy2=empty_pixel_xy2,
-            support_source_view=np.ones((sampled_count,), dtype=np.int8),
-            point_plane_ids=point_plane_ids.cpu().numpy().astype(np.int32),
-            gt_point_plane_ids=sampled_gt,
+            pixel_xy=combined_pixel_xy,
+            pixel_xy1=pixel_xy1,
+            pixel_xy2=pixel_xy2,
+            support_source_view=support_source_view,
+            point_plane_ids=combined_point_plane_ids,
+            gt_point_plane_ids=combined_gt,
             plane_normals=normals,
             plane_offsets=offsets,
             plane_inlier_counts=counts,
             plane_ids=np.arange(len(candidates), dtype=np.int32),
             source_gt_plane_ids=np.asarray(source_gt_ids, dtype=np.int32),
-            line_prob=flat_boundary[valid_indices].cpu().numpy().astype(np.float32),
-            point_confidence=flat_confidence[valid_indices].cpu().numpy().astype(np.float32),
-            point_margin=flat_margin[valid_indices].cpu().numpy().astype(np.float32),
+            line_prob=combined_line_prob,
+            point_confidence=combined_confidence,
+            point_margin=combined_margin,
             query_ids=np.asarray([row["query_id"] for row in candidates], dtype=np.int32),
-            query_existence=existence.cpu().numpy().astype(np.float32),
+            query_existence=query_existence1,
+            query_existence2=query_existence2,
             full_mask_counts=np.asarray([row["full_count"] for row in candidates], dtype=np.int32),
             core_mask_counts=np.asarray([row["core_count"] for row in candidates], dtype=np.int32),
             fit_mask_counts=np.asarray([row["fit_count"] for row in candidates], dtype=np.int32),
@@ -644,9 +795,9 @@ def main():
         row = {
             "sample_idx": int(sample_idx),
             "output": str(output_path),
-            "points": int(len(valid_indices)),
+            "points": int(len(combined_point_plane_ids)),
             "planes": len(candidates),
-            "background_points": int((point_plane_ids < 0).sum()),
+            "background_points": int((combined_point_plane_ids < 0).sum()),
             "stage1_checkpoint": str(args.stage1_checkpoint),
             "stage1_epoch": int(checkpoint.get("epoch", -1)),
             "safe_geometry_merge_enabled": bool(args.enable_safe_geometry_merge),
