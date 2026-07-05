@@ -15,6 +15,9 @@ STAGE1_CHECKPOINT=${STAGE1_CHECKPOINT:-$RUNROOT/checkpoints/stage1_large_80m_tra
 FEATURE_CACHE=${FEATURE_CACHE:-$RUNROOT/cache/stage1_train2048_shards/val128.pt}
 STAGE2_CHECKPOINT=${STAGE2_CHECKPOINT:-$RUNROOT/stage2_region_merge_v1/checkpoint/best.pt}
 
+export PROJ PYTHON ROOT RUNROOT WEIGHTS INDICES DEBUG_ROOT STAGE3_VIS_ROOT
+export STAGE1_CHECKPOINT FEATURE_CACHE STAGE2_CHECKPOINT
+
 cd "$PROJ"
 mkdir -p \
   "$DEBUG_ROOT/stage1_teacher" \
@@ -107,6 +110,7 @@ for row in rows:
     print("loss:", row.get("dust3r_global_alignment_loss"))
     print("points:", row.get("points"))
     print("local/global/merged:", row.get("local_planes"), row.get("global_planes"), row.get("merged_pairs"))
+    print("quality:", row.get("quality_summary"))
     for rec in row.get("mapping_records", [])[:5]:
         print("mapping:", {
             "source_counts": rec.get("source_counts"),

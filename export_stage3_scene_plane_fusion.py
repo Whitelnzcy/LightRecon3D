@@ -264,6 +264,8 @@ def load_scene_inputs(files, min_points, args, global_views=None):
     scene_points = []
     scene_colors = []
     scene_local_assignment = []
+    scene_source_views = []
+    scene_file_indices = []
     planes = []
     point_offset = 0
     skipped = []
@@ -286,6 +288,15 @@ def load_scene_inputs(files, min_points, args, global_views=None):
         if len(assignment) != len(keep):
             raise RuntimeError(f"Assignment length mismatch for {path}: {len(assignment)} vs {len(keep)}")
         assignment = assignment[keep]
+        if "support_source_view" in raw:
+            source_view = np.asarray(raw["support_source_view"]).reshape(-1).astype(np.int8)
+            if len(source_view) != len(keep):
+                raise RuntimeError(f"support_source_view length mismatch for {path}: {len(source_view)} vs {len(keep)}")
+            source_view = source_view[keep]
+        else:
+            source_view = np.ones((len(assignment),), dtype=np.int8)
+        scene_source_views.append(source_view)
+        scene_file_indices.append(np.full((len(assignment),), file_index, dtype=np.int32))
         if mapping_stats is not None:
             mapping_stats = dict(mapping_stats)
             mapping_stats["file"] = str(path)
@@ -328,6 +339,8 @@ def load_scene_inputs(files, min_points, args, global_views=None):
     return {
         "points": np.concatenate(scene_points, axis=0),
         "colors": np.concatenate(scene_colors, axis=0),
+        "source_views": np.concatenate(scene_source_views, axis=0),
+        "point_file_indices": np.concatenate(scene_file_indices, axis=0),
         "local_assignments": scene_local_assignment,
         "planes": planes,
         "skipped": skipped,
@@ -357,6 +370,93 @@ def safe_filename(text):
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in text)[-120:] or "scene"
 
 
+def plane_basis(normal):
+    normal = np.asarray(normal, dtype=np.float32)
+    normal /= max(float(np.linalg.norm(normal)), 1e-8)
+    helper = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    if abs(float(np.dot(helper, normal))) > 0.9:
+        helper = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    u = np.cross(normal, helper).astype(np.float32)
+    u /= max(float(np.linalg.norm(u)), 1e-8)
+    v = np.cross(normal, u).astype(np.float32)
+    v /= max(float(np.linalg.norm(v)), 1e-8)
+    return u, v
+
+
+def plane_bbox_area(points, normal):
+    if len(points) < 3:
+        return 0.0
+    u, v = plane_basis(normal)
+    centered = points - points.mean(axis=0, keepdims=True)
+    uv = np.stack((centered @ u, centered @ v), axis=1)
+    span = uv.max(axis=0) - uv.min(axis=0)
+    return float(max(span[0], 0.0) * max(span[1], 0.0))
+
+
+def plane_quality_rows(points, assignment, normals, offsets, source_views, point_file_indices):
+    rows = []
+    for plane_id in range(len(normals)):
+        mask = assignment == plane_id
+        count = int(mask.sum())
+        if count == 0:
+            rows.append(
+                {
+                    "plane_id": int(plane_id),
+                    "inlier_count": 0,
+                    "source_view_count": 0,
+                    "source_pair_count": 0,
+                    "residual_mean": 0.0,
+                    "residual_p50": 0.0,
+                    "residual_p95": 0.0,
+                    "plane_area_bbox": 0.0,
+                    "support_source_counts": {},
+                }
+            )
+            continue
+        pts = points[mask]
+        residual = np.abs(pts @ normals[plane_id] + offsets[plane_id]).astype(np.float32)
+        source_values, source_counts = np.unique(source_views[mask], return_counts=True)
+        support_counts = {str(int(value)): int(num) for value, num in zip(source_values, source_counts)}
+        rows.append(
+            {
+                "plane_id": int(plane_id),
+                "inlier_count": count,
+                "source_view_count": int(len(source_values)),
+                "source_pair_count": int(len(np.unique(point_file_indices[mask]))),
+                "residual_mean": float(residual.mean()) if len(residual) else 0.0,
+                "residual_p50": float(np.quantile(residual, 0.50)) if len(residual) else 0.0,
+                "residual_p95": float(np.quantile(residual, 0.95)) if len(residual) else 0.0,
+                "plane_area_bbox": plane_bbox_area(pts, normals[plane_id]),
+                "support_source_counts": support_counts,
+            }
+        )
+    return rows
+
+
+def aggregate_plane_quality(plane_quality):
+    if not plane_quality:
+        return {
+            "plane_count": 0,
+            "bad_plane_count": 0,
+            "mean_residual_mean": 0.0,
+            "mean_residual_p95": 0.0,
+            "avg_source_views_per_plane": 0.0,
+            "multi_view_plane_rate": 0.0,
+        }
+    residual_mean = np.asarray([row["residual_mean"] for row in plane_quality], dtype=np.float32)
+    residual_p95 = np.asarray([row["residual_p95"] for row in plane_quality], dtype=np.float32)
+    source_views = np.asarray([row["source_view_count"] for row in plane_quality], dtype=np.float32)
+    bad = (residual_p95 > 0.08) | (source_views < 2)
+    return {
+        "plane_count": int(len(plane_quality)),
+        "bad_plane_count": int(bad.sum()),
+        "mean_residual_mean": float(residual_mean.mean()),
+        "mean_residual_p95": float(residual_p95.mean()),
+        "avg_source_views_per_plane": float(source_views.mean()),
+        "multi_view_plane_rate": float((source_views >= 2).mean()),
+    }
+
+
 def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     global_views = None
     global_alignment_loss = None
@@ -380,6 +480,8 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         return None
     points = loaded["points"]
     colors = loaded["colors"]
+    source_views = loaded["source_views"]
+    point_file_indices = loaded["point_file_indices"]
     planes = loaded["planes"]
     uf = UnionFind(len(planes))
     merge_records = []
@@ -431,6 +533,8 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     offsets = np.asarray(offsets, dtype=np.float32)
     counts = np.asarray(counts, dtype=np.int32)
     planes_out = plane_rows(normals, offsets, assignment)
+    plane_quality = plane_quality_rows(points, assignment, normals, offsets, source_views, point_file_indices)
+    quality_summary = aggregate_plane_quality(plane_quality)
 
     safe_name = safe_filename(scene_key)
     suffix = "stage3_dust3r_global_fusion" if args.fusion_mode == "dust3r_global" else "stage3_scene_fusion"
@@ -450,6 +554,10 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         plane_normals=normals,
         plane_offsets=offsets,
         plane_inlier_counts=counts,
+        source_views=source_views.astype(np.int8),
+        point_file_indices=point_file_indices.astype(np.int32),
+        plane_quality_json=np.asarray(json.dumps(plane_quality), dtype=object),
+        quality_summary_json=np.asarray(json.dumps(quality_summary), dtype=object),
         scene_key=np.asarray(scene_key),
         fusion_mode=np.asarray(args.fusion_mode),
         dust3r_image_paths=np.asarray(image_paths, dtype=object),
@@ -488,6 +596,8 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         "dust3r_view_registry": global_view_registry,
         "dust3r_global_alignment_loss": global_alignment_loss,
         "mapping_records": loaded.get("mapping_records", []),
+        "plane_quality": plane_quality,
+        "quality_summary": quality_summary,
         "local_planes": int(len(planes)),
         "global_planes": int(len(planes_out)),
         "merged_pairs": int(sum(1 for row in merge_records if row["merged"])),
