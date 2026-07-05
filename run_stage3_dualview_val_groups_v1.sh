@@ -69,9 +69,16 @@ fi
 while IFS=$'\t' read -r ordinal pair_count indices group_path; do
   group_name=$(printf "group_%03d_pairs_%s" "$ordinal" "$pair_count")
   debug_root="$OUT_ROOT/$group_name"
+  stage3_vis_root="$debug_root/stage3_global_visual_v1"
   echo "[group $ordinal] pair_count=$pair_count indices=$indices group=$group_path"
-  DEBUG_ROOT="$debug_root" INDICES="$indices" ./run_stage3_dualview_onegroup_v1.sh \
-    2>&1 | tee "$OUT_ROOT/logs/${group_name}.log"
+  echo "[group $ordinal] DEBUG_ROOT=$debug_root"
+  echo "[group $ordinal] STAGE3_VIS_ROOT=$stage3_vis_root"
+  (
+    export DEBUG_ROOT="$debug_root"
+    export STAGE3_VIS_ROOT="$stage3_vis_root"
+    export INDICES="$indices"
+    ./run_stage3_dualview_onegroup_v1.sh
+  ) 2>&1 | tee "$OUT_ROOT/logs/${group_name}.log"
 done < "$GROUPS_TSV"
 
 "$PYTHON" summarize_stage3_val_groups.py \
