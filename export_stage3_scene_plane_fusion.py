@@ -1,6 +1,7 @@
-import argparse
+﻿import argparse
 import json
-import math
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,13 @@ def scalar_string(raw, key, default=""):
     return str(value[0])
 
 
+def path_key(path):
+    text = str(path).strip()
+    if not text:
+        return ""
+    return os.path.normpath(text).replace("\\", "/")
+
+
 def group_key(raw, fallback, mode):
     scene = scalar_string(raw, "scene_name", fallback)
     pair_group = scalar_string(raw, "pair_group", "")
@@ -75,18 +83,143 @@ def mutual_residual(plane_a, plane_b):
     return float(0.5 * (np.mean(residual_ab) + np.mean(residual_ba)))
 
 
-def load_scene_inputs(files, min_points):
+def normalize_rgb(img):
+    try:
+        import torch
+        if torch.is_tensor(img):
+            img = img.detach().cpu().numpy()
+    except ImportError:
+        pass
+    img = np.asarray(img)
+    if img.ndim == 3 and img.shape[0] == 3:
+        img = np.transpose(img, (1, 2, 0))
+    img = img.astype(np.float32)
+    if img.max() > 2.0:
+        img = img / 255.0
+    return np.clip(img, 0.0, 1.0)
+
+
+def setup_dust3r_imports():
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    dust3r_root = os.path.join(project_root, "dust3r")
+    if project_root in sys.path:
+        sys.path.remove(project_root)
+    sys.path.insert(0, project_root)
+    if dust3r_root in sys.path:
+        sys.path.remove(dust3r_root)
+    sys.path.insert(1, dust3r_root)
+
+
+def collect_group_images(files, include_second_view=True):
+    paths = []
+    seen = set()
+    for path in files:
+        raw = np.load(path)
+        keys = ["rgb_path1"]
+        if include_second_view:
+            keys.append("rgb_path2")
+        for key in keys:
+            value = scalar_string(raw, key, "")
+            norm = path_key(value)
+            if norm and norm not in seen:
+                seen.add(norm)
+                paths.append(value)
+    return paths
+
+
+def run_dust3r_global_alignment(image_paths, model, device, args):
+    setup_dust3r_imports()
+    from dust3r.cloud_opt import GlobalAlignerMode, global_aligner
+    from dust3r.image_pairs import make_pairs
+    from dust3r.inference import inference
+    from dust3r.utils.image import load_images
+
+    if len(image_paths) < 2:
+        raise RuntimeError(f"DUSt3R global alignment needs at least 2 images, got {len(image_paths)}")
+
+    imgs = load_images(image_paths, size=args.image_size, verbose=True)
+    pairs = make_pairs(imgs, scene_graph=args.scene_graph, prefilter=None, symmetrize=True)
+    output = inference(pairs, model, device, batch_size=args.batch_size, verbose=True)
+    scene = global_aligner(output, device=device, mode=GlobalAlignerMode.PointCloudOptimizer)
+    loss = scene.compute_global_alignment(init="mst", niter=args.niter, schedule=args.schedule, lr=args.lr)
+
+    pts3d = scene.get_pts3d()
+    confs = scene.get_conf()
+    views = {}
+    for index, image_path in enumerate(image_paths):
+        pts = pts3d[index]
+        conf = confs[index]
+        try:
+            import torch
+            if torch.is_tensor(pts):
+                pts = pts.detach().cpu().numpy()
+            if torch.is_tensor(conf):
+                conf = conf.detach().cpu().numpy()
+        except ImportError:
+            pass
+        img = normalize_rgb(scene.imgs[index])
+        views[path_key(image_path)] = {
+            "points": np.asarray(pts, dtype=np.float32),
+            "conf": np.asarray(conf, dtype=np.float32),
+            "colors": (img * 255.0).clip(0, 255).astype(np.uint8),
+        }
+    return views, float(loss)
+
+
+def map_stage2_points_to_global(raw, global_views, args):
+    rgb_path = scalar_string(raw, "rgb_path1", "")
+    view = global_views.get(path_key(rgb_path))
+    if view is None:
+        raise RuntimeError(f"No DUSt3R global view for rgb_path1={rgb_path!r}")
+    if "pixel_xy" not in raw:
+        raise RuntimeError("Stage2 NPZ has no pixel_xy; cannot project support to global DUSt3R map")
+
+    pixel_xy = raw["pixel_xy"].astype(np.float32)
+    if pixel_xy.ndim != 2 or pixel_xy.shape[1] != 2:
+        raise RuntimeError(f"Bad pixel_xy shape: {pixel_xy.shape}")
+
+    pts_hw = view["points"]
+    conf_hw = view["conf"]
+    color_hw = view["colors"]
+    h, w = pts_hw.shape[:2]
+    x = np.rint((pixel_xy[:, 0] + 1.0) * 0.5 * (w - 1)).astype(np.int64)
+    y = np.rint((pixel_xy[:, 1] + 1.0) * 0.5 * (h - 1)).astype(np.int64)
+    x = np.clip(x, 0, w - 1)
+    y = np.clip(y, 0, h - 1)
+
+    points = pts_hw[y, x].astype(np.float32)
+    colors = color_hw[y, x].astype(np.uint8)
+    conf = conf_hw[y, x].astype(np.float32)
+    valid = np.isfinite(points).all(axis=1)
+    valid &= np.max(np.abs(points), axis=1) < 1e5
+    valid &= conf >= float(args.global_min_conf)
+    return points[valid], colors[valid], valid
+
+
+def load_scene_inputs(files, min_points, args, global_views=None):
     scene_points = []
     scene_colors = []
     scene_local_assignment = []
     planes = []
     point_offset = 0
+    skipped = []
     for file_index, path in enumerate(files):
         raw = np.load(path)
-        points = raw["points"].astype(np.float32)
-        colors_key = "original_colors" if "original_colors" in raw else "colors"
-        colors = raw[colors_key].astype(np.uint8)
         assignment = raw["point_plane_ids"].astype(np.int32)
+        if global_views is None:
+            points = raw["points"].astype(np.float32)
+            colors_key = "original_colors" if "original_colors" in raw else "colors"
+            colors = raw[colors_key].astype(np.uint8)
+            keep = np.isfinite(points).all(axis=1)
+            keep &= np.max(np.abs(points), axis=1) < 1e5
+        else:
+            points, colors, keep = map_stage2_points_to_global(raw, global_views, args)
+        if int(keep.sum()) == 0:
+            skipped.append({"file": str(path), "reason": "no_valid_points"})
+            continue
+        if len(assignment) != len(keep):
+            raise RuntimeError(f"Assignment length mismatch for {path}: {len(assignment)} vs {len(keep)}")
+        assignment = assignment[keep]
         normals = raw["plane_normals"].astype(np.float32)
         offsets = raw["plane_offsets"].astype(np.float32)
         scene_points.append(points)
@@ -100,8 +233,7 @@ def load_scene_inputs(files, min_points):
             local_index = len(planes)
             local_assignment[mask] = local_index
             pts = points[mask]
-            normal = normals[plane_id].astype(np.float32)
-            normal /= max(float(np.linalg.norm(normal)), 1e-8)
+            normal, offset, _ = fit_plane_np(pts)
             planes.append(
                 {
                     "local_index": local_index,
@@ -110,8 +242,10 @@ def load_scene_inputs(files, min_points):
                     "source_plane_id": int(plane_id),
                     "global_point_indices": np.nonzero(mask)[0].astype(np.int64) + point_offset,
                     "points": pts,
-                    "normal": normal,
-                    "offset": float(offsets[plane_id]),
+                    "normal": normal.astype(np.float32),
+                    "offset": float(offset),
+                    "source_local_normal": normals[plane_id].astype(np.float32).tolist(),
+                    "source_local_offset": float(offsets[plane_id]),
                     "count": count,
                     "centroid": pts.mean(axis=0),
                 }
@@ -125,6 +259,7 @@ def load_scene_inputs(files, min_points):
         "colors": np.concatenate(scene_colors, axis=0),
         "local_assignments": scene_local_assignment,
         "planes": planes,
+        "skipped": skipped,
     }
 
 
@@ -146,8 +281,19 @@ def should_merge(plane_a, plane_b, args):
     }
 
 
-def fuse_scene(scene_key, files, output_dir, args):
-    loaded = load_scene_inputs(files, args.min_points)
+def safe_filename(text):
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in text)[-120:] or "scene"
+
+
+def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
+    global_views = None
+    global_alignment_loss = None
+    image_paths = []
+    if args.fusion_mode == "dust3r_global":
+        image_paths = collect_group_images(files, include_second_view=args.include_second_view)
+        global_views, global_alignment_loss = run_dust3r_global_alignment(image_paths, model, device, args)
+
+    loaded = load_scene_inputs(files, args.min_points, args, global_views=global_views)
     if loaded is None:
         return None
     points = loaded["points"]
@@ -204,12 +350,13 @@ def fuse_scene(scene_key, files, output_dir, args):
     counts = np.asarray(counts, dtype=np.int32)
     planes_out = plane_rows(normals, offsets, assignment)
 
-    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in scene_key)[-120:]
-    npz_path = output_dir / f"{safe_name}_stage3_scene_fusion_full_pointcloud_editable_planes_data.npz"
-    html_path = output_dir / f"{safe_name}_stage3_scene_fusion_edit.html"
-    ply_path = output_dir / f"{safe_name}_stage3_scene_fusion.ply"
-    json_path = output_dir / f"{safe_name}_stage3_scene_fusion_plane_params.json"
-    txt_path = output_dir / f"{safe_name}_stage3_scene_fusion_plane_params.txt"
+    safe_name = safe_filename(scene_key)
+    suffix = "stage3_dust3r_global_fusion" if args.fusion_mode == "dust3r_global" else "stage3_scene_fusion"
+    npz_path = output_dir / f"{safe_name}_{suffix}_full_pointcloud_editable_planes_data.npz"
+    html_path = output_dir / f"{safe_name}_{suffix}_edit.html"
+    ply_path = output_dir / f"{safe_name}_{suffix}.ply"
+    json_path = output_dir / f"{safe_name}_{suffix}_plane_params.json"
+    txt_path = output_dir / f"{safe_name}_{suffix}_plane_params.txt"
 
     np.savez_compressed(
         npz_path,
@@ -222,8 +369,12 @@ def fuse_scene(scene_key, files, output_dir, args):
         plane_offsets=offsets,
         plane_inlier_counts=counts,
         scene_key=np.asarray(scene_key),
+        fusion_mode=np.asarray(args.fusion_mode),
+        dust3r_image_paths=np.asarray(image_paths, dtype=object),
+        dust3r_global_alignment_loss=np.asarray(global_alignment_loss if global_alignment_loss is not None else np.nan, dtype=np.float32),
         source_groups_json=np.asarray(json.dumps(source_groups), dtype=object),
         merge_records_json=np.asarray(json.dumps(merge_records), dtype=object),
+        skipped_inputs_json=np.asarray(json.dumps(loaded.get("skipped", [])), dtype=object),
     )
 
     display_colors = colors.copy()
@@ -247,7 +398,10 @@ def fuse_scene(scene_key, files, output_dir, args):
     write_params(json_path, txt_path, planes_out, np.arange(len(planes_out), dtype=np.int32), npz_path)
     return {
         "scene_key": scene_key,
+        "fusion_mode": args.fusion_mode,
         "input_files": [str(path) for path in files],
+        "dust3r_image_paths": image_paths,
+        "dust3r_global_alignment_loss": global_alignment_loss,
         "local_planes": int(len(planes)),
         "global_planes": int(len(planes_out)),
         "merged_pairs": int(sum(1 for row in merge_records if row["merged"])),
@@ -261,11 +415,21 @@ def fuse_scene(scene_key, files, output_dir, args):
 
 
 def main():
-    parser = argparse.ArgumentParser("Fuse local Stage2 plane primitives into scene-level editable planes")
+    parser = argparse.ArgumentParser("Fuse Stage2 plane primitives into scene-level editable planes")
     parser.add_argument("--input_dir", required=True)
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--pattern", default="*_full_pointcloud_editable_planes_data.npz")
     parser.add_argument("--group_by", default="reference_view", choices=("sample", "scene", "pair_group", "reference_view"))
+    parser.add_argument("--fusion_mode", default="local", choices=("local", "dust3r_global"))
+    parser.add_argument("--weights_path", default="")
+    parser.add_argument("--image_size", type=int, default=512)
+    parser.add_argument("--scene_graph", default="complete")
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--niter", type=int, default=300)
+    parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--schedule", default="cosine")
+    parser.add_argument("--global_min_conf", type=float, default=0.0)
+    parser.add_argument("--include_second_view", action="store_true")
     parser.add_argument("--min_group_size", type=int, default=1)
     parser.add_argument("--min_points", type=int, default=64)
     parser.add_argument("--max_angle_deg", type=float, default=8.0)
@@ -284,6 +448,18 @@ def main():
     if not files:
         raise RuntimeError(f"No files matched {input_dir / args.pattern}")
 
+    model = None
+    device = None
+    if args.fusion_mode == "dust3r_global":
+        if not args.weights_path:
+            raise RuntimeError("--weights_path is required when --fusion_mode dust3r_global")
+        setup_dust3r_imports()
+        import torch
+        from dust3r.model import load_model
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = load_model(args.weights_path, device=device)
+        model.eval()
+
     groups = {}
     for path in files:
         raw = np.load(path)
@@ -294,7 +470,7 @@ def main():
     for key, group_files in sorted(groups.items()):
         if len(group_files) < args.min_group_size:
             continue
-        row = fuse_scene(key, group_files, output_dir, args)
+        row = fuse_scene(key, group_files, output_dir, args, model=model, device=device)
         if row is not None:
             rows.append(row)
 
