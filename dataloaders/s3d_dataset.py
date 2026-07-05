@@ -281,6 +281,7 @@ class Structured3DDataset(Dataset):
             raise RuntimeError(f"Failed to read image: {sample_info['rgb_path']}")
 
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        original_h, original_w = image_rgb.shape[:2]
 
         with open(sample_info["json_path"], "r", encoding="utf-8") as f:
             layout_data = json.load(f)
@@ -309,6 +310,8 @@ class Structured3DDataset(Dataset):
             "img": torch.from_numpy(image_rgb).permute(2, 0, 1).float() / 255.0,
             "gt_line": torch.from_numpy(line_mask).unsqueeze(0).float() / 255.0,
             "gt_plane": torch.from_numpy(plane_mask).long(),
+            "original_hw": torch.tensor([original_h, original_w], dtype=torch.int32),
+            "resized_hw": torch.tensor([target_h, target_w], dtype=torch.int32),
         }
 
     def __getitem__(self, idx):
@@ -319,6 +322,8 @@ class Structured3DDataset(Dataset):
             sample["rgb_path"] = sample_info["rgb_path"]
             sample["json_path"] = sample_info["json_path"]
             sample["scene_name"] = sample_info["scene_name"]
+            sample["pair_group"] = sample_info["pair_group"]
+            sample["view_id"] = sample_info["view_id"]
             return sample
 
         view1_info = sample_info["view1"]
@@ -344,6 +349,13 @@ class Structured3DDataset(Dataset):
             "rgb_path2": view2_info["rgb_path"],
             "json_path1": view1_info["json_path"],
             "json_path2": view2_info["json_path"],
+            "view_id1": view1_info["view_id"],
+            "view_id2": view2_info["view_id"],
+            "original_hw1": view1["original_hw"],
+            "original_hw2": view2["original_hw"],
+            "stage1_input_hw1": view1["resized_hw"],
+            "stage1_input_hw2": view2["resized_hw"],
             "scene_name": sample_info["scene_name"],
             "pair_group": sample_info["pair_group"],
         }
+

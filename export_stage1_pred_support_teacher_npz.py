@@ -16,6 +16,7 @@ from train_stage1_plane_masks import build_views, feature_maps_from_result, poin
 
 
 STAGE_NAMES = ("encoder", "shallow", "middle", "deep")
+STAGE2_SCHEMA_VERSION = 2
 
 
 def apply_query_class_scores(mask_logits, existence_logits, args):
@@ -29,11 +30,26 @@ def apply_query_class_scores(mask_logits, existence_logits, args):
     raise ValueError(f"Unsupported mask logits shape: {tuple(mask_logits.shape)}")
 
 
-def batch_string(batch, key):
-    value = batch.get(key, "")
+def batch_value(batch, key, default=""):
+    value = batch.get(key, default)
+    if torch.is_tensor(value):
+        if value.numel() == 0:
+            return default
+        if value.numel() == 1:
+            return value.detach().cpu().reshape(-1)[0].item()
+        return value.detach().cpu()[0].numpy()
     if isinstance(value, (list, tuple)):
-        return str(value[0]) if value else ""
-    return str(value)
+        return value[0] if value else default
+    return value
+
+
+def batch_string(batch, key):
+    return str(batch_value(batch, key, ""))
+
+
+def batch_hw(batch, key):
+    value = batch_value(batch, key, np.asarray([0, 0], dtype=np.int32))
+    return np.asarray(value, dtype=np.int32).reshape(-1)[:2]
 
 
 def resize_label(label, target_hw):
@@ -576,8 +592,13 @@ def main():
         counts = np.asarray([int((point_plane_ids == i).sum()) for i in range(len(candidates))], dtype=np.int32)
         stem = f"{args.split}_{sample_idx:06d}_stage1_teacher_full_pointcloud_editable_planes_data"
         output_path = output_dir / f"{stem}.npz"
+        sampled_pixel_xy = flat_pixel_xy[valid_indices].cpu().numpy().astype(np.float32)
+        sampled_count = int(len(valid_indices))
+        stage1_mask_hw = np.asarray(target_hw, dtype=np.int32)
+        empty_pixel_xy2 = np.zeros((0, 2), dtype=np.float32)
         np.savez_compressed(
             output_path,
+            schema_version=np.asarray(STAGE2_SCHEMA_VERSION, dtype=np.int32),
             points=flat_points[valid_indices].cpu().numpy().astype(np.float32),
             colors=flat_colors[valid_indices].cpu().numpy().astype(np.uint8),
             original_colors=flat_colors[valid_indices].cpu().numpy().astype(np.uint8),
@@ -585,8 +606,25 @@ def main():
             pair_group=np.asarray(batch_string(batch, "pair_group")),
             rgb_path1=np.asarray(batch_string(batch, "rgb_path1")),
             rgb_path2=np.asarray(batch_string(batch, "rgb_path2")),
+            json_path1=np.asarray(batch_string(batch, "json_path1")),
+            json_path2=np.asarray(batch_string(batch, "json_path2")),
+            view_id1=np.asarray(batch_string(batch, "view_id1")),
+            view_id2=np.asarray(batch_string(batch, "view_id2")),
+            original_hw1=batch_hw(batch, "original_hw1"),
+            original_hw2=batch_hw(batch, "original_hw2"),
+            stage1_input_hw1=batch_hw(batch, "stage1_input_hw1"),
+            stage1_input_hw2=batch_hw(batch, "stage1_input_hw2"),
+            stage1_mask_hw1=stage1_mask_hw,
+            stage1_mask_hw2=stage1_mask_hw,
+            pixel_coordinate_space=np.asarray("stage1_pointmap_normalized"),
+            pixel_coordinate_order=np.asarray("xy"),
+            pixel_coordinate_range=np.asarray("[-1,1]"),
+            pixel_coordinate_view=np.asarray("view1"),
             sample_idx=np.asarray(int(sample_idx), dtype=np.int32),
-            pixel_xy=flat_pixel_xy[valid_indices].cpu().numpy().astype(np.float32),
+            pixel_xy=sampled_pixel_xy,
+            pixel_xy1=sampled_pixel_xy,
+            pixel_xy2=empty_pixel_xy2,
+            support_source_view=np.ones((sampled_count,), dtype=np.int8),
             point_plane_ids=point_plane_ids.cpu().numpy().astype(np.int32),
             gt_point_plane_ids=sampled_gt,
             plane_normals=normals,
@@ -642,3 +680,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

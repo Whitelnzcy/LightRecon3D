@@ -425,3 +425,127 @@ next exact step
 ```
 
 Never leave important project state only in the Codex chat response.
+
+## 16. Session update: 2026-07-05 Phase 2 metadata/schema baseline
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA: `66066ad51898df0a17c2fd46166df920b96b7932`
+
+Files changed in this session:
+
+```text
+dataloaders/s3d_dataset.py
+export_stage1_pred_support_teacher_npz.py
+export_stage2_learned_region_merge_editables.py
+tests/test_stage2_metadata_schema.py
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Implemented behavior:
+
+* `Structured3DDataset` now returns per-view `view_id`, original RGB height/width, and resized Stage1 input height/width for pair samples.
+* Stage1 teacher export now writes `schema_version=2`, `json_path1/json_path2`, `view_id1/view_id2`, `original_hw1/original_hw2`, `stage1_input_hw1/stage1_input_hw2`, `stage1_mask_hw1/stage1_mask_hw2`, explicit pixel coordinate convention fields, `pixel_xy1`, empty `pixel_xy2`, and per-point `support_source_view` for current view1-only support.
+* Existing `pixel_xy` remains as a backward-compatible alias for `pixel_xy1`.
+* Stage2 learned merge export now writes `schema_version=2`, records `source_schema_version`, passes through the new global-alignment metadata, and validates per-point metadata lengths before writing output.
+* Added a lightweight metadata schema test for Stage2 passthrough constants and per-point length validation.
+
+Commands executed:
+
+```text
+python -m py_compile dataloaders/s3d_dataset.py export_stage1_pred_support_teacher_npz.py export_stage2_learned_region_merge_editables.py tests/test_stage2_metadata_schema.py
+python tests/test_stage2_metadata_schema.py
+```
+
+Tests completed:
+
+```text
+py_compile: passed
+Stage2 metadata unittest: 3 tests passed
+```
+
+Outputs generated:
+
+```text
+tests/test_stage2_metadata_schema.py
+```
+
+Remaining problems:
+
+* No real Stage1/Stage2 export was run in this local session, so the new NPZ schema has not yet been validated on a real Structured3D sample.
+* No DUSt3R global alignment was run; this session intentionally did not enter Phase 4.
+* `pixel_xy2` is currently empty because the existing Stage1 export only produces view1 support.
+* Stage3 still needs an explicit group/view registry and coordinate transform implementation before global support mapping is trustworthy.
+* The worktree still contains inherited unrelated/uncommitted changes from previous sessions.
+
+Next exact step:
+
+Proceed to Phase 3: implement a Stage3 record loader plus `scene_name + pair_group` grouping and a deterministic view registry that deduplicates `rgb_path1/rgb_path2`, validates metadata, and records canonical path -> alignment view index before any global alignment run.
+
+## 17. Session update: 2026-07-05 Phase 3 view-registry dry-run baseline
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA: `66066ad51898df0a17c2fd46166df920b96b7932`
+
+Files changed in this session:
+
+```text
+validate_stage3_view_registry.py
+tests/test_stage3_view_registry_validator.py
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Implemented behavior:
+
+* Added `validate_stage3_view_registry.py`, a no-model/no-DUSt3R dry-run validator for Stage2 NPZ metadata.
+* The validator groups records by `scene_name + pair_group`, deduplicates `rgb_path1/rgb_path2` into a deterministic `canonical_path -> alignment_view_index` registry, and records per-view source path, view id, original hw, Stage1 input hw, and Stage1 mask hw.
+* It reports summary metrics including record count, valid record count, groups, unique views, groups with 3+ views, missing required metadata, records with errors, duplicate view conflicts, and unmapped support records.
+* It validates `pixel_xy1` shape/range, optional empty `pixel_xy2`, `support_source_view`, and per-record required fields before any DUSt3R run.
+* Added synthetic NPZ tests for overlapping-pair view deduplication, invalid support coordinates, and missing required metadata reporting.
+
+Commands executed:
+
+```text
+python -m py_compile validate_stage3_view_registry.py tests/test_stage3_view_registry_validator.py
+python tests/test_stage3_view_registry_validator.py
+python tests/test_stage2_metadata_schema.py
+```
+
+Tests completed:
+
+```text
+py_compile: passed
+Stage3 view-registry validator unittest: 3 tests passed
+Stage2 metadata unittest: 3 tests passed
+```
+
+How to validate on server after pulling:
+
+```text
+python validate_stage3_view_registry.py \
+  --input_dir /gemini/data-1/lightrecon_runs/stage2_region_merge_v1/learned_merge_npz \
+  --output_json /gemini/data-1/lightrecon_runs/stage3_view_registry_dryrun/view_registry_summary.json \
+  --pattern "*_learned_region_merge_full_pointcloud_editable_planes_data.npz" \
+  --check_files
+```
+
+Useful acceptance metrics for this phase:
+
+```text
+metadata_complete_rate == 1.0
+records_with_errors == 0
+duplicate_view_conflict_count == 0
+unmapped_support_records == 0
+groups_with_3plus_views > 0 for multi-view validation subsets
+```
+
+Remaining problems:
+
+* The validator only proves metadata/group/view-registry integrity. It does not run DUSt3R and does not validate resize/crop mapping into `scene.get_pts3d()`.
+* Real server validation still needs freshly exported schema v2 Stage1/Stage2 NPZs; old local NPZs are expected to fail missing metadata checks.
+* Phase 4 should consume this registry when running global alignment, rather than rebuilding implicit view order inside the fusion path.
+
+Next exact step:
+
+Commit and push the Phase 2 + Phase 3 metadata/view-registry baseline, then run the validator on a small fresh Stage2 export on the server. If the dry-run metrics are clean, proceed to Phase 4 global alignment cache implementation.

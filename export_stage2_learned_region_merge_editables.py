@@ -8,6 +8,47 @@ import torch
 from train_stage2_region_merge_net import RegionMergeMLP, fit_plane_np, load_regions, pair_features
 
 
+STAGE2_SCHEMA_VERSION = 2
+PER_POINT_METADATA_KEYS = (
+    "pixel_xy",
+    "pixel_xy1",
+    "gt_point_plane_ids",
+    "point_confidence",
+    "point_margin",
+    "line_prob",
+    "support_source_view",
+)
+PASSTHROUGH_METADATA_KEYS = (
+    "scene_name",
+    "pair_group",
+    "rgb_path1",
+    "rgb_path2",
+    "json_path1",
+    "json_path2",
+    "view_id1",
+    "view_id2",
+    "original_hw1",
+    "original_hw2",
+    "stage1_input_hw1",
+    "stage1_input_hw2",
+    "stage1_mask_hw1",
+    "stage1_mask_hw2",
+    "pixel_coordinate_space",
+    "pixel_coordinate_order",
+    "pixel_coordinate_range",
+    "pixel_coordinate_view",
+    "sample_idx",
+    "pixel_xy",
+    "pixel_xy1",
+    "pixel_xy2",
+    "support_source_view",
+    "gt_point_plane_ids",
+    "point_confidence",
+    "point_margin",
+    "line_prob",
+)
+
+
 class UnionFind:
     def __init__(self, values):
         self.parent = {int(value): int(value) for value in values}
@@ -139,9 +180,21 @@ def refit_planes(points, assignment):
     )
 
 
+def validate_metadata_lengths(raw, point_count, input_npz):
+    for key in PER_POINT_METADATA_KEYS:
+        if key not in raw:
+            continue
+        value = raw[key]
+        if value.ndim > 0 and len(value) not in (0, point_count):
+            raise RuntimeError(
+                f"Metadata length mismatch for {input_npz}: {key} has {len(value)} rows, expected {point_count}"
+            )
+
+
 def export_one(input_npz, output_dir, model, args, device):
     raw = np.load(input_npz)
     points, assignment, gt_assignment, regions = load_regions(input_npz, min_points=args.min_points)
+    validate_metadata_lengths(raw, len(points), input_npz)
     merge_pairs = predict_merge_pairs(model, regions, args, device)
     merged_assignment, source_groups = remap_assignment(assignment, regions, merge_pairs)
     normals, offsets, counts = refit_planes(points, merged_assignment)
@@ -152,6 +205,8 @@ def export_one(input_npz, output_dir, model, args, device):
 
     colors_key = "original_colors" if "original_colors" in raw else "colors"
     payload = {
+        "schema_version": np.asarray(STAGE2_SCHEMA_VERSION, dtype=np.int32),
+        "source_schema_version": raw["schema_version"] if "schema_version" in raw else np.asarray(1, dtype=np.int32),
         "points": points.astype(np.float32),
         "colors": raw[colors_key].astype(np.uint8),
         "original_colors": raw[colors_key].astype(np.uint8),
@@ -167,7 +222,7 @@ def export_one(input_npz, output_dir, model, args, device):
         ),
         "merge_pairs_json": np.asarray(json.dumps(merge_pairs), dtype=object),
     }
-    for key in ("pixel_xy", "gt_point_plane_ids", "point_confidence", "point_margin", "line_prob"):
+    for key in PASSTHROUGH_METADATA_KEYS:
         if key in raw:
             payload[key] = raw[key]
     np.savez_compressed(output_npz, **payload)
@@ -221,3 +276,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
