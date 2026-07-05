@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import json
 import os
 import sys
@@ -159,6 +159,8 @@ def run_dust3r_global_alignment(image_paths, model, device, args):
             pass
         img = normalize_rgb(scene.imgs[index])
         views[path_key(image_path)] = {
+            "alignment_view_index": int(index),
+            "image_path": image_path,
             "points": np.asarray(pts, dtype=np.float32),
             "conf": np.asarray(conf, dtype=np.float32),
             "colors": (img * 255.0).clip(0, 255).astype(np.uint8),
@@ -166,18 +168,23 @@ def run_dust3r_global_alignment(image_paths, model, device, args):
     return views, float(loss)
 
 
-def map_stage2_points_to_global(raw, global_views, args):
-    rgb_path = scalar_string(raw, "rgb_path1", "")
-    view = global_views.get(path_key(rgb_path))
-    if view is None:
-        raise RuntimeError(f"No DUSt3R global view for rgb_path1={rgb_path!r}")
-    if "pixel_xy" not in raw:
-        raise RuntimeError("Stage2 NPZ has no pixel_xy; cannot project support to global DUSt3R map")
-
-    pixel_xy = raw["pixel_xy"].astype(np.float32)
+def pixel_array_for_role(raw, role, point_count):
+    key = f"pixel_xy{role}"
+    fallback_key = "pixel_xy" if role == 1 else key
+    if key in raw:
+        pixel_xy = raw[key].astype(np.float32)
+    elif fallback_key in raw:
+        pixel_xy = raw[fallback_key].astype(np.float32)
+    else:
+        raise RuntimeError(f"Stage2 NPZ has no {key}; cannot project support from view{role}")
     if pixel_xy.ndim != 2 or pixel_xy.shape[1] != 2:
-        raise RuntimeError(f"Bad pixel_xy shape: {pixel_xy.shape}")
+        raise RuntimeError(f"Bad {key} shape: {pixel_xy.shape}")
+    if len(pixel_xy) not in (0, point_count):
+        raise RuntimeError(f"{key} length {len(pixel_xy)} is incompatible with point count {point_count}")
+    return pixel_xy
 
+
+def sample_global_view(view, pixel_xy, args):
     pts_hw = view["points"]
     conf_hw = view["conf"]
     color_hw = view["colors"]
@@ -193,7 +200,64 @@ def map_stage2_points_to_global(raw, global_views, args):
     valid = np.isfinite(points).all(axis=1)
     valid &= np.max(np.abs(points), axis=1) < 1e5
     valid &= conf >= float(args.global_min_conf)
-    return points[valid], colors[valid], valid
+    return points, colors, conf, valid
+
+
+def map_stage2_points_to_global(raw, global_views, args):
+    point_count = int(len(raw["point_plane_ids"]))
+    if "support_source_view" in raw:
+        source_view = np.asarray(raw["support_source_view"]).reshape(-1).astype(np.int8)
+        if len(source_view) != point_count:
+            raise RuntimeError(f"support_source_view length {len(source_view)} != point count {point_count}")
+    else:
+        source_view = np.ones((point_count,), dtype=np.int8)
+
+    points = np.zeros((point_count, 3), dtype=np.float32)
+    colors = np.zeros((point_count, 3), dtype=np.uint8)
+    conf = np.zeros((point_count,), dtype=np.float32)
+    keep = np.zeros((point_count,), dtype=bool)
+    stats = {
+        "point_count": point_count,
+        "source_counts": {},
+        "kept_counts": {},
+        "registered_view_indices": {},
+        "missing_view_roles": [],
+    }
+
+    for role in (1, 2):
+        role_mask = source_view == role
+        role_count = int(role_mask.sum())
+        stats["source_counts"][str(role)] = role_count
+        if role_count == 0:
+            stats["kept_counts"][str(role)] = 0
+            continue
+
+        rgb_path = scalar_string(raw, f"rgb_path{role}", "")
+        view = global_views.get(path_key(rgb_path))
+        if view is None:
+            stats["missing_view_roles"].append(role)
+            raise RuntimeError(f"No DUSt3R global view for rgb_path{role}={rgb_path!r}")
+
+        pixel_xy = pixel_array_for_role(raw, role, point_count)
+        if len(pixel_xy) == 0:
+            raise RuntimeError(f"support_source_view references view{role}, but pixel_xy{role} is empty")
+
+        sampled_points, sampled_colors, sampled_conf, sampled_keep = sample_global_view(view, pixel_xy[role_mask], args)
+        points[role_mask] = sampled_points
+        colors[role_mask] = sampled_colors
+        conf[role_mask] = sampled_conf
+        keep[role_mask] = sampled_keep
+        stats["kept_counts"][str(role)] = int(sampled_keep.sum())
+        stats["registered_view_indices"][str(role)] = int(view["alignment_view_index"])
+
+    invalid_roles = sorted(set(int(x) for x in source_view.tolist() if int(x) not in (1, 2)))
+    if invalid_roles:
+        raise RuntimeError(f"support_source_view has unsupported roles: {invalid_roles}")
+
+    stats["kept_total"] = int(keep.sum())
+    stats["dropped_total"] = int(point_count - keep.sum())
+    stats["mean_kept_conf"] = float(conf[keep].mean()) if int(keep.sum()) else 0.0
+    return points[keep], colors[keep], keep, stats
 
 
 def load_scene_inputs(files, min_points, args, global_views=None):
@@ -203,9 +267,11 @@ def load_scene_inputs(files, min_points, args, global_views=None):
     planes = []
     point_offset = 0
     skipped = []
+    mapping_records = []
     for file_index, path in enumerate(files):
         raw = np.load(path)
         assignment = raw["point_plane_ids"].astype(np.int32)
+        mapping_stats = None
         if global_views is None:
             points = raw["points"].astype(np.float32)
             colors_key = "original_colors" if "original_colors" in raw else "colors"
@@ -213,13 +279,18 @@ def load_scene_inputs(files, min_points, args, global_views=None):
             keep = np.isfinite(points).all(axis=1)
             keep &= np.max(np.abs(points), axis=1) < 1e5
         else:
-            points, colors, keep = map_stage2_points_to_global(raw, global_views, args)
+            points, colors, keep, mapping_stats = map_stage2_points_to_global(raw, global_views, args)
         if int(keep.sum()) == 0:
             skipped.append({"file": str(path), "reason": "no_valid_points"})
             continue
         if len(assignment) != len(keep):
             raise RuntimeError(f"Assignment length mismatch for {path}: {len(assignment)} vs {len(keep)}")
         assignment = assignment[keep]
+        if mapping_stats is not None:
+            mapping_stats = dict(mapping_stats)
+            mapping_stats["file"] = str(path)
+            mapping_stats["kept_after_assignment_filter"] = int(len(assignment))
+            mapping_records.append(mapping_stats)
         normals = raw["plane_normals"].astype(np.float32)
         offsets = raw["plane_offsets"].astype(np.float32)
         scene_points.append(points)
@@ -260,6 +331,7 @@ def load_scene_inputs(files, min_points, args, global_views=None):
         "local_assignments": scene_local_assignment,
         "planes": planes,
         "skipped": skipped,
+        "mapping_records": mapping_records,
     }
 
 
@@ -289,9 +361,19 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     global_views = None
     global_alignment_loss = None
     image_paths = []
+    global_view_registry = []
     if args.fusion_mode == "dust3r_global":
         image_paths = collect_group_images(files, include_second_view=args.include_second_view)
         global_views, global_alignment_loss = run_dust3r_global_alignment(image_paths, model, device, args)
+        global_view_registry = [
+            {
+                "alignment_view_index": int(view["alignment_view_index"]),
+                "image_path": view["image_path"],
+                "canonical_path": key,
+                "points_hw": list(map(int, view["points"].shape[:2])),
+            }
+            for key, view in sorted(global_views.items(), key=lambda item: item[1]["alignment_view_index"])
+        ]
 
     loaded = load_scene_inputs(files, args.min_points, args, global_views=global_views)
     if loaded is None:
@@ -372,8 +454,10 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         fusion_mode=np.asarray(args.fusion_mode),
         dust3r_image_paths=np.asarray(image_paths, dtype=object),
         dust3r_global_alignment_loss=np.asarray(global_alignment_loss if global_alignment_loss is not None else np.nan, dtype=np.float32),
+        dust3r_view_registry_json=np.asarray(json.dumps(global_view_registry), dtype=object),
         source_groups_json=np.asarray(json.dumps(source_groups), dtype=object),
         merge_records_json=np.asarray(json.dumps(merge_records), dtype=object),
+        mapping_records_json=np.asarray(json.dumps(loaded.get("mapping_records", [])), dtype=object),
         skipped_inputs_json=np.asarray(json.dumps(loaded.get("skipped", [])), dtype=object),
     )
 
@@ -401,7 +485,9 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         "fusion_mode": args.fusion_mode,
         "input_files": [str(path) for path in files],
         "dust3r_image_paths": image_paths,
+        "dust3r_view_registry": global_view_registry,
         "dust3r_global_alignment_loss": global_alignment_loss,
+        "mapping_records": loaded.get("mapping_records", []),
         "local_planes": int(len(planes)),
         "global_planes": int(len(planes_out)),
         "merged_pairs": int(sum(1 for row in merge_records if row["merged"])),
