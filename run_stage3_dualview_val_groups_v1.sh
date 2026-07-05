@@ -17,6 +17,7 @@ export PYTHONPATH="$PROJ:${PYTHONPATH:-}"
 cd "$PROJ"
 mkdir -p "$OUT_ROOT/logs"
 GROUPS_TSV="$OUT_ROOT/selected_groups.tsv"
+GROUPS_RAW="$OUT_ROOT/selected_groups.raw.log"
 
 cat > "$OUT_ROOT/select_groups.py" <<'PY'
 import contextlib
@@ -55,7 +56,10 @@ for ordinal, (count, group, indices) in enumerate(rows):
 PY
 
 NUM_GROUPS="$NUM_GROUPS" MIN_PAIRS="$MIN_PAIRS" START_GROUP="$START_GROUP" PAIR_STRATEGY="$PAIR_STRATEGY" \
-  "$PYTHON" "$OUT_ROOT/select_groups.py" | tee "$GROUPS_TSV"
+  "$PYTHON" "$OUT_ROOT/select_groups.py" 2>&1 | tee "$GROUPS_RAW"
+awk -F'\t' '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print}' "$GROUPS_RAW" > "$GROUPS_TSV"
+echo "Selected groups:"
+cat "$GROUPS_TSV"
 
 if [ ! -s "$GROUPS_TSV" ]; then
   echo "No groups selected. Check ROOT=$ROOT MIN_PAIRS=$MIN_PAIRS" >&2
