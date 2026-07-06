@@ -168,6 +168,66 @@ def run_dust3r_global_alignment(image_paths, model, device, args):
     return views, float(loss)
 
 
+
+def write_dust3r_textured_glb(path, global_views, image_paths, min_conf=0.0):
+    if not global_views:
+        return None
+    setup_dust3r_imports()
+    try:
+        import trimesh
+        from dust3r.viz import cat_meshes, pts3d_to_trimesh
+    except ImportError as error:
+        raise RuntimeError("trimesh is required to export DUSt3R-style textured GLB") from error
+
+    meshes = []
+    view_rows = []
+    for image_path in image_paths:
+        view = global_views.get(path_key(image_path))
+        if view is None:
+            continue
+        pts = np.asarray(view["points"], dtype=np.float32)
+        colors = np.asarray(view["colors"], dtype=np.uint8)
+        conf = np.asarray(view["conf"], dtype=np.float32)
+        valid = np.isfinite(pts).all(axis=2)
+        valid &= np.max(np.abs(pts), axis=2) < 1e5
+        valid &= conf >= float(min_conf)
+        if int(valid.sum()) < 4:
+            view_rows.append(
+                {
+                    "image_path": str(image_path),
+                    "alignment_view_index": int(view["alignment_view_index"]),
+                    "valid_pixels": int(valid.sum()),
+                    "faces": 0,
+                    "skipped": "too_few_valid_pixels",
+                }
+            )
+            continue
+        mesh = pts3d_to_trimesh(colors, pts, valid)
+        meshes.append(mesh)
+        view_rows.append(
+            {
+                "image_path": str(image_path),
+                "alignment_view_index": int(view["alignment_view_index"]),
+                "valid_pixels": int(valid.sum()),
+                "faces": int(len(mesh["faces"])),
+            }
+        )
+
+    if not meshes:
+        return {"path": str(path), "views": view_rows, "vertices": 0, "faces": 0, "skipped": "no_meshes"}
+    combined = cat_meshes(meshes)
+    scene = trimesh.Scene()
+    scene.add_geometry(trimesh.Trimesh(**combined))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    scene.export(file_obj=str(path))
+    return {
+        "path": str(path),
+        "views": view_rows,
+        "vertices": int(len(combined["vertices"])),
+        "faces": int(len(combined["faces"])),
+        "min_conf": float(min_conf),
+    }
+
 def pixel_array_for_role(raw, role, point_count):
     key = f"pixel_xy{role}"
     fallback_key = "pixel_xy" if role == 1 else key
@@ -847,6 +907,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     html_path = output_dir / f"{safe_name}_{suffix}_edit.html"
     ply_path = output_dir / f"{safe_name}_{suffix}.ply"
     mesh_ply_path = output_dir / f"{safe_name}_{suffix}_textured_planes.ply"
+    dust3r_glb_path = output_dir / f"{safe_name}_{suffix}_dust3r_textured_scene.glb"
     json_path = output_dir / f"{safe_name}_{suffix}_plane_params.json"
     txt_path = output_dir / f"{safe_name}_{suffix}_plane_params.txt"
 
@@ -883,6 +944,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         )
     write_ascii_ply(ply_path, points, display_colors)
     mesh_rows = write_textured_plane_mesh_ply(mesh_ply_path, points, colors, assignment, normals, offsets, grid_resolution=args.mesh_grid_resolution)
+    dust3r_glb_summary = write_dust3r_textured_glb(dust3r_glb_path, global_views, image_paths, min_conf=args.dust3r_mesh_min_conf) if global_views is not None else None
     write_stage3_report_html(
         html_path,
         points,
@@ -922,6 +984,8 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         "ply": str(ply_path),
         "mesh_ply": str(mesh_ply_path),
         "mesh_summary": mesh_rows,
+        "dust3r_glb": str(dust3r_glb_path) if dust3r_glb_summary is not None else "",
+        "dust3r_glb_summary": dust3r_glb_summary,
         "json": str(json_path),
         "txt": str(txt_path),
     }
@@ -953,6 +1017,7 @@ def main():
     parser.add_argument("--edit_delta", type=float, default=0.25)
     parser.add_argument("--max_display_points", type=int, default=32000)
     parser.add_argument("--mesh_grid_resolution", type=int, default=48)
+    parser.add_argument("--dust3r_mesh_min_conf", type=float, default=1.0)
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
