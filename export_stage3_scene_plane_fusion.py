@@ -6,8 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
-from export_stage2_geometry_refit_editables import plane_rows, write_ascii_ply, write_html, write_params
-from make_full_pointcloud_edit_comparison import PLANE_COLORS
+from export_stage2_geometry_refit_editables import plane_rows, write_ascii_ply, write_params
+from make_full_pointcloud_edit_comparison import HTML_TEMPLATE, PLANE_COLORS, deterministic_sample
 from train_stage2_region_merge_net import fit_plane_np
 
 
@@ -457,6 +457,180 @@ def aggregate_plane_quality(plane_quality):
     }
 
 
+
+def quality_grade(summary, loss):
+    bad = int(summary.get("bad_plane_count", 0))
+    planes = max(int(summary.get("plane_count", 0)), 1)
+    multi = float(summary.get("multi_view_plane_rate", 0.0))
+    p95 = float(summary.get("mean_residual_p95", 0.0))
+    score = 100.0
+    score -= 35.0 * bad / planes
+    score -= 25.0 * max(0.0, 0.6 - multi) / 0.6
+    score -= 25.0 * min(max(p95 / 0.12, 0.0), 1.0)
+    if loss is not None and np.isfinite(loss):
+        score -= 15.0 * min(max(float(loss) / 0.05, 0.0), 1.0)
+    score = max(0.0, min(100.0, score))
+    if score >= 80.0:
+        label = "good"
+    elif score >= 55.0:
+        label = "mixed"
+    else:
+        label = "weak"
+    return {"score": float(score), "label": label}
+
+
+def write_stage3_report_html(
+    path,
+    points,
+    colors,
+    assignment,
+    planes,
+    edit_delta,
+    edit_plane,
+    max_display_points,
+    source_npz,
+    scene_key,
+    fusion_mode,
+    global_alignment_loss,
+    quality_summary,
+    plane_quality,
+    global_view_registry,
+    mapping_records,
+    image_paths,
+):
+    if not planes:
+        raise ValueError(f"No active planes in {source_npz}")
+    if edit_plane == "largest":
+        edit_plane_id = max(planes, key=lambda row: row["assigned_point_count"])["id"]
+    else:
+        edit_plane_id = int(edit_plane)
+    if edit_plane_id < 0 or edit_plane_id >= len(planes):
+        raise ValueError(f"Invalid edit plane {edit_plane_id}; active planes={len(planes)}")
+
+    normal = np.asarray(planes[edit_plane_id]["normal"], dtype=np.float32)
+    moved_mask = assignment == edit_plane_id
+    edited_points = points.copy()
+    edited_points[moved_mask] = edited_points[moved_mask] - float(edit_delta) * normal
+
+    sample_idx = deterministic_sample(len(points), moved_mask, max_display_points)
+    sample_colors = []
+    for plane_id, color in zip(assignment[sample_idx], colors[sample_idx]):
+        if int(plane_id) >= 0:
+            palette = PLANE_COLORS[int(plane_id) % len(PLANE_COLORS)]
+            sample_colors.append(f"rgb({palette[0]},{palette[1]},{palette[2]})")
+        else:
+            sample_colors.append(f"rgb({int(color[0])},{int(color[1])},{int(color[2])})")
+
+    mins = points.min(axis=0)
+    maxs = points.max(axis=0)
+    center = (mins + maxs) / 2.0
+    span = float(np.max(maxs - mins))
+    scale = 0.74 / max(span, 1e-6)
+    offset_before = float(planes[edit_plane_id]["offset"])
+    grade = quality_grade(quality_summary, global_alignment_loss)
+
+    html_data = {
+        "input_npz": str(source_npz),
+        "total_points": int(len(points)),
+        "display_points": int(len(sample_idx)),
+        "moved_points": int(np.sum(moved_mask)),
+        "center": [float(x) for x in center],
+        "scale": scale,
+        "planes": planes,
+        "edit": {
+            "plane_id": int(edit_plane_id),
+            "delta": float(edit_delta),
+            "offset_before": offset_before,
+            "offset_after": offset_before + float(edit_delta),
+        },
+        "before_points": points[sample_idx].round(5).tolist(),
+        "after_points": edited_points[sample_idx].round(5).tolist(),
+        "sample_moved": moved_mask[sample_idx].astype(bool).tolist(),
+        "sample_colors": sample_colors,
+        "stage3": {
+            "scene_key": str(scene_key),
+            "fusion_mode": str(fusion_mode),
+            "global_alignment_loss": None if global_alignment_loss is None else float(global_alignment_loss),
+            "quality_grade": grade,
+            "quality_summary": quality_summary,
+            "plane_quality": plane_quality,
+            "view_registry": global_view_registry,
+            "mapping_records": mapping_records,
+            "image_paths": image_paths,
+        },
+    }
+
+    extra_css = """
+.scoreBox { margin:12px 0 10px; border:1px solid #d7dce5; border-radius:8px; padding:12px; background:#fbfcff; }
+.scoreTop { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.score { font-size:32px; font-weight:800; letter-spacing:0; }
+.badge { border-radius:999px; padding:4px 9px; font-size:12px; font-weight:800; text-transform:uppercase; }
+.badge.good { background:#e8f5e9; color:#166534; }
+.badge.mixed { background:#fff7ed; color:#9a3412; }
+.badge.weak { background:#fef2f2; color:#991b1b; }
+.kv { display:grid; grid-template-columns:1fr auto; gap:5px 10px; margin-top:8px; font-size:12px; color:#4b5563; }
+.kv b { color:#111827; }
+.table { width:100%; border-collapse:collapse; font-size:12px; }
+.table th, .table td { border-bottom:1px solid #e5e7eb; padding:6px 4px; text-align:right; }
+.table th:first-child, .table td:first-child { text-align:left; }
+.table .risk { color:#b91c1c; font-weight:800; }
+.views { display:grid; gap:6px; }
+.viewRow { border:1px solid #e5e7eb; border-radius:6px; padding:7px; background:#fafafa; font-size:12px; overflow-wrap:anywhere; }
+.path { color:#4b5563; margin-top:3px; }
+"""
+    extra_panel = """
+    <section id=\"stage3Report\"></section>
+"""
+    extra_js = """
+function pct(x) { return `${(100 * Number(x || 0)).toFixed(1)}%`; }
+function shortPath(p) { const parts = String(p || '').split(/[\\/]/); return parts.slice(-3).join('/'); }
+function renderStage3Report() {
+  const s = DATA.stage3 || {};
+  const q = s.quality_summary || {};
+  const grade = s.quality_grade || {score:0, label:'weak'};
+  const loss = s.global_alignment_loss == null ? 'n/a' : Number(s.global_alignment_loss).toFixed(5);
+  const rows = (s.plane_quality || []).map(p => {
+    const risky = Number(p.residual_p95 || 0) > 0.08 || Number(p.source_view_count || 0) < 2;
+    return `<tr>
+      <td class=\"${risky ? 'risk' : ''}\">Plane ${p.plane_id}${risky ? ' !' : ''}</td>
+      <td>${Number(p.inlier_count || 0).toLocaleString()}</td>
+      <td>${p.source_view_count || 0}</td>
+      <td>${Number(p.residual_mean || 0).toFixed(4)}</td>
+      <td>${Number(p.residual_p95 || 0).toFixed(4)}</td>
+      <td>${Number(p.plane_area_bbox || 0).toFixed(3)}</td>
+    </tr>`;
+  }).join('');
+  const views = (s.view_registry || []).map(v => `<div class=\"viewRow\"><b>View ${v.alignment_view_index}</b> ${shortPath(v.image_path)}<div class=\"path\">${v.image_path}</div></div>`).join('');
+  stage3Report.innerHTML = `
+    <h2>Stage3 Quality</h2>
+    <div class=\"scoreBox\">
+      <div class=\"scoreTop\"><div><div class=\"small\">Demo quality score</div><div class=\"score\">${Number(grade.score || 0).toFixed(0)}</div></div><span class=\"badge ${grade.label}\">${grade.label}</span></div>
+      <div class=\"kv\">
+        <span>global alignment loss</span><b>${loss}</b>
+        <span>bad planes</span><b>${q.bad_plane_count || 0} / ${q.plane_count || 0}</b>
+        <span>multi-view plane rate</span><b>${pct(q.multi_view_plane_rate)}</b>
+        <span>mean residual p95</span><b>${Number(q.mean_residual_p95 || 0).toFixed(4)}</b>
+      </div>
+    </div>
+    <h2>Plane Diagnostics</h2>
+    <table class=\"table\"><thead><tr><th>plane</th><th>pts</th><th>views</th><th>res mean</th><th>res p95</th><th>area</th></tr></thead><tbody>${rows}</tbody></table>
+    <h2>Registered Views</h2>
+    <div class=\"views\">${views || '<div class=\"small\">No view registry stored.</div>'}</div>
+    <div class=\"hint\">A useful result should have low alignment loss, low residual p95, and major planes supported by multiple views. Red rows are weak planes: high residual or single-view support.</div>
+  `;
+}
+"""
+    template = HTML_TEMPLATE.replace("Full Pointcloud Plane Edit Comparison", "Stage3 Global Plane Report")
+    template = template.replace("Editable Plane Parameters", "Stage3 Global Plane Report")
+    template = template.replace("Before: DUSt3R full point cloud", "Before: global point cloud + plane colors")
+    template = template.replace("After: plane offset edit", "After: editable plane offset preview")
+    template = template.replace("</style>", extra_css + "\n</style>")
+    template = template.replace('<h2>Plane Equations</h2>', extra_panel + '\n    <h2>Plane Equations</h2>')
+    template = template.replace("function renderSide() {", extra_js + "\nfunction renderSide() {")
+    template = template.replace("renderSide();", "renderSide();\nrenderStage3Report();")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(template.replace("__DATA__", json.dumps(html_data, separators=(",", ":"))), encoding="utf-8")
+
 def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     global_views = None
     global_alignment_loss = None
@@ -576,7 +750,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             dtype=np.uint8,
         )
     write_ascii_ply(ply_path, points, display_colors)
-    write_html(
+    write_stage3_report_html(
         html_path,
         points,
         colors,
@@ -586,6 +760,14 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         args.edit_plane,
         args.max_display_points,
         npz_path,
+        scene_key,
+        args.fusion_mode,
+        global_alignment_loss,
+        quality_summary,
+        plane_quality,
+        global_view_registry,
+        loaded.get("mapping_records", []),
+        image_paths,
     )
     write_params(json_path, txt_path, planes_out, np.arange(len(planes_out), dtype=np.int32), npz_path)
     return {
