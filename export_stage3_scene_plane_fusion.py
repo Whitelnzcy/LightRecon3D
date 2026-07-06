@@ -737,6 +737,7 @@ def write_stage3_report_html(
         "before_points": points[sample_idx].round(5).tolist(),
         "after_points": edited_points[sample_idx].round(5).tolist(),
         "sample_moved": moved_mask[sample_idx].astype(bool).tolist(),
+        "sample_assignment": assignment[sample_idx].astype(np.int32).tolist(),
         "sample_colors": sample_colors,
         "stage3": {
             "scene_key": str(scene_key),
@@ -768,13 +769,93 @@ def write_stage3_report_html(
 .views { display:grid; gap:6px; }
 .viewRow { border:1px solid #e5e7eb; border-radius:6px; padding:7px; background:#fafafa; font-size:12px; overflow-wrap:anywhere; }
 .path { color:#4b5563; margin-top:3px; }
+.editControls { margin:14px 0 12px; border:1px solid #d7dce5; border-radius:8px; padding:10px; background:#fbfcff; }
+.controlRow { display:grid; gap:5px; margin-top:8px; font-size:12px; color:#374151; }
+.controlRow select, .controlRow input { width:100%; box-sizing:border-box; }
+.buttonRow { display:flex; gap:8px; margin-top:10px; }
+.buttonRow button { border:1px solid #cfd6e0; border-radius:6px; padding:6px 8px; background:#fff; color:#111827; font-weight:700; cursor:pointer; }
+.buttonRow button:hover { background:#f3f4f6; }
 """
     extra_panel = """
     <section id=\"stage3Report\"></section>
+    <section class=\"editControls\">
+      <h2>Interactive Plane Edit</h2>
+      <div class=\"controlRow\"><label for=\"planeSelect\">Plane primitive</label><select id=\"planeSelect\"></select></div>
+      <div class=\"controlRow\"><label for=\"planeDelta\">Offset delta d: <b id=\"planeDeltaValue\"></b></label><input id=\"planeDelta\" type=\"range\" min=\"-0.5\" max=\"0.5\" step=\"0.005\"></div>
+      <div class=\"buttonRow\"><button id=\"resetPlaneEdit\" type=\"button\">Reset</button><button id=\"downloadPlaneEdit\" type=\"button\">Download JSON</button></div>
+      <div class=\"hint\">Dragging this slider changes the selected plane offset d in n*x + d = 0 and moves its assigned support points along the plane normal.</div>
+    </section>
 """
     extra_js = """
 function pct(x) { return `${(100 * Number(x || 0)).toFixed(1)}%`; }
 function shortPath(p) { const parts = String(p || '').split(/[\\/]/); return parts.slice(-3).join('/'); }
+function planeById(id) { return DATA.planes.find(p => Number(p.id) === Number(id)); }
+function setDynamicEdit(planeId, delta) {
+  const p = planeById(planeId);
+  if (!p) return;
+  const d = Number(delta || 0);
+  DATA.edit.plane_id = Number(p.id);
+  DATA.edit.delta = d;
+  DATA.edit.offset_before = Number(p.offset);
+  DATA.edit.offset_after = Number(p.offset) + d;
+  DATA.moved_points = Number(p.assigned_point_count || p.inlier_count || 0);
+  DATA.sample_moved = (DATA.sample_assignment || []).map(x => Number(x) === Number(p.id));
+  DATA.after_points = DATA.before_points.map((pt, i) => {
+    if (!DATA.sample_moved[i]) return pt;
+    return [
+      pt[0] - d * p.normal[0],
+      pt[1] - d * p.normal[1],
+      pt[2] - d * p.normal[2],
+    ];
+  });
+}
+function downloadEditedPlaneJson() {
+  const p = planeById(DATA.edit.plane_id);
+  if (!p) return;
+  const payload = {
+    source_npz: DATA.input_npz,
+    edited_plane_id: DATA.edit.plane_id,
+    normal: p.normal,
+    offset_before: DATA.edit.offset_before,
+    offset_delta: DATA.edit.delta,
+    offset_after: DATA.edit.offset_after,
+    equation_before: equation(p, false),
+    equation_after: equation(p, true),
+    assigned_point_count: p.assigned_point_count,
+    stage3_quality: DATA.stage3 ? DATA.stage3.quality_summary : null,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `edited_plane_${DATA.edit.plane_id}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function updatePlaneEditor(redraw=true) {
+  const select = document.getElementById('planeSelect');
+  const slider = document.getElementById('planeDelta');
+  if (!select || !slider) return;
+  setDynamicEdit(Number(select.value), Number(slider.value));
+  const label = document.getElementById('planeDeltaValue');
+  if (label) label.textContent = Number(DATA.edit.delta).toFixed(3);
+  window.renderSide();
+  if (redraw) drawAll();
+}
+function initPlaneEditor() {
+  const select = document.getElementById('planeSelect');
+  const slider = document.getElementById('planeDelta');
+  if (!select || !slider) return;
+  select.innerHTML = DATA.planes.map(p => `<option value="${p.id}">Plane ${p.id} (${Number(p.assigned_point_count || 0).toLocaleString()} pts)</option>`).join('');
+  select.value = DATA.edit.plane_id;
+  slider.value = DATA.edit.delta;
+  select.addEventListener('change', () => updatePlaneEditor(true));
+  slider.addEventListener('input', () => updatePlaneEditor(true));
+  const reset = document.getElementById('resetPlaneEdit');
+  if (reset) reset.addEventListener('click', () => { slider.value = 0; updatePlaneEditor(true); });
+  const download = document.getElementById('downloadPlaneEdit');
+  if (download) download.addEventListener('click', downloadEditedPlaneJson);
+  updatePlaneEditor(false);
+}
 function renderStage3Report() {
   const s = DATA.stage3 || {};
   const q = s.quality_summary || {};
@@ -818,7 +899,7 @@ function renderStage3Report() {
     template = template.replace("</style>", extra_css + "\n</style>")
     template = template.replace('<h2>Plane Equations</h2>', extra_panel + '\n    <h2>Plane Equations</h2>')
     template = template.replace("function renderSide() {", extra_js + "\nfunction renderSide() {")
-    template = template.replace("renderSide();", "renderSide();\nrenderStage3Report();")
+    template = template.replace("renderSide();", "renderSide();\nrenderStage3Report();\ninitPlaneEditor();")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(template.replace("__DATA__", json.dumps(html_data, separators=(",", ":"))), encoding="utf-8")
 
