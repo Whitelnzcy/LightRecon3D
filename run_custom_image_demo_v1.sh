@@ -40,6 +40,7 @@ echo "STAGE2_CHECKPOINT=$STAGE2_CHECKPOINT"
 "$PYTHON" -c "import sys; print(sys.executable)"
 "$PYTHON" -c "import torch; print('torch', torch.__version__)"
 "$PYTHON" -c "import roma; print('roma ok')"
+"$PYTHON" -c "import trimesh; print('trimesh', trimesh.__version__)"
 
 echo "[1/5] Export custom Stage1 dual-view support"
 PYTHONUNBUFFERED=1 "$PYTHON" export_custom_image_stage1_support_npz.py \
