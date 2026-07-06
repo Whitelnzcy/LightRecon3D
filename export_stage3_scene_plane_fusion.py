@@ -899,7 +899,13 @@ function renderStage3Report() {
     template = template.replace("</style>", extra_css + "\n</style>")
     template = template.replace('<h2>Plane Equations</h2>', extra_panel + '\n    <h2>Plane Equations</h2>')
     template = template.replace("function renderSide() {", extra_js + "\nfunction renderSide() {")
-    template = template.replace("renderSide();", "renderSide();\nrenderStage3Report();\ninitPlaneEditor();")
+    init_marker = "renderSide();\nattach(document.getElementById('before'));"
+    if init_marker not in template:
+        raise RuntimeError("Cannot locate HTML render initialization marker")
+    template = template.replace(
+        init_marker,
+        "renderSide();\nrenderStage3Report();\ninitPlaneEditor();\nattach(document.getElementById('before'));",
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(template.replace("__DATA__", json.dumps(html_data, separators=(",", ":"))), encoding="utf-8")
 
