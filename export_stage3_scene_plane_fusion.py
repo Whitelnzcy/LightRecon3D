@@ -393,6 +393,137 @@ def plane_bbox_area(points, normal):
     return float(max(span[0], 0.0) * max(span[1], 0.0))
 
 
+
+def plane_uv(points, normal):
+    if len(points) == 0:
+        return np.zeros((0, 2), dtype=np.float32), np.zeros((3,), dtype=np.float32), np.zeros((3,), dtype=np.float32), np.zeros((3,), dtype=np.float32)
+    u, v = plane_basis(normal)
+    center = points.mean(axis=0).astype(np.float32)
+    centered = points - center[None]
+    uv = np.stack((centered @ u, centered @ v), axis=1).astype(np.float32)
+    return uv, center, u, v
+
+
+def textured_plane_mesh(points, colors, assignment, normals, offsets, grid_resolution=48, min_cell_points=2):
+    vertices = []
+    faces = []
+    vertex_key_to_index = {}
+    plane_mesh_rows = []
+
+    for plane_id in range(len(normals)):
+        mask = assignment == plane_id
+        pts = points[mask]
+        rgb = colors[mask]
+        if len(pts) < max(16, min_cell_points):
+            plane_mesh_rows.append({"plane_id": int(plane_id), "vertices": 0, "faces": 0, "skipped": "too_few_points"})
+            continue
+
+        uv, center, u, v = plane_uv(pts, normals[plane_id])
+        uv_min = uv.min(axis=0)
+        uv_max = uv.max(axis=0)
+        span = uv_max - uv_min
+        if float(span.min()) <= 1e-5:
+            plane_mesh_rows.append({"plane_id": int(plane_id), "vertices": 0, "faces": 0, "skipped": "degenerate_extent"})
+            continue
+
+        bins_u = int(np.clip(grid_resolution, 8, 128))
+        bins_v = int(np.clip(round(grid_resolution * float(span[1] / max(span[0], 1e-6))), 8, 128))
+        cell = span / np.asarray([bins_u, bins_v], dtype=np.float32)
+        ij = np.floor((uv - uv_min[None]) / cell[None]).astype(np.int32)
+        ij[:, 0] = np.clip(ij[:, 0], 0, bins_u - 1)
+        ij[:, 1] = np.clip(ij[:, 1], 0, bins_v - 1)
+
+        count_grid = np.zeros((bins_u, bins_v), dtype=np.int32)
+        color_grid = np.zeros((bins_u, bins_v, 3), dtype=np.float32)
+        for (iu, iv), color in zip(ij, rgb):
+            count_grid[iu, iv] += 1
+            color_grid[iu, iv] += color.astype(np.float32)
+        occupied = count_grid >= int(min_cell_points)
+        color_grid[occupied] /= count_grid[occupied, None]
+
+        plane_vertex_start = len(vertices)
+        plane_face_start = len(faces)
+
+        def vertex_index(iu, iv):
+            key = (plane_id, int(iu), int(iv))
+            if key in vertex_key_to_index:
+                return vertex_key_to_index[key]
+            uv_corner = uv_min + np.asarray([iu, iv], dtype=np.float32) * cell
+            xyz = center + uv_corner[0] * u + uv_corner[1] * v
+            # Use the nearest occupied cell color around this corner for a texture-like vertex color.
+            nearby = []
+            for du in (-1, 0):
+                for dv in (-1, 0):
+                    cu, cv = iu + du, iv + dv
+                    if 0 <= cu < bins_u and 0 <= cv < bins_v and occupied[cu, cv]:
+                        nearby.append(color_grid[cu, cv])
+            if nearby:
+                color = np.mean(np.stack(nearby, axis=0), axis=0)
+            else:
+                color = np.asarray(PLANE_COLORS[plane_id % len(PLANE_COLORS)], dtype=np.float32)
+            index = len(vertices)
+            vertices.append((xyz.astype(np.float32), np.clip(color, 0, 255).astype(np.uint8)))
+            vertex_key_to_index[key] = index
+            return index
+
+        for iu in range(bins_u):
+            for iv in range(bins_v):
+                if not occupied[iu, iv]:
+                    continue
+                v00 = vertex_index(iu, iv)
+                v10 = vertex_index(iu + 1, iv)
+                v11 = vertex_index(iu + 1, iv + 1)
+                v01 = vertex_index(iu, iv + 1)
+                faces.append((v00, v10, v11))
+                faces.append((v00, v11, v01))
+
+        plane_mesh_rows.append(
+            {
+                "plane_id": int(plane_id),
+                "vertices": int(len(vertices) - plane_vertex_start),
+                "faces": int(len(faces) - plane_face_start),
+                "grid_u": int(bins_u),
+                "grid_v": int(bins_v),
+                "occupied_cells": int(occupied.sum()),
+            }
+        )
+
+    return vertices, faces, plane_mesh_rows
+
+
+def write_textured_plane_mesh_ply(path, points, colors, assignment, normals, offsets, grid_resolution=48, min_cell_points=2):
+    vertices, faces, rows = textured_plane_mesh(
+        points,
+        colors,
+        assignment,
+        normals,
+        offsets,
+        grid_resolution=grid_resolution,
+        min_cell_points=min_cell_points,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        f.write("ply\n")
+        f.write("format ascii 1.0\n")
+        f.write(f"element vertex {len(vertices)}\n")
+        f.write("property float x\n")
+        f.write("property float y\n")
+        f.write("property float z\n")
+        f.write("property uchar red\n")
+        f.write("property uchar green\n")
+        f.write("property uchar blue\n")
+        f.write(f"element face {len(faces)}\n")
+        f.write("property list uchar int vertex_indices\n")
+        f.write("end_header\n")
+        for xyz, color in vertices:
+            f.write(
+                f"{xyz[0]:.6f} {xyz[1]:.6f} {xyz[2]:.6f} "
+                f"{int(color[0])} {int(color[1])} {int(color[2])}\n"
+            )
+        for face in faces:
+            f.write(f"3 {face[0]} {face[1]} {face[2]}\n")
+    return rows
+
 def plane_quality_rows(points, assignment, normals, offsets, source_views, point_file_indices):
     rows = []
     for plane_id in range(len(normals)):
@@ -715,6 +846,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     npz_path = output_dir / f"{safe_name}_{suffix}_full_pointcloud_editable_planes_data.npz"
     html_path = output_dir / f"{safe_name}_{suffix}_edit.html"
     ply_path = output_dir / f"{safe_name}_{suffix}.ply"
+    mesh_ply_path = output_dir / f"{safe_name}_{suffix}_textured_planes.ply"
     json_path = output_dir / f"{safe_name}_{suffix}_plane_params.json"
     txt_path = output_dir / f"{safe_name}_{suffix}_plane_params.txt"
 
@@ -750,6 +882,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             dtype=np.uint8,
         )
     write_ascii_ply(ply_path, points, display_colors)
+    mesh_rows = write_textured_plane_mesh_ply(mesh_ply_path, points, colors, assignment, normals, offsets, grid_resolution=args.mesh_grid_resolution)
     write_stage3_report_html(
         html_path,
         points,
@@ -787,6 +920,8 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         "npz": str(npz_path),
         "html": str(html_path),
         "ply": str(ply_path),
+        "mesh_ply": str(mesh_ply_path),
+        "mesh_summary": mesh_rows,
         "json": str(json_path),
         "txt": str(txt_path),
     }
@@ -817,6 +952,7 @@ def main():
     parser.add_argument("--edit_plane", default="largest")
     parser.add_argument("--edit_delta", type=float, default=0.25)
     parser.add_argument("--max_display_points", type=int, default=32000)
+    parser.add_argument("--mesh_grid_resolution", type=int, default=48)
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)

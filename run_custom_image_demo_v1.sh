@@ -13,6 +13,7 @@ STAGE2_CHECKPOINT=${STAGE2_CHECKPOINT:-$RUNROOT/stage2_region_merge_v1/checkpoin
 PAIR_STRATEGY=${PAIR_STRATEGY:-all}
 SCENE_NAME=${SCENE_NAME:-custom_scene}
 MAX_POINTS=${MAX_POINTS:-4000}
+MESH_GRID_RESOLUTION=${MESH_GRID_RESOLUTION:-48}
 STAGE3_VIS_ROOT=${STAGE3_VIS_ROOT:-$OUT_ROOT/stage3_global_visual_v1}
 
 export PROJ PYTHON RUNROOT IMAGE_DIR OUT_ROOT WEIGHTS
@@ -87,6 +88,7 @@ PYTHONUNBUFFERED=1 "$PYTHON" export_stage3_scene_plane_fusion.py \
   --schedule cosine \
   --min_group_size 1 \
   --max_display_points 80000 \
+  --mesh_grid_resolution "$MESH_GRID_RESOLUTION" \
   2>&1 | tee "$STAGE3_VIS_ROOT/logs/stage3_global_visual.log"
 
 echo "[5/5] Manifest summary"
