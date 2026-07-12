@@ -47,6 +47,12 @@ class Stage3ScenePlaneFusionMappingTest(unittest.TestCase):
         self.assertEqual(stats["kept_counts"], {"1": 1, "2": 1})
         self.assertEqual(stats["registered_view_indices"], {"1": 0, "2": 1})
 
+        points, _, keep, _, view_indices, pixel_xy = map_stage2_points_to_global(
+            raw, global_views, SimpleNamespace(global_min_conf=0.0), return_provenance=True)
+        self.assertEqual(len(points), int(keep.sum()))
+        self.assertEqual(view_indices.tolist(), [0, 1])
+        self.assertEqual(pixel_xy.tolist(), [[0, 0], [1, 1]])
+
 
 if __name__ == "__main__":
     unittest.main()

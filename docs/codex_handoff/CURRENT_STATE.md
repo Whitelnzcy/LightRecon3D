@@ -549,3 +549,175 @@ Remaining problems:
 Next exact step:
 
 Commit and push the Phase 2 + Phase 3 metadata/view-registry baseline, then run the validator on a small fresh Stage2 export on the server. If the dry-run metrics are clean, proceed to Phase 4 global alignment cache implementation.
+
+## 18. Session update: 2026-07-10 research-necessity baseline scaffold
+
+Branch: `codex/bounded-support-head`
+
+Current commit SHA: `5bd3e42` (worktree changes are not committed)
+
+Implemented behavior:
+
+* Stage3 global alignment now writes a method-independent cache containing every aligned pointmap pixel: XYZ, RGB, confidence, explicit alignment view index, `(x,y)` pointmap pixel, registry, and alignment loss.
+* Added sequential 3D plane RANSAC on that shared cache. Each infinite-plane inlier set is split with radius-connected Euclidean components before separate SVD refits.
+* Baseline output uses the existing editable-plane core fields (`points`, `colors`, `point_plane_ids`, `plane_normals`, `plane_offsets`, and counts), plus parameter JSON/TXT and colored PLY.
+* Stage3 gained explicit `--merge_mode none|manual`. With Stage1 support input, `none` is the direct global-SVD ablation and `manual` is the hand-threshold merge ablation. RegionMergeMLP/full-method comparison uses its Stage2 output as input.
+* Added point-aligned GT evaluation for plane precision/recall, sign-invariant normal error, point-to-plane residual, coverage/matched IoU, count error, fragmentation, over-merge, and recorded runtime.
+* No claim that Stage1 support or the full method beats RANSAC is supported yet.
+
+Files changed/added:
+
+```text
+export_stage3_scene_plane_fusion.py
+global_plane_baselines.py
+evaluate_global_plane_baselines.py
+tests/test_global_plane_baselines.py
+tests/test_evaluate_global_plane_baselines.py
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+python -m py_compile global_plane_baselines.py evaluate_global_plane_baselines.py export_stage3_scene_plane_fusion.py tests/test_global_plane_baselines.py tests/test_evaluate_global_plane_baselines.py
+<bundled-python> -m unittest tests.test_global_plane_baselines tests.test_evaluate_global_plane_baselines
+```
+
+Results:
+
+```text
+py_compile: passed
+focused baseline/evaluation tests: 5 passed
+```
+
+Unresolved / not executed:
+
+* Real Structured3D val metrics have not been produced locally. The retained showcase manifests reference `/gemini/data-1/...`; this Windows workspace has neither that Structured3D root nor the server DUSt3R weights.
+* Existing showcase NPZs contain only mapped Stage1/Stage2 support points (for example 80,000 points), not the full aligned pointmaps, so using them for RANSAC would violate the identical-input requirement.
+* A point-aligned Structured3D GT cache writer still needs to be connected to the exact same alignment view/pixel registry before quantitative evaluation. The evaluator intentionally rejects predictions whose point array differs from GT.
+* Runtime must be measured in one server job with one cached alignment shared by all methods; alignment time should be reported separately from method time.
+
+Next exact step:
+
+On the server, regenerate the selected val groups once to create the new global-cloud caches, build point-aligned GT labels through the saved `(view_index, x, y)` registry, then run RANSAC, Stage1+SVD, Stage1+manual merge, and the full Stage2 input on exactly those caches. Do not publish comparative claims until the resulting CSV is complete.
+
+## 19. Session update: 2026-07-12 structured-plane novelty audit
+
+Branch: `codex/bounded-support-head`
+
+Current commit SHA: `5bd3e42` (worktree changes are not committed)
+
+Output generated:
+
+```text
+docs/codex_handoff/STRUCTURED_PLANE_LITERATURE_AUDIT.md
+```
+
+Literature finding:
+
+* Existing work already covers query plane recovery, unknown-pose two-view plane reconstruction, posed multi-view MVS, learned 3D plane tracking/fusion, multi-view-consistent plane embeddings, explicit planar primitive optimization, visible/occluded plane extent, and polygonal primitive assembly.
+* Therefore no current Stage1/Stage2/Stage3 component is independently defensible as novel.
+* The leading research hypothesis is uncertainty-aware evidence fusion for bounded plane identity and support under unordered, unposed, imperfect foundation-model pointmaps.
+* This is explicitly recorded as a hypothesis, not a novelty claim.
+
+Second-pass correction:
+
+* Additional closest works (Plane-DUSt3R, PLANA3R, AlphaTablets, NeuralPlane, NOPE-SAC, PlaneRecTR++, PlanarNeRF and CCGS) substantially weaken uncertainty-only, bounded-support-only and unposed-plane-only novelty claims.
+* The recommended main direction is now **PlaneGraph-BA**: a training-free structural adapter for frozen pointmap foundation models. It uses an instance-level trimmed plane graph both as output and as structural landmarks to jointly refine per-view/submap Sim(3), plane identities and plane parameters.
+* Uncertainty-aware evidence fusion is retained only as a component, not the main contribution.
+
+Tests/training:
+
+```text
+No code test or training was run; this session was a literature and research-design audit.
+```
+
+Next exact step:
+
+Complete the shared-global-cloud RANSAC experiment and construct point-aligned GT. Then measure whether DUSt3R confidence, bootstrap plane uncertainty, reprojection disagreement, and visibility/free-space evidence predict hard-merge failures. Implement a non-learned uncertainty-normalized association baseline before training another network.
+
+## 20. Session update: 2026-07-12 PlaneGraph-BA v0 implementation
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA: `5bd3e42` (new changes are not committed at the time of this handoff entry)
+
+Implemented behavior:
+
+* Added `planegraph_ba.py`, an additive structural-feedback layer for a frozen
+  DUSt3R global pointmap cache.
+* Stage3 global support output now preserves exact cache join provenance:
+  `alignment_view_indices` and `pointmap_pixel_xy` in explicit `(x,y)` DUSt3R
+  aligned-pointmap coordinates.
+* PlaneGraph-BA joins support observations to the complete global cloud using
+  `(alignment_view_index, x, y)`, not floating-point XYZ nearest neighbours.
+* v0 fixes one reference view and alternates confidence-weighted global plane
+  SVD refits with bounded per-view Sim(3) corrections.
+* Point-to-plane updates use Huber weights, quadratic priors around the frozen
+  DUSt3R alignment, parameter bounds, damping, and a step-acceptance check.
+* Only plane identities observed in at least `min_plane_views` affect alignment;
+  single-view planes are still refitted and exported.
+* Output uses the existing editable-plane core fields and adds original/corrected
+  global points, per-view Sim(3), before/after PLY, and optimization history.
+* Stage3's SVD plane helper is now dependency-light, allowing mapping tests to
+  run without importing the Torch-dependent Stage2 training module.
+
+Files added/changed for this implementation:
+
+```text
+planegraph_ba.py
+docs/codex_handoff/PLANEGRAPH_BA_V0.md
+export_stage3_scene_plane_fusion.py
+tests/test_planegraph_ba.py
+tests/test_stage3_scene_plane_fusion_mapping.py
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+python -m py_compile planegraph_ba.py export_stage3_scene_plane_fusion.py tests/test_planegraph_ba.py tests/test_stage3_scene_plane_fusion_mapping.py
+<bundled-python> -m unittest tests.test_planegraph_ba tests.test_stage3_scene_plane_fusion_mapping tests.test_global_plane_baselines tests.test_evaluate_global_plane_baselines
+<bundled-python> planegraph_ba.py --global_cloud_npz <synthetic-cache> --support_npz <synthetic-support> ...
+```
+
+Results:
+
+```text
+py_compile: passed
+focused tests: 9 passed
+synthetic CLI smoke: passed
+synthetic mean absolute plane residual: 0.0329946 -> 0.0000247
+support cache-key mapping: 720 / 720
+```
+
+Generated diagnostic:
+
+```text
+local_outputs/planegraph_ba_synthetic_smoke/planegraph_ba_before_after.png
+local_outputs/planegraph_ba_synthetic_smoke/result/synthetic_room_planegraph_ba_v0_before.ply
+local_outputs/planegraph_ba_synthetic_smoke/result/synthetic_room_planegraph_ba_v0_after.ply
+```
+
+Scientific limitations / unverified items:
+
+* The synthetic result validates implementation behavior only. No Structured3D
+  or real-scene improvement has been measured.
+* v0 applies one Sim(3) per view; it does not yet correct intra-view pointmap
+  deformation and does not fine-tune DUSt3R.
+* The current cache does not retain DUSt3R pair correspondences, so v0 contains
+  plane residuals plus foundation-alignment priors, but not an explicit match
+  reprojection term.
+* Incorrect Stage1/Stage2 plane identity can still bias the optimizer. The
+  existing robust loss and bounds limit damage but do not solve association.
+* Real acceptance requires pose/geometry/non-planar metrics, not merely lower
+  point-to-plane residual.
+
+Next exact step:
+
+Regenerate one Structured3D val group with the new Stage3 provenance, run
+PlaneGraph-BA v0 on the shared global cache, and compare original DUSt3R,
+post-hoc SVD, sequential RANSAC, manual merge, and learned-support PlaneGraph-BA
+using both plane metrics and full/non-planar geometry metrics. If alignment and
+plane metrics do not improve together, stop or revise this direction before
+adding pointmap deformation or learned uncertainty.

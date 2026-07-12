@@ -8,7 +8,22 @@ import numpy as np
 
 from export_stage2_geometry_refit_editables import plane_rows, write_ascii_ply, write_params
 from make_full_pointcloud_edit_comparison import HTML_TEMPLATE, PLANE_COLORS, deterministic_sample
-from train_stage2_region_merge_net import fit_plane_np
+
+
+def fit_plane_np(points):
+    """Dependency-light SVD refit used by Stage3 and its mapping tests."""
+    points = np.asarray(points, dtype=np.float32)
+    if len(points) < 3:
+        return np.asarray([0.0, 0.0, 1.0], np.float32), 0.0, np.zeros((0,), np.float32)
+    centroid = points.mean(axis=0)
+    _, _, vh = np.linalg.svd(points - centroid, full_matrices=False)
+    normal = vh[-1].astype(np.float32)
+    normal /= max(float(np.linalg.norm(normal)), 1e-8)
+    dominant = int(np.argmax(np.abs(normal)))
+    if normal[dominant] < 0:
+        normal = -normal
+    offset = -float(normal @ centroid)
+    return normal, offset, np.abs(points @ normal + offset).astype(np.float32)
 
 
 class UnionFind:
@@ -228,6 +243,43 @@ def write_dust3r_textured_glb(path, global_views, image_paths, min_conf=0.0):
         "min_conf": float(min_conf),
     }
 
+
+def write_global_cloud_cache(path, global_views, scene_key, alignment_loss):
+    """Persist the method-independent output of one DUSt3R alignment.
+
+    Downstream baselines must consume this cache so alignment inputs and
+    numerical results cannot silently differ between methods.
+    """
+    points, colors, confidence, view_indices, pixel_xy = [], [], [], [], []
+    registry = []
+    for _, view in sorted(global_views.items(), key=lambda item: item[1]["alignment_view_index"]):
+        xyz = np.asarray(view["points"], dtype=np.float32)
+        rgb = np.asarray(view["colors"], dtype=np.uint8)
+        conf = np.asarray(view["conf"], dtype=np.float32)
+        if xyz.shape[:2] != rgb.shape[:2] or xyz.shape[:2] != conf.shape[:2]:
+            raise ValueError(f"global view shape mismatch for {view['image_path']}")
+        height, width = xyz.shape[:2]
+        yy, xx = np.indices((height, width), dtype=np.int32)
+        count = height * width
+        points.append(xyz.reshape(count, 3))
+        colors.append(rgb.reshape(count, 3))
+        confidence.append(conf.reshape(count))
+        view_indices.append(np.full(count, int(view["alignment_view_index"]), dtype=np.int32))
+        pixel_xy.append(np.stack((xx, yy), axis=-1).reshape(count, 2))
+        registry.append({"alignment_view_index": int(view["alignment_view_index"]),
+                         "image_path": view["image_path"], "points_hw": [height, width]})
+    np.savez_compressed(
+        path, schema_version=np.asarray(1, dtype=np.int32),
+        points=np.concatenate(points), colors=np.concatenate(colors),
+        confidence=np.concatenate(confidence), view_indices=np.concatenate(view_indices),
+        pixel_xy=np.concatenate(pixel_xy), pixel_coordinate_order=np.asarray("xy"),
+        pixel_coordinate_space=np.asarray("dust3r_aligned_pointmap"),
+        scene_key=np.asarray(scene_key),
+        dust3r_global_alignment_loss=np.asarray(alignment_loss, dtype=np.float32),
+        dust3r_view_registry_json=np.asarray(json.dumps(registry)),
+    )
+    return str(path)
+
 def pixel_array_for_role(raw, role, point_count):
     key = f"pixel_xy{role}"
     fallback_key = "pixel_xy" if role == 1 else key
@@ -244,7 +296,7 @@ def pixel_array_for_role(raw, role, point_count):
     return pixel_xy
 
 
-def sample_global_view(view, pixel_xy, args):
+def sample_global_view(view, pixel_xy, args, return_pixel_xy=False):
     pts_hw = view["points"]
     conf_hw = view["conf"]
     color_hw = view["colors"]
@@ -260,10 +312,12 @@ def sample_global_view(view, pixel_xy, args):
     valid = np.isfinite(points).all(axis=1)
     valid &= np.max(np.abs(points), axis=1) < 1e5
     valid &= conf >= float(args.global_min_conf)
+    if return_pixel_xy:
+        return points, colors, conf, valid, np.stack((x, y), axis=1).astype(np.int32)
     return points, colors, conf, valid
 
 
-def map_stage2_points_to_global(raw, global_views, args):
+def map_stage2_points_to_global(raw, global_views, args, return_provenance=False):
     point_count = int(len(raw["point_plane_ids"]))
     if "support_source_view" in raw:
         source_view = np.asarray(raw["support_source_view"]).reshape(-1).astype(np.int8)
@@ -276,6 +330,8 @@ def map_stage2_points_to_global(raw, global_views, args):
     colors = np.zeros((point_count, 3), dtype=np.uint8)
     conf = np.zeros((point_count,), dtype=np.float32)
     keep = np.zeros((point_count,), dtype=bool)
+    alignment_view_indices = np.full((point_count,), -1, dtype=np.int32)
+    pointmap_pixel_xy = np.full((point_count, 2), -1, dtype=np.int32)
     stats = {
         "point_count": point_count,
         "source_counts": {},
@@ -302,11 +358,14 @@ def map_stage2_points_to_global(raw, global_views, args):
         if len(pixel_xy) == 0:
             raise RuntimeError(f"support_source_view references view{role}, but pixel_xy{role} is empty")
 
-        sampled_points, sampled_colors, sampled_conf, sampled_keep = sample_global_view(view, pixel_xy[role_mask], args)
+        sampled_points, sampled_colors, sampled_conf, sampled_keep, sampled_pixel_xy = sample_global_view(
+            view, pixel_xy[role_mask], args, return_pixel_xy=True)
         points[role_mask] = sampled_points
         colors[role_mask] = sampled_colors
         conf[role_mask] = sampled_conf
         keep[role_mask] = sampled_keep
+        alignment_view_indices[role_mask] = int(view["alignment_view_index"])
+        pointmap_pixel_xy[role_mask] = sampled_pixel_xy
         stats["kept_counts"][str(role)] = int(sampled_keep.sum())
         stats["registered_view_indices"][str(role)] = int(view["alignment_view_index"])
 
@@ -317,7 +376,10 @@ def map_stage2_points_to_global(raw, global_views, args):
     stats["kept_total"] = int(keep.sum())
     stats["dropped_total"] = int(point_count - keep.sum())
     stats["mean_kept_conf"] = float(conf[keep].mean()) if int(keep.sum()) else 0.0
-    return points[keep], colors[keep], keep, stats
+    result = points[keep], colors[keep], keep, stats
+    if return_provenance:
+        return result + (alignment_view_indices[keep], pointmap_pixel_xy[keep])
+    return result
 
 
 def load_scene_inputs(files, min_points, args, global_views=None):
@@ -325,6 +387,8 @@ def load_scene_inputs(files, min_points, args, global_views=None):
     scene_colors = []
     scene_local_assignment = []
     scene_source_views = []
+    scene_alignment_view_indices = []
+    scene_pointmap_pixel_xy = []
     scene_file_indices = []
     planes = []
     point_offset = 0
@@ -340,8 +404,14 @@ def load_scene_inputs(files, min_points, args, global_views=None):
             colors = raw[colors_key].astype(np.uint8)
             keep = np.isfinite(points).all(axis=1)
             keep &= np.max(np.abs(points), axis=1) < 1e5
+            points = points[keep]
+            colors = colors[keep]
+            alignment_view_indices = np.full((int(keep.sum()),), -1, dtype=np.int32)
+            pointmap_pixel_xy = np.full((int(keep.sum()), 2), -1, dtype=np.int32)
         else:
-            points, colors, keep, mapping_stats = map_stage2_points_to_global(raw, global_views, args)
+            points, colors, keep, mapping_stats, alignment_view_indices, pointmap_pixel_xy = (
+                map_stage2_points_to_global(raw, global_views, args, return_provenance=True)
+            )
         if int(keep.sum()) == 0:
             skipped.append({"file": str(path), "reason": "no_valid_points"})
             continue
@@ -356,6 +426,8 @@ def load_scene_inputs(files, min_points, args, global_views=None):
         else:
             source_view = np.ones((len(assignment),), dtype=np.int8)
         scene_source_views.append(source_view)
+        scene_alignment_view_indices.append(alignment_view_indices)
+        scene_pointmap_pixel_xy.append(pointmap_pixel_xy)
         scene_file_indices.append(np.full((len(assignment),), file_index, dtype=np.int32))
         if mapping_stats is not None:
             mapping_stats = dict(mapping_stats)
@@ -400,6 +472,8 @@ def load_scene_inputs(files, min_points, args, global_views=None):
         "points": np.concatenate(scene_points, axis=0),
         "colors": np.concatenate(scene_colors, axis=0),
         "source_views": np.concatenate(scene_source_views, axis=0),
+        "alignment_view_indices": np.concatenate(scene_alignment_view_indices, axis=0),
+        "pointmap_pixel_xy": np.concatenate(scene_pointmap_pixel_xy, axis=0),
         "point_file_indices": np.concatenate(scene_file_indices, axis=0),
         "local_assignments": scene_local_assignment,
         "planes": planes,
@@ -927,12 +1001,20 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             for key, view in sorted(global_views.items(), key=lambda item: item[1]["alignment_view_index"])
         ]
 
+        cache_name = f"{safe_filename(scene_key)}_dust3r_global_cloud_cache.npz"
+        global_cloud_cache = write_global_cloud_cache(
+            output_dir / cache_name, global_views, scene_key, global_alignment_loss)
+    else:
+        global_cloud_cache = ""
+
     loaded = load_scene_inputs(files, args.min_points, args, global_views=global_views)
     if loaded is None:
         return None
     points = loaded["points"]
     colors = loaded["colors"]
     source_views = loaded["source_views"]
+    alignment_view_indices = loaded["alignment_view_indices"]
+    pointmap_pixel_xy = loaded["pointmap_pixel_xy"]
     point_file_indices = loaded["point_file_indices"]
     planes = loaded["planes"]
     uf = UnionFind(len(planes))
@@ -940,7 +1022,10 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     for i, plane_a in enumerate(planes):
         for j in range(i + 1, len(planes)):
             plane_b = planes[j]
-            ok, stats = should_merge(plane_a, plane_b, args)
+            if args.merge_mode == "none":
+                ok, stats = False, {"disabled": True}
+            else:
+                ok, stats = should_merge(plane_a, plane_b, args)
             if ok:
                 uf.union(i, j)
             merge_records.append(
@@ -1009,6 +1094,10 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         plane_offsets=offsets,
         plane_inlier_counts=counts,
         source_views=source_views.astype(np.int8),
+        alignment_view_indices=alignment_view_indices.astype(np.int32),
+        pointmap_pixel_xy=pointmap_pixel_xy.astype(np.int32),
+        pointmap_pixel_coordinate_order=np.asarray("xy"),
+        pointmap_pixel_coordinate_space=np.asarray("dust3r_aligned_pointmap"),
         point_file_indices=point_file_indices.astype(np.int32),
         plane_quality_json=np.asarray(json.dumps(plane_quality), dtype=object),
         quality_summary_json=np.asarray(json.dumps(quality_summary), dtype=object),
@@ -1059,6 +1148,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         "dust3r_image_paths": image_paths,
         "dust3r_view_registry": global_view_registry,
         "dust3r_global_alignment_loss": global_alignment_loss,
+        "global_cloud_cache": global_cloud_cache,
         "mapping_records": loaded.get("mapping_records", []),
         "plane_quality": plane_quality,
         "quality_summary": quality_summary,
@@ -1085,6 +1175,8 @@ def main():
     parser.add_argument("--pattern", default="*_full_pointcloud_editable_planes_data.npz")
     parser.add_argument("--group_by", default="reference_view", choices=("sample", "scene", "pair_group", "reference_view"))
     parser.add_argument("--fusion_mode", default="local", choices=("local", "dust3r_global"))
+    parser.add_argument("--merge_mode", default="manual", choices=("none", "manual"),
+                        help="none = per-Stage1-support global SVD refit; manual = geometric threshold merge")
     parser.add_argument("--weights_path", default="")
     parser.add_argument("--image_size", type=int, default=512)
     parser.add_argument("--scene_graph", default="complete")
