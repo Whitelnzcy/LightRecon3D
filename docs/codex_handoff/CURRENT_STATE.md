@@ -721,3 +721,56 @@ post-hoc SVD, sequential RANSAC, manual merge, and learned-support PlaneGraph-BA
 using both plane metrics and full/non-planar geometry metrics. If alignment and
 plane metrics do not improve together, stop or revise this direction before
 adding pointmap deformation or learned uncertainty.
+
+## 21. Session update: 2026-07-13 Stage1 assignment performance patch
+
+Branch: `codex/bounded-support-head`
+
+Implemented behavior:
+
+* Added an exact rectangular Hungarian assignment solver with no SciPy dependency.
+* `train_stage1_multiscale_pair.py` now uses this solver instead of the exponential
+  subset-DP matcher. The network, costs, loss terms, data, and evaluation cadence
+  are unchanged.
+* Added interval step time, ETA, and epoch timing to train/validation logs.
+* The override is local to the multiscale-pair entry point; inherited user changes
+  in the shared Stage1 training files were not modified.
+
+Diagnosis:
+
+* The prior run showed about 610% CPU, 8--10% GPU utilization, and low GPU clocks.
+* One step performs up to eight assignments (final, aux32, aux64, benchmark32 for
+  two views). With 12 queries the old matcher explored up to 4096 subsets per
+  target sequence, repeatedly forcing GPU-to-CPU synchronization.
+* Actual server speedup remains unverified until a one-epoch same-cache benchmark.
+
+Files changed:
+
+```text
+stage1_fast_assignment.py
+train_stage1_multiscale_pair.py
+tests/test_stage1_fast_assignment.py
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+python -m py_compile stage1_fast_assignment.py train_stage1_multiscale_pair.py tests/test_stage1_fast_assignment.py
+PYTHONPATH=. python tests/test_stage1_fast_assignment.py
+git diff --check -- stage1_fast_assignment.py train_stage1_multiscale_pair.py tests/test_stage1_fast_assignment.py
+```
+
+Results:
+
+```text
+py_compile: passed
+fast assignment tests: 4 passed, including exhaustive brute-force comparisons
+diff check: passed (line-ending warning only)
+```
+
+Next exact step:
+
+Let the active server epoch finish and save, stop it with SIGINT, pull this
+commit, then run one timed epoch from the saved checkpoint in a new output
+directory before scheduling the remaining epochs.
