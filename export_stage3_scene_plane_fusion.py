@@ -142,21 +142,8 @@ def collect_group_images(files, include_second_view=True):
     return paths
 
 
-def run_dust3r_global_alignment(image_paths, model, device, args):
-    setup_dust3r_imports()
-    from dust3r.cloud_opt import GlobalAlignerMode, global_aligner
-    from dust3r.image_pairs import make_pairs
-    from dust3r.inference import inference
-    from dust3r.utils.image import load_images
-
-    if len(image_paths) < 2:
-        raise RuntimeError(f"DUSt3R global alignment needs at least 2 images, got {len(image_paths)}")
-
-    imgs = load_images(image_paths, size=args.image_size, verbose=True)
-    pairs = make_pairs(imgs, scene_graph=args.scene_graph, prefilter=None, symmetrize=True)
-    output = inference(pairs, model, device, batch_size=args.batch_size, verbose=True)
-    scene = global_aligner(output, device=device, mode=GlobalAlignerMode.PointCloudOptimizer)
-    loss = scene.compute_global_alignment(init="mst", niter=args.niter, schedule=args.schedule, lr=args.lr)
+def global_views_from_scene(scene, image_paths):
+    """Materialize the current differentiable scene into explicit pointmaps."""
 
     pts3d = scene.get_pts3d()
     confs = scene.get_conf()
@@ -180,7 +167,62 @@ def run_dust3r_global_alignment(image_paths, model, device, args):
             "conf": np.asarray(conf, dtype=np.float32),
             "colors": (img * 255.0).clip(0, 255).astype(np.uint8),
         }
-    return views, float(loss)
+    return views
+
+
+def flatten_global_views(global_views):
+    points, colors, view_indices, pixel_xy = [], [], [], []
+    for _, view in sorted(
+        global_views.items(), key=lambda item: item[1]["alignment_view_index"]
+    ):
+        xyz = np.asarray(view["points"], dtype=np.float32)
+        rgb = np.asarray(view["colors"], dtype=np.uint8)
+        height, width = xyz.shape[:2]
+        yy, xx = np.indices((height, width), dtype=np.int32)
+        count = height * width
+        points.append(xyz.reshape(count, 3))
+        colors.append(rgb.reshape(count, 3))
+        view_indices.append(
+            np.full(count, int(view["alignment_view_index"]), dtype=np.int32)
+        )
+        pixel_xy.append(np.stack((xx, yy), axis=-1).reshape(count, 2))
+    return {
+        "points": np.concatenate(points),
+        "colors": np.concatenate(colors),
+        "view_indices": np.concatenate(view_indices),
+        "pixel_xy": np.concatenate(pixel_xy),
+    }
+
+
+def numeric_summary(values):
+    values = np.asarray(values, dtype=np.float64)
+    if len(values) == 0:
+        return {"mean": 0.0, "median": 0.0, "p95": 0.0, "max": 0.0}
+    return {
+        "mean": float(values.mean()),
+        "median": float(np.median(values)),
+        "p95": float(np.percentile(values, 95)),
+        "max": float(values.max()),
+    }
+
+
+def run_dust3r_global_alignment(image_paths, model, device, args):
+    setup_dust3r_imports()
+    from dust3r.cloud_opt import GlobalAlignerMode, global_aligner
+    from dust3r.image_pairs import make_pairs
+    from dust3r.inference import inference
+    from dust3r.utils.image import load_images
+
+    if len(image_paths) < 2:
+        raise RuntimeError(f"DUSt3R global alignment needs at least 2 images, got {len(image_paths)}")
+
+    imgs = load_images(image_paths, size=args.image_size, verbose=True)
+    pairs = make_pairs(imgs, scene_graph=args.scene_graph, prefilter=None, symmetrize=True)
+    output = inference(pairs, model, device, batch_size=args.batch_size, verbose=True)
+    scene = global_aligner(output, device=device, mode=GlobalAlignerMode.PointCloudOptimizer)
+    loss = scene.compute_global_alignment(init="mst", niter=args.niter, schedule=args.schedule, lr=args.lr)
+
+    return global_views_from_scene(scene, image_paths), float(loss), scene
 
 
 
@@ -984,13 +1026,16 @@ function renderStage3Report() {
     path.write_text(template.replace("__DATA__", json.dumps(html_data, separators=(",", ":"))), encoding="utf-8")
 
 def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
+    plane_feedback_enabled = bool(getattr(args, "plane_feedback", False))
     global_views = None
+    alignment_scene = None
     global_alignment_loss = None
     image_paths = []
     global_view_registry = []
     if args.fusion_mode == "dust3r_global":
         image_paths = collect_group_images(files, include_second_view=args.include_second_view)
-        global_views, global_alignment_loss = run_dust3r_global_alignment(image_paths, model, device, args)
+        global_views, global_alignment_loss, alignment_scene = run_dust3r_global_alignment(
+            image_paths, model, device, args)
         global_view_registry = [
             {
                 "alignment_view_index": int(view["alignment_view_index"]),
@@ -1057,6 +1102,97 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             }
         )
 
+    plane_feedback = None
+    plane_feedback_cache = ""
+    plane_feedback_before_ply = ""
+    plane_feedback_after_ply = ""
+    if plane_feedback_enabled:
+        if alignment_scene is None:
+            raise RuntimeError("--plane_feedback requires --fusion_mode dust3r_global")
+        from plane_regularized_alignment import optimize_scene_with_plane_feedback
+
+        original_global_cloud = flatten_global_views(global_views)
+        plane_feedback = optimize_scene_with_plane_feedback(
+            alignment_scene,
+            alignment_view_indices,
+            pointmap_pixel_xy,
+            assignment,
+            niter=args.plane_feedback_niter,
+            lr=args.plane_feedback_lr,
+            plane_weight=args.plane_feedback_weight,
+            huber_delta=args.plane_feedback_huber_delta,
+            min_plane_views=args.plane_feedback_min_views,
+            min_plane_points=args.plane_feedback_min_points,
+            max_base_loss_increase=args.plane_feedback_max_base_loss_increase,
+            min_relative_plane_improvement=args.plane_feedback_min_relative_improvement,
+            log_every=args.plane_feedback_log_every,
+        )
+        global_views = global_views_from_scene(alignment_scene, image_paths)
+        refined_global_cloud = flatten_global_views(global_views)
+        if not np.array_equal(
+            original_global_cloud["view_indices"], refined_global_cloud["view_indices"]
+        ) or not np.array_equal(
+            original_global_cloud["pixel_xy"], refined_global_cloud["pixel_xy"]
+        ):
+            raise RuntimeError("Plane feedback changed global-cloud registry/order")
+        displacement = np.linalg.norm(
+            refined_global_cloud["points"] - original_global_cloud["points"], axis=1
+        )
+        full_keys = (
+            (original_global_cloud["view_indices"].astype(np.int64) << 42)
+            | (original_global_cloud["pixel_xy"][:, 0].astype(np.int64) << 21)
+            | original_global_cloud["pixel_xy"][:, 1].astype(np.int64)
+        )
+        support_mask = assignment >= 0
+        support_keys = (
+            (alignment_view_indices[support_mask].astype(np.int64) << 42)
+            | (pointmap_pixel_xy[support_mask, 0].astype(np.int64) << 21)
+            | pointmap_pixel_xy[support_mask, 1].astype(np.int64)
+        )
+        non_support = ~np.isin(full_keys, np.unique(support_keys))
+        plane_feedback["full_cloud_displacement"] = numeric_summary(displacement)
+        plane_feedback["non_support_displacement"] = numeric_summary(
+            displacement[non_support]
+        )
+        display_indices = np.linspace(
+            0,
+            len(displacement) - 1,
+            min(len(displacement), int(args.max_display_points)),
+            dtype=np.int64,
+        )
+        feedback_stem = f"{safe_filename(scene_key)}_plane_feedback_v1"
+        plane_feedback_before_ply = str(output_dir / f"{feedback_stem}_before.ply")
+        plane_feedback_after_ply = str(output_dir / f"{feedback_stem}_after.ply")
+        write_ascii_ply(
+            Path(plane_feedback_before_ply),
+            original_global_cloud["points"][display_indices],
+            original_global_cloud["colors"][display_indices],
+        )
+        write_ascii_ply(
+            Path(plane_feedback_after_ply),
+            refined_global_cloud["points"][display_indices],
+            refined_global_cloud["colors"][display_indices],
+        )
+        views_by_index = {
+            int(view["alignment_view_index"]): view for view in global_views.values()
+        }
+        for view_index, view in views_by_index.items():
+            mask = alignment_view_indices == view_index
+            if not mask.any():
+                continue
+            xy = pointmap_pixel_xy[mask]
+            points[mask] = view["points"][xy[:, 1], xy[:, 0]]
+        if plane_feedback["accepted"]:
+            feedback_cache_name = (
+                f"{safe_filename(scene_key)}_plane_feedback_global_cloud_cache.npz"
+            )
+            plane_feedback_cache = write_global_cloud_cache(
+                output_dir / feedback_cache_name,
+                global_views,
+                scene_key,
+                plane_feedback["base_loss_after"],
+            )
+
     normals = []
     offsets = []
     counts = []
@@ -1074,7 +1210,10 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     quality_summary = aggregate_plane_quality(plane_quality)
 
     safe_name = safe_filename(scene_key)
-    suffix = "stage3_dust3r_global_fusion" if args.fusion_mode == "dust3r_global" else "stage3_scene_fusion"
+    if plane_feedback_enabled:
+        suffix = "stage3_dust3r_plane_feedback"
+    else:
+        suffix = "stage3_dust3r_global_fusion" if args.fusion_mode == "dust3r_global" else "stage3_scene_fusion"
     npz_path = output_dir / f"{safe_name}_{suffix}_full_pointcloud_editable_planes_data.npz"
     html_path = output_dir / f"{safe_name}_{suffix}_edit.html"
     ply_path = output_dir / f"{safe_name}_{suffix}.ply"
@@ -1110,6 +1249,24 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         merge_records_json=np.asarray(json.dumps(merge_records), dtype=object),
         mapping_records_json=np.asarray(json.dumps(loaded.get("mapping_records", [])), dtype=object),
         skipped_inputs_json=np.asarray(json.dumps(loaded.get("skipped", [])), dtype=object),
+        plane_feedback_enabled=np.asarray(plane_feedback_enabled),
+        plane_feedback_accepted=np.asarray(
+            bool(plane_feedback["accepted"]) if plane_feedback is not None else False),
+        plane_feedback_cache=np.asarray(plane_feedback_cache),
+        plane_feedback_before_ply=np.asarray(plane_feedback_before_ply),
+        plane_feedback_after_ply=np.asarray(plane_feedback_after_ply),
+        plane_feedback_json=np.asarray(
+            json.dumps(
+                {
+                    key: (
+                        value.tolist() if isinstance(value, np.ndarray) else value
+                    )
+                    for key, value in (plane_feedback or {}).items()
+                    if key not in {"plane_normals", "plane_offsets"}
+                }
+            ),
+            dtype=object,
+        ),
     )
 
     display_colors = colors.copy()
@@ -1149,6 +1306,14 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         "dust3r_view_registry": global_view_registry,
         "dust3r_global_alignment_loss": global_alignment_loss,
         "global_cloud_cache": global_cloud_cache,
+        "plane_feedback": None if plane_feedback is None else {
+            key: (value.tolist() if isinstance(value, np.ndarray) else value)
+            for key, value in plane_feedback.items()
+            if key not in {"plane_normals", "plane_offsets"}
+        },
+        "plane_feedback_cache": plane_feedback_cache,
+        "plane_feedback_before_ply": plane_feedback_before_ply,
+        "plane_feedback_after_ply": plane_feedback_after_ply,
         "mapping_records": loaded.get("mapping_records", []),
         "plane_quality": plane_quality,
         "quality_summary": quality_summary,
@@ -1197,6 +1362,23 @@ def main():
     parser.add_argument("--max_display_points", type=int, default=32000)
     parser.add_argument("--mesh_grid_resolution", type=int, default=48)
     parser.add_argument("--dust3r_mesh_min_conf", type=float, default=1.0)
+    parser.add_argument(
+        "--plane_feedback",
+        action="store_true",
+        help=(
+            "Continue differentiable DUSt3R alignment with robust multi-view "
+            "plane incidence constraints after preserving the original cache."
+        ),
+    )
+    parser.add_argument("--plane_feedback_niter", type=int, default=100)
+    parser.add_argument("--plane_feedback_lr", type=float, default=0.002)
+    parser.add_argument("--plane_feedback_weight", type=float, default=0.2)
+    parser.add_argument("--plane_feedback_huber_delta", type=float, default=0.01)
+    parser.add_argument("--plane_feedback_min_views", type=int, default=2)
+    parser.add_argument("--plane_feedback_min_points", type=int, default=64)
+    parser.add_argument("--plane_feedback_max_base_loss_increase", type=float, default=0.03)
+    parser.add_argument("--plane_feedback_min_relative_improvement", type=float, default=1e-4)
+    parser.add_argument("--plane_feedback_log_every", type=int, default=20)
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)

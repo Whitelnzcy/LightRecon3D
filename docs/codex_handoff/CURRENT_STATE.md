@@ -774,3 +774,73 @@ Next exact step:
 Let the active server epoch finish and save, stop it with SIGINT, pull this
 commit, then run one timed epoch from the saved checkpoint in a new output
 directory before scheduling the remaining epochs.
+
+## 22. Session update: 2026-07-13 differentiable plane feedback v1
+
+Branch: `codex/bounded-support-head`
+
+Implemented behavior:
+
+* Added `plane_regularized_alignment.py`. Unlike PlaneGraph-BA v0's cached
+  per-view Sim(3) correction, v1 continues optimization inside DUSt3R's live
+  `PointCloudOptimizer`, so plane incidence gradients update depth, pose, focal,
+  and pairwise alignment parameters while DUSt3R weights remain frozen.
+* Plane support joins use explicit `(alignment_view_index, x, y)` pointmap
+  provenance. Repeated observations are deduplicated.
+* Only multi-view planes with sufficient support drive alignment. Confidence
+  weights and per-plane aggregate weights are normalized.
+* Added a rollback gate: accept only if robust plane residual improves and the
+  original DUSt3R objective stays within a configured degradation limit.
+* Stage3 writes the unmodified method-independent cache before feedback and an
+  accepted corrected cache separately. It also writes sampled before/after PLY,
+  support/full-cloud/non-support displacement, loss history, and acceptance
+  diagnostics.
+* Plane-feedback outputs use a distinct filename suffix and should be run in a
+  new output directory, preserving prior results.
+
+Files changed/added:
+
+```text
+plane_regularized_alignment.py
+export_stage3_scene_plane_fusion.py
+tests/test_plane_regularized_alignment.py
+docs/codex_handoff/PLANE_FEEDBACK_V1.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+python -m py_compile plane_regularized_alignment.py export_stage3_scene_plane_fusion.py tests/test_plane_regularized_alignment.py
+python tests/test_plane_regularized_alignment.py
+python tests/test_stage3_scene_plane_fusion_mapping.py
+python tests/test_global_plane_baselines.py
+python tests/test_evaluate_global_plane_baselines.py
+git diff --check -- plane_regularized_alignment.py export_stage3_scene_plane_fusion.py tests/test_plane_regularized_alignment.py
+```
+
+Results:
+
+```text
+plane-feedback tests: 3 passed (accepted update, single-view exclusion, rollback)
+Stage3 mapping test: 1 passed
+global RANSAC baseline tests: 3 passed
+evaluation tests: 2 passed, with a local SciPy/NumPy binary compatibility warning
+py_compile and diff check: passed
+```
+
+Scientific status:
+
+* This is implemented behavior with synthetic tests, not evidence of real-scene
+  improvement.
+* Current cross-record plane identity for the first smoke test still comes from
+  manual global geometric merge. Learned/uncertainty-aware association remains
+  a required follow-up if the feedback mechanism passes its acceptance gate.
+* Point-aligned Structured3D GT and full before/after metrics are still missing.
+
+Next exact step:
+
+Run one retained showcase group on the server with `--plane_feedback`, inspect
+the acceptance record, DUSt3R base loss, plane residual, non-support movement,
+and before/after PLY. Do not batch all validation groups until this smoke test
+passes without harmful geometry movement.
