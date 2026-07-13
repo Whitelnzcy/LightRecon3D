@@ -1106,6 +1106,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     plane_feedback_cache = ""
     plane_feedback_before_ply = ""
     plane_feedback_after_ply = ""
+    plane_feedback_displacement_ply = ""
     if plane_feedback_enabled:
         if alignment_scene is None:
             raise RuntimeError("--plane_feedback requires --fusion_mode dust3r_global")
@@ -1160,18 +1161,56 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             min(len(displacement), int(args.max_display_points)),
             dtype=np.int64,
         )
+        diagnostic_colors = (
+            original_global_cloud["colors"].astype(np.float32) * 0.35
+        ).astype(np.uint8)
+        unique_support_keys, unique_support_indices = np.unique(
+            support_keys, return_index=True
+        )
+        unique_support_planes = assignment[support_mask][unique_support_indices]
+        positions = np.searchsorted(unique_support_keys, full_keys)
+        clipped_positions = np.minimum(positions, max(len(unique_support_keys) - 1, 0))
+        matched_support = (
+            (positions < len(unique_support_keys))
+            & (unique_support_keys[clipped_positions] == full_keys)
+        )
+        for plane_id in np.unique(unique_support_planes):
+            matched_plane = matched_support & (
+                unique_support_planes[clipped_positions] == plane_id
+            )
+            diagnostic_colors[matched_plane] = np.asarray(
+                PLANE_COLORS[int(plane_id) % len(PLANE_COLORS)], dtype=np.uint8
+            )
+        displacement_scale = max(float(np.percentile(displacement, 95)), 1e-12)
+        displacement_level = np.clip(displacement / displacement_scale, 0.0, 1.0)
+        displacement_colors = np.stack(
+            (
+                255.0 * displacement_level,
+                255.0 * (1.0 - np.abs(2.0 * displacement_level - 1.0)),
+                255.0 * (1.0 - displacement_level),
+            ),
+            axis=1,
+        ).astype(np.uint8)
         feedback_stem = f"{safe_filename(scene_key)}_plane_feedback_v1"
         plane_feedback_before_ply = str(output_dir / f"{feedback_stem}_before.ply")
         plane_feedback_after_ply = str(output_dir / f"{feedback_stem}_after.ply")
+        plane_feedback_displacement_ply = str(
+            output_dir / f"{feedback_stem}_displacement_heatmap.ply"
+        )
         write_ascii_ply(
             Path(plane_feedback_before_ply),
             original_global_cloud["points"][display_indices],
-            original_global_cloud["colors"][display_indices],
+            diagnostic_colors[display_indices],
         )
         write_ascii_ply(
             Path(plane_feedback_after_ply),
             refined_global_cloud["points"][display_indices],
-            refined_global_cloud["colors"][display_indices],
+            diagnostic_colors[display_indices],
+        )
+        write_ascii_ply(
+            Path(plane_feedback_displacement_ply),
+            refined_global_cloud["points"][display_indices],
+            displacement_colors[display_indices],
         )
         views_by_index = {
             int(view["alignment_view_index"]): view for view in global_views.values()
@@ -1255,6 +1294,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         plane_feedback_cache=np.asarray(plane_feedback_cache),
         plane_feedback_before_ply=np.asarray(plane_feedback_before_ply),
         plane_feedback_after_ply=np.asarray(plane_feedback_after_ply),
+        plane_feedback_displacement_ply=np.asarray(plane_feedback_displacement_ply),
         plane_feedback_json=np.asarray(
             json.dumps(
                 {
@@ -1314,6 +1354,7 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         "plane_feedback_cache": plane_feedback_cache,
         "plane_feedback_before_ply": plane_feedback_before_ply,
         "plane_feedback_after_ply": plane_feedback_after_ply,
+        "plane_feedback_displacement_ply": plane_feedback_displacement_ply,
         "mapping_records": loaded.get("mapping_records", []),
         "plane_quality": plane_quality,
         "quality_summary": quality_summary,

@@ -795,6 +795,9 @@ Implemented behavior:
   accepted corrected cache separately. It also writes sampled before/after PLY,
   support/full-cloud/non-support displacement, loss history, and acceptance
   diagnostics.
+* Before/after diagnostics now dim non-support RGB and color every mapped plane
+  support consistently; a blue-to-red displacement heatmap PLY makes small
+  structural corrections visible instead of relying on raw RGB inspection.
 * Plane-feedback outputs use a distinct filename suffix and should be run in a
   new output directory, preserving prior results.
 
