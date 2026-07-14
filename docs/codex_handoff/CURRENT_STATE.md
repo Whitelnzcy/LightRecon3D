@@ -1057,3 +1057,69 @@ bash run_plane_feedback_p0.sh
 
 Retain the generated log, acceptance record, before/after PLY files and
 displacement visualization before deciding whether P0 passes.
+
+## 26. Session update: 2026-07-14 P0 `trimesh` export dependency
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA: `fae720a`
+
+Observed server result:
+
+* The `v2` P0 launch reached `write_dust3r_textured_glb` and then failed with
+  `RuntimeError: trimesh is required to export DUSt3R-style textured GLB`.
+* `trimesh==4.9.0` is pinned in the repository root `requirements.txt` and is
+  also listed by the vendored DUSt3R requirements.
+* The exporter writes plane-feedback diagnostics, the main result NPZ and the
+  main PLY before attempting the GLB. Therefore the failed `v2` directory may
+  contain valid partial P0 evidence, but this has not been inspected and the
+  run did not write its final HTML/parameter files/manifest.
+
+Implemented behavior:
+
+* The P0 server script now preflights both `roma==1.5.6` and
+  `trimesh==4.9.0`, installing a package when it is missing or its installed
+  distribution version differs from the repository pin.
+* Both resolved versions are retained in `run.log`.
+* The default output advances to `v3`; neither failed `v1` nor partial `v2` is
+  deleted or overwritten.
+
+Files changed:
+
+```text
+run_plane_feedback_p0.sh
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+<Git-for-Windows-bash> -n run_plane_feedback_p0.sh
+git diff --check -- run_plane_feedback_p0.sh docs/codex_handoff/CURRENT_STATE.md
+```
+
+Results:
+
+```text
+P0 shell syntax check: passed
+diff check: passed (line-ending conversion warning only)
+No server output, metric or visualization was inspected locally.
+```
+
+Plan status:
+
+* The work remains at P0. Reaching the export section is useful behavioral
+  evidence but is not a completed P0 result and is not an innovation claim.
+* P1-P5 remain pending in the order recorded in
+  `docs/codex_tasks/evidence_gated_plane_feedback.md`.
+
+Next exact step on the server:
+
+```bash
+cd /gemini/code/LightRecon3D
+git pull --ff-only origin codex/bounded-support-head
+bash run_plane_feedback_p0.sh
+```
+
+After completion, inspect the `v3` manifest and plane-feedback block. Preserve
+the partial `v2` directory as failure evidence.

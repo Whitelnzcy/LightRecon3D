@@ -4,7 +4,7 @@ set -euo pipefail
 PROJ=${PROJ:-/gemini/code/LightRecon3D}
 PYTHON=${PYTHON:-/root/miniconda3/envs/lightrecon/bin/python}
 INPUT_DIR=${INPUT_DIR:-/gemini/data-1/lightrecon_runs/stage3_val_showcase_v1/group_000_pairs_10/stage2_merge}
-OUT_DIR=${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_feedback_p0_scene00180_20260714_v2}
+OUT_DIR=${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_feedback_p0_scene00180_20260714_v3}
 WEIGHTS=${WEIGHTS:-/gemini/pretrain/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth}
 
 cd "$PROJ"
@@ -18,12 +18,20 @@ if [[ ! -f "$WEIGHTS" ]]; then
   exit 2
 fi
 
-echo "Checking required DUSt3R dependency: roma"
-if ! "$PYTHON" -c "import roma" >/dev/null 2>&1; then
-  echo "roma is missing; installing it into $PYTHON"
-  "$PYTHON" -m pip install --disable-pip-version-check roma
-fi
-"$PYTHON" -c "import importlib.metadata; print('roma=' + importlib.metadata.version('roma'))"
+ensure_python_package() {
+  local module=$1
+  local distribution=$2
+  local version=$3
+  echo "Checking required Python dependency: ${distribution}==${version}"
+  if ! "$PYTHON" -c "import ${module}; import importlib.metadata as metadata; assert metadata.version('${distribution}') == '${version}'" >/dev/null 2>&1; then
+    echo "Installing ${distribution}==${version} into $PYTHON"
+    "$PYTHON" -m pip install --disable-pip-version-check "${distribution}==${version}"
+  fi
+  "$PYTHON" -c "import ${module}; import importlib.metadata as metadata; print('${distribution}=' + metadata.version('${distribution}'))"
+}
+
+ensure_python_package roma roma 1.5.6
+ensure_python_package trimesh trimesh 4.9.0
 
 if [[ -e "$OUT_DIR" ]]; then
   echo "Refusing to overwrite existing output: $OUT_DIR" >&2
@@ -41,6 +49,7 @@ LOG_FILE="$OUT_DIR/run.log"
   echo "weights=$WEIGHTS"
   echo "git_sha=$(git rev-parse HEAD)"
   "$PYTHON" -c "import importlib.metadata; print('roma=' + importlib.metadata.version('roma'))"
+  "$PYTHON" -c "import importlib.metadata; print('trimesh=' + importlib.metadata.version('trimesh'))"
   nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version --format=csv,noheader || true
 
   PYTHONUNBUFFERED=1 "$PYTHON" export_stage3_scene_plane_fusion.py \
