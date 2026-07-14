@@ -1414,3 +1414,97 @@ bash run_plane_feedback_p1_ransac.sh
 Archive the RANSAC method manifest, CSV/JSON metrics, PLY and runtime before
 building the Stage1 support adapters. The P0 `v4` proposed-state rerun remains a
 useful diagnostic but no longer blocks the completed P0 behavior verdict.
+
+## 30. Session update: 2026-07-14 real P1 RANSAC and support-label adapter
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA: `8aa80e8`
+
+Completed server output:
+
+```text
+/gemini/data-1/lightrecon_runs/plane_feedback_p1_ransac_scene00180_20260714_v1
+```
+
+Observed identical-cache RANSAC result:
+
+```text
+runtime seconds            = 18.7362
+assigned points            = 715695 / 715848
+predicted / GT planes      = 5 / 7
+true-positive planes       = 3
+plane precision / recall   = 0.6000 / 0.4286
+matched support IoU        = 0.71314
+GT-support coverage        = 0.999779
+normal angular error       = 5.67694 degrees
+point-to-plane residual    = 0.00643551
+fragmentation excess       = 1
+over-merge excess          = 2
+```
+
+The GT self-evaluation sanity row returned seven of seven planes, unit
+precision/recall/IoU/coverage and zero angular error. RANSAC's almost complete
+support coverage together with low plane recall and two over-merges shows that
+fitting almost every point is not sufficient to recover bounded plane
+identity. This is one retained scene, so it does not establish a general
+advantage or a novelty claim.
+
+Implemented next P1 comparison:
+
+* Added `lift_support_prediction_to_global_cache.py`. It maps the existing
+  Stage2 plus manual-merge prediction to the exact filtered global cache using
+  only `(alignment_view_index, x, y)` provenance.
+* The adapter validates the stored `xy` order and
+  `dust3r_aligned_pointmap` coordinate space. It rejects a non-unique cache
+  registry, collapses duplicate records only when their labels agree, drops
+  and counts conflicting keys by default, and counts unmatched keys.
+* Active source labels are deterministically remapped to output plane IDs and
+  refitted on their identically indexed global-cache points. Cache/support
+  SHA-256 values, source-to-output ID mapping and all join diagnostics are
+  written to the manifest.
+* Added a server script that preflights `roma`, refuses to overwrite outputs,
+  builds the support baseline and evaluates GT self, RANSAC and support rows in
+  one CSV/JSON table.
+
+Files added/changed:
+
+```text
+lift_support_prediction_to_global_cache.py
+tests/test_lift_support_prediction_to_global_cache.py
+run_plane_feedback_p1_support_baseline.sh
+docs/codex_tasks/evidence_gated_plane_feedback.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Focused validation completed:
+
+```text
+python -m py_compile lift_support_prediction_to_global_cache.py tests/test_lift_support_prediction_to_global_cache.py
+PYTHONPATH=. python tests/test_lift_support_prediction_to_global_cache.py
+<Git-for-Windows-bash> -n run_plane_feedback_p1_support_baseline.sh
+```
+
+Results:
+
+```text
+py_compile: passed
+exact provenance-join tests: 6 passed
+P1 support shell syntax check: passed
+```
+
+The synthetic tests cover shuffled exact joins, agreeing duplicates,
+conflicting duplicates, unmatched keys, no positive support and rejection of a
+duplicate cache registry. A real support result has not yet been run, so its
+plane metrics and duplicate/conflict counts remain unknown.
+
+Next exact server step after pulling the adapter commit:
+
+```bash
+bash run_plane_feedback_p1_support_baseline.sh
+```
+
+Archive `support_baseline_manifest.json` and
+`scene00180_plane_metrics.json`. The result determines whether the current
+manual support identity beats full-cloud RANSAC on this scene; it does not yet
+complete the remaining P1 methods or authorize P2/P3.

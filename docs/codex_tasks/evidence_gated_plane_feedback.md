@@ -152,6 +152,18 @@ Server update on 2026-07-14:
   Hypotheses may be scored on a fixed deterministic subset, but final inliers,
   assignments and metrics use the full cache; this approximation is recorded
   in each method configuration.
+* The identical-cache RANSAC server run completed in 18.74 seconds. It assigned
+  715,695/715,848 points and returned five planes, but only three of seven GT
+  planes matched at IoU 0.5: precision 0.60, recall 0.429, matched support IoU
+  0.713, normal error 5.68 degrees, one fragmentation excess and two over-merge
+  excesses. GT-support coverage was 0.99978. This is evidence that near-complete
+  geometric coverage does not recover bounded support identity on this scene;
+  it is not yet a cross-scene result.
+* The next comparison lifts the already executed Stage2 plus manual-merge
+  support labels onto the same filtered cache using only the exact saved
+  `(alignment_view_index, x, y)` key. Repeated keys with disagreeing labels are
+  dropped and counted instead of being resolved by an XYZ nearest-neighbour
+  guess. The resulting GT/RANSAC/support table is still part of P1.
 
 ### P2. Leave-one-view-out factor audit
 
