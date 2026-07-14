@@ -1508,3 +1508,120 @@ Archive `support_baseline_manifest.json` and
 `scene00180_plane_metrics.json`. The result determines whether the current
 manual support identity beats full-cloud RANSAC on this scene; it does not yet
 complete the remaining P1 methods or authorize P2/P3.
+
+## 31. Session update: 2026-07-14 real support lift and sparse-metric correction
+
+Branch: `codex/bounded-support-head`
+
+Server execution commit SHA: `5a3590a`
+
+Completed server output:
+
+```text
+/gemini/data-1/lightrecon_runs/plane_feedback_p1_support_scene00180_20260714_v1
+```
+
+Observed exact-join result:
+
+```text
+method                         = stage2_manual_merge_support
+runtime seconds                = 0.247642
+output planes                  = 6
+cache points                   = 715848
+support records                = 80000
+positive support records       = 79831
+unique positive (view,x,y)     = 19985
+duplicate positive records     = 59846
+conflicting unique keys        = 3431 (17.2% of unique positive keys)
+conflicting records            = 13719
+resolved keys                  = 16554
+matched cache keys             = 15972
+unmatched resolved keys        = 582
+assigned output points         = 15972
+```
+
+The cache SHA-256 remained
+`77b745a52bf28d170977f9ffd14da79c11df5e7940c886b4f36e69f0daf32101`.
+The high repeated-observation count is expected from overlapping pairs, but
+the 3,431 disagreeing keys are direct evidence that the current pair/manual
+identity is not self-consistent at every repeated pixel. They were dropped,
+not guessed or majority-voted.
+
+Metric interpretation correction:
+
+* The first evaluation gave the sparse support prediction zero plane matches
+  and 2.2401% GT-support coverage. The zero match count is not sufficient as an
+  identity verdict because its IoU compares only 15,972 predicted support
+  samples with 693,839 dense GT points. Achievable IoU is strongly coupled to
+  the unknown per-plane sampling density, which the aggregate row does not
+  expose.
+* The 2.2401% value remains useful as full-cache sample coverage, but it must
+  not be compared as if the sparse support proposal were a dense segmentation.
+* Identity quality must instead be measured on the emitted support domain,
+  while always reporting dense coverage and the fraction of assigned samples
+  that have a GT label to prevent a trivially tiny prediction from appearing
+  successful.
+
+Implemented evaluator correction:
+
+* `evaluate_global_plane_baselines.py` now preserves every original dense-GT
+  metric and adds a support-conditioned plane matching block.
+* New metrics include eligible observed GT planes, conditioned IoU/precision/
+  observed recall/all-GT recall, normal error, fragmentation/over-merge,
+  pairwise identity precision/recall/F1, weighted predicted-cluster purity, GT
+  completeness, assigned point count and assigned GT-label rate.
+* `--min_observed_plane_points` defaults to 64 in the CLI so a plane cannot be
+  counted from a few accidental samples.
+* Added `run_plane_feedback_p1_support_audit.sh`. It uses the existing GT,
+  RANSAC and support NPZ files, records their SHA-256 values, refuses to
+  overwrite output and performs only a fast re-evaluation; it does not rerun
+  DUSt3R or rebuild any cache.
+
+Files changed/added:
+
+```text
+evaluate_global_plane_baselines.py
+tests/test_evaluate_global_plane_baselines.py
+run_plane_feedback_p1_support_audit.sh
+docs/codex_tasks/evidence_gated_plane_feedback.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Focused validation completed:
+
+```text
+python -m py_compile evaluate_global_plane_baselines.py tests/test_evaluate_global_plane_baselines.py
+PYTHONPATH=. python tests/test_evaluate_global_plane_baselines.py
+<Git-for-Windows-bash> -n run_plane_feedback_p1_support_audit.sh
+```
+
+Results:
+
+```text
+py_compile: passed
+global plane evaluation tests: 5 passed
+P1 support-audit shell syntax check: passed
+```
+
+The two new tests prove that a correct 4/100-point sparse partition retains
+4% dense coverage and zero dense-IoU matches while receiving perfect
+conditioned identity scores, and that an explicit two-GT-plane over-merge
+reduces pairwise precision/F1.
+
+Unresolved:
+
+* The real support-conditioned metrics have not yet been produced.
+* Sparse-support partition quality and dense bounded-support completeness are
+  different quantities. A full per-view mask/boundary evaluation is still
+  required before claiming bounded-support quality.
+* This is still P1. Direct global SVD, PlaneGraph-BA, live feedback and oracle
+  identity/factor upper bounds remain incomplete; P2/P3 are not authorized.
+
+Next exact server step after pulling the evaluator commit:
+
+```bash
+bash run_plane_feedback_p1_support_audit.sh
+```
+
+Archive `scene00180_support_conditioned_metrics.json`. This reuses existing
+NPZ files and should complete in seconds.

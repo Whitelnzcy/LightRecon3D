@@ -19,6 +19,8 @@ replace the required Stage3 coordinate, registry or provenance rules.
 Implemented:
 
 * DUSt3R global alignment and full pointmap cache export;
+* one real P0 server smoke with a correctly rejected/rolled-back update;
+* point-aligned Structured3D support/identity GT on the identical cache;
 * exact support join by `(alignment_view_index, x, y)`;
 * post-hoc PlaneGraph-BA v0 with one bounded Sim(3) correction per view;
 * live plane-regularized DUSt3R optimization that can update depth, pose, focal
@@ -29,8 +31,6 @@ Implemented:
 
 Not yet established:
 
-* one real Structured3D/server smoke result for plane feedback;
-* point-aligned GT for the exact global-cloud registry;
 * pose, full-cloud, non-planar and bounded-support improvement;
 * a learned or uncertainty-aware cross-view plane identity;
 * evidence that the current manual identity is more reliable than a simple
@@ -164,6 +164,19 @@ Server update on 2026-07-14:
   `(alignment_view_index, x, y)` key. Repeated keys with disagreeing labels are
   dropped and counted instead of being resolved by an XYZ nearest-neighbour
   guess. The resulting GT/RANSAC/support table is still part of P1.
+* That support lift produced six planes and 15,972 assigned cache points in
+  0.248 seconds. The source contained 80,000 records but only 19,985 unique
+  positive `(view,x,y)` keys; 3,431 keys (17.2%) had conflicting manual plane
+  labels and were explicitly dropped. Another 582 resolved keys were absent
+  from the confidence-filtered cache.
+* Its dense-GT IoU row reports zero matches and 2.24% coverage, but this cannot
+  be used alone as an identity verdict: the exporter deliberately samples
+  sparse support, so dense IoU is strongly coupled to per-plane sampling
+  density. The aggregate counts do not provide those per-plane upper bounds.
+  P1 therefore retains dense coverage as a separate sampling statistic and
+  adds support-conditioned IoU, pairwise identity F1, predicted cluster purity
+  and GT completeness. These conditioned scores must always be reported with
+  coverage and label rate; they do not treat sparse support as dense output.
 
 ### P2. Leave-one-view-out factor audit
 
