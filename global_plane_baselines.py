@@ -20,6 +20,20 @@ CACHE_SCHEMA_VERSION = 1
 OUTPUT_SCHEMA_VERSION = 1
 
 
+def global_cache_keep_mask(points, confidence, min_conf):
+    """Shared finite/confidence filter for every identical-cache method."""
+
+    points = np.asarray(points, dtype=np.float32)
+    confidence = np.asarray(confidence, dtype=np.float32).reshape(-1)
+    if points.shape != (len(confidence), 3):
+        raise ValueError("points and confidence must have matching (N,3)/(N,) shapes")
+    return (
+        np.isfinite(points).all(axis=1)
+        & (np.max(np.abs(points), axis=1) < 1e5)
+        & (confidence >= float(min_conf))
+    )
+
+
 def fit_plane(points):
     points = np.asarray(points, dtype=np.float32)
     center = points.mean(0)
@@ -127,7 +141,7 @@ def load_global_cache(path, min_conf):
     if missing:
         raise ValueError(f"global cache missing fields: {missing}")
     points = raw["points"].astype(np.float32)
-    keep = np.isfinite(points).all(1) & (raw["confidence"] >= min_conf)
+    keep = global_cache_keep_mask(points, raw["confidence"], min_conf)
     return {key: raw[key][keep] for key in required}
 
 

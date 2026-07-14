@@ -2,10 +2,26 @@ import unittest
 
 import numpy as np
 
-from global_plane_baselines import euclidean_components, sequential_plane_ransac, supports_to_primitives
+from global_plane_baselines import (
+    euclidean_components,
+    global_cache_keep_mask,
+    sequential_plane_ransac,
+    supports_to_primitives,
+)
 
 
 class GlobalPlaneBaselineTest(unittest.TestCase):
+    def test_identical_cache_filter_rejects_low_confidence_and_invalid_points(self):
+        points = np.asarray(
+            [[0, 0, 0], [1, 0, 0], [np.nan, 0, 0], [1e6, 0, 0]],
+            dtype=np.float32,
+        )
+        confidence = np.asarray([2.0, 0.5, 2.0, 2.0], dtype=np.float32)
+        self.assertEqual(
+            global_cache_keep_mask(points, confidence, min_conf=1.0).tolist(),
+            [True, False, False, False],
+        )
+
     def test_coplanar_disconnected_regions_stay_separate(self):
         rng = np.random.default_rng(4)
         left = np.column_stack((rng.uniform(-2, -1, 180), rng.uniform(-1, 1, 180), rng.normal(0, .001, 180)))

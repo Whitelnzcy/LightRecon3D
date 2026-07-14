@@ -1238,3 +1238,94 @@ Next exact step:
 Pull the diagnostic commit when server GitHub access permits and rerun P0 into
 the new `v4` directory. Archive the proposed full-cloud/non-support movement and
 proposed heatmap, then mark P0 complete and begin P1.
+
+## 28. Session update: 2026-07-14 P1 point-aligned plane GT scaffold
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA: `72cbed2`
+
+Data-flow finding:
+
+* Each Structured3D view provides a `layout.json` with visible plane polygons
+  and a `plane.ID`. For the retained five-view `scene_00180` group, IDs such as
+  1, 19, 27, 35, 45 and 71 recur across views, while their stored normals and
+  offsets change with camera coordinates.
+* Therefore the point-aligned writer uses `plane.ID` only for cross-view
+  identity and visible support. It does not compare camera-frame layout plane
+  equations directly with DUSt3R global planes.
+* The GT plane equations are refitted from identically indexed DUSt3R cache
+  points after labeling. This evaluates support/identity in the common cache
+  frame; it is not absolute metric 3D ground truth.
+
+Implemented behavior:
+
+* Added `build_structured3d_point_aligned_gt.py`.
+* It reads the method-independent global cache, validates explicit `xy` DUSt3R
+  pointmap coordinates and the saved view registry, derives each matching
+  `layout.json`, and reproduces vendored DUSt3R resize/crop geometry.
+* Visible layout polygons are rasterized with their original Structured3D
+  plane IDs. A one-pixel boundary band is ignored by default to avoid counting
+  rasterization-edge ambiguity as an identity error.
+* Labels are gathered in the exact filtered cache order. Source cache indices,
+  view indices, pointmap pixels, source plane IDs, transforms, layout paths and
+  the SHA-256 of the source cache are retained.
+* Added a shared identical-cache finite/confidence filter to
+  `global_plane_baselines.py`; the GT writer and RANSAC now cannot silently use
+  different point subsets for the same `min_conf`.
+* Added `run_plane_feedback_p1_gt.sh`, targeting the retained original P0 `v3`
+  global cache and refusing to overwrite its own output directory.
+
+Files added/changed:
+
+```text
+build_structured3d_point_aligned_gt.py
+global_plane_baselines.py
+tests/test_structured3d_point_aligned_gt.py
+tests/test_global_plane_baselines.py
+run_plane_feedback_p1_gt.sh
+docs/codex_tasks/evidence_gated_plane_feedback.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+python -m py_compile global_plane_baselines.py build_structured3d_point_aligned_gt.py tests/test_global_plane_baselines.py tests/test_structured3d_point_aligned_gt.py
+PYTHONPATH=. python tests/test_global_plane_baselines.py
+PYTHONPATH=. python tests/test_structured3d_point_aligned_gt.py
+<Git-for-Windows-bash> -n run_plane_feedback_p1_gt.sh
+git diff --check -- <P1 implementation/test/script/task/handoff files>
+```
+
+Results:
+
+```text
+global plane baseline tests: 4 passed
+point-aligned Structured3D GT tests: 2 passed
+P1 shell syntax check: passed
+diff check: passed (line-ending conversion warnings only)
+```
+
+The first GT test run exposed an unclosed `np.load` handle during Windows
+temporary-directory cleanup. The test now uses a context manager; the repeated
+test run passed.
+
+Unresolved:
+
+* No real server GT NPZ/PLY has been generated yet.
+* Point-aligned layout labels alone do not provide pose, metric full-cloud,
+  non-planar geometry or Chamfer GT. Structured3D depth/camera-pose lifting is
+  a separate required P1 component.
+* Stage1/direct-SVD/manual-merge/PlaneGraph-BA/live-feedback predictions still
+  need adapters that emit assignments on the identical filtered full cache.
+
+Next exact server step after the branch is pulled:
+
+```bash
+bash run_plane_feedback_p1_gt.sh
+```
+
+The required acceptance checks are: one cache checksum, five registered views,
+nonzero labeled points, stable source plane IDs across views, and a visually
+sensible colored GT PLY before running comparative baselines.

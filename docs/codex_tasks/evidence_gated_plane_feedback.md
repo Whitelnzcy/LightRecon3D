@@ -132,6 +132,17 @@ Build point-aligned Structured3D GT through the saved registry and compare:
 
 Report alignment time separately from method time.
 
+Implementation status on 2026-07-14:
+
+* `build_structured3d_point_aligned_gt.py` now attaches visible Structured3D
+  layout identities to the exact saved DUSt3R `(view_index, x, y)` cache order.
+* It uses the stable cross-view `plane.ID`, not the per-file plane array index,
+  and records every resize/crop transform and source layout path.
+* GT plane parameters are refitted in the DUSt3R global frame. This supports
+  plane identity/support evaluation but is not absolute metric GT; depth/pose
+  reconstruction metrics still require Structured3D depth and camera poses.
+* Server execution and the remaining P1 baselines are not yet complete.
+
 ### P2. Leave-one-view-out factor audit
 
 Create one row per `(scene, plane candidate, held-out view)` and record the
