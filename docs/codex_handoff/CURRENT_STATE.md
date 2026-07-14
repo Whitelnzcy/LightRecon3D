@@ -1625,3 +1625,139 @@ bash run_plane_feedback_p1_support_audit.sh
 
 Archive `scene00180_support_conditioned_metrics.json`. This reuses existing
 NPZ files and should complete in seconds.
+
+## 32. Session update: 2026-07-14 real conditioned metrics and direct-SVD audit
+
+Branch: `codex/bounded-support-head`
+
+Server execution commit SHA: `1c73908`
+
+Completed server output:
+
+```text
+/gemini/data-1/lightrecon_runs/plane_feedback_p1_support_audit_scene00180_20260714_v1
+```
+
+Observed support-conditioned comparison:
+
+```text
+metric                              RANSAC       manual support
+assigned GT-label rate              0.96925      0.97314
+observed GT planes                  7            6
+conditioned true-positive planes    3            3
+conditioned plane precision         0.6000       0.5000
+conditioned all-GT recall           0.4286       0.4286
+conditioned matched IoU             0.71360      0.96067
+conditioned normal error (degrees)  5.67694      0.61006
+conditioned fragmentation excess    1            2
+conditioned over-merge excess       2            1
+pairwise identity precision         0.60885      0.84794
+pairwise identity recall            0.83527      0.79215
+pairwise identity F1                0.70431      0.81909
+predicted-cluster purity            0.75611      0.89687
+GT completeness                     0.84516      0.85505
+purity/completeness F1              0.79816      0.87546
+```
+
+Interpretation:
+
+* On the emitted support domain, the current Stage2/manual pipeline preserves
+  plane identity substantially better than full-cloud RANSAC on this one
+  scene: pairwise F1 improves by 0.115 and weighted cluster purity by 0.141.
+* The correctly matched manual planes are geometrically strong: conditioned
+  IoU is 0.961 and normal error is 0.61 degrees.
+* This is not a complete success. Manual support misses one GT plane, only
+  three of six observed identities pass the 0.5 conditioned-IoU match, and it
+  shows two fragmentation excesses plus one over-merge.
+* It is also not yet a clean manual-vs-RANSAC claim. The unique-cache adapter
+  dropped 3,431 repeated keys with disagreeing manual labels before producing
+  these metrics. That safety choice was correct for a single-label cache, but
+  it removes exactly the contradictions needed to audit association quality
+  and can make manual identity look better than its raw observations.
+
+Implemented next P1 ablation:
+
+* Stage3 now accepts `--global_cloud_cache` in `dust3r_global` mode. It
+  reconstructs every cached per-view pointmap through explicit `(view,x,y)`,
+  validates complete one-to-one pixel coverage, scene key and image registry,
+  and skips model loading/global alignment. Plane feedback is explicitly
+  forbidden on this frozen-cache path because no differentiable live scene
+  exists.
+* A cached `merge_mode=none` run now provides the missing
+  `stage2_support_direct_global_svd` baseline on the exact original P0 cache.
+  The method and merge mode are stored in the output NPZ.
+* Added `evaluate_support_record_partitions.py`. It preserves all repeated
+  support records rather than collapsing pixels, maps GT and full-cache RANSAC
+  labels by the exact registry key, requires direct/manual record order to be
+  identical, reports conflict counts and writes a per-predicted-plane GT
+  contingency audit including views, unique keys, dominant identity, purity
+  and normal error.
+* The old RANSAC NPZ predates explicit coordinate-convention fields. Its use is
+  guarded by a required `--allow_legacy_cache_xy` command-line override, which
+  is recorded in the audit JSON. The known writer provenance is
+  `global_plane_baselines.py`; that writer now stores explicit `xy` and
+  `dust3r_aligned_pointmap` fields for all future outputs.
+* Added `run_plane_feedback_p1_direct_svd.sh`, which preflights pinned `roma`
+  and `trimesh`, refuses overwrites, verifies SHA-256 inputs, runs cached direct
+  SVD and evaluates GT, RANSAC, manual and direct-SVD identities on the same
+  repeated support records. It does not rerun DUSt3R.
+
+Files changed/added:
+
+```text
+export_stage3_scene_plane_fusion.py
+evaluate_support_record_partitions.py
+global_plane_baselines.py
+tests/test_stage3_scene_plane_fusion_mapping.py
+tests/test_support_record_partitions.py
+run_plane_feedback_p1_direct_svd.sh
+docs/codex_tasks/evidence_gated_plane_feedback.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Focused validation completed:
+
+```text
+python -m py_compile export_stage3_scene_plane_fusion.py evaluate_support_record_partitions.py evaluate_global_plane_baselines.py global_plane_baselines.py tests/test_stage3_scene_plane_fusion_mapping.py tests/test_support_record_partitions.py
+PYTHONPATH=. python tests/test_stage3_scene_plane_fusion_mapping.py
+PYTHONPATH=. python tests/test_support_record_partitions.py
+PYTHONPATH=. python tests/test_evaluate_global_plane_baselines.py
+PYTHONPATH=. python tests/test_lift_support_prediction_to_global_cache.py
+PYTHONPATH=. python tests/test_global_plane_baselines.py
+<Git-for-Windows-bash> -n run_plane_feedback_p1_direct_svd.sh
+```
+
+Results:
+
+```text
+Stage3 mapping/cache tests: 5 passed
+support-record partition tests: 5 passed
+global plane evaluator tests: 5 passed
+exact support-lift tests: 6 passed
+global plane baseline tests: 5 passed
+direct-SVD shell syntax check: passed
+```
+
+The record-audit tests include an end-to-end synthetic CLI run that writes and
+reloads JSON/CSV while preserving repeated keys, in addition to exact cache
+label expansion, conflict counting, per-plane dominant-GT diagnostics and the
+explicit legacy-coordinate override guard.
+
+Unresolved:
+
+* The direct-global-SVD and repeated-record server metrics have not yet been
+  produced.
+* Current evidence is one scene and does not establish robustness, geometry
+  improvement or novelty.
+* P1 PlaneGraph-BA, live-feedback and oracle-identity/factor upper bounds still
+  remain before P2.
+
+Next exact server step after pulling the implementation commit:
+
+```bash
+bash run_plane_feedback_p1_direct_svd.sh
+```
+
+Archive `scene00180_support_record_partition_audit.json` and the Stage3
+manifest. The manual-vs-direct gap will show whether the current merge adds
+useful cross-candidate identity or mainly hides/creates association errors.

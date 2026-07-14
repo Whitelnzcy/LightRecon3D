@@ -1,4 +1,6 @@
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from export_stage3_scene_plane_fusion import (
     gather_pointmap_points,
+    load_global_views_from_cache,
     map_stage2_points_to_global,
     parse_path_prefix_maps,
     path_key,
@@ -17,6 +20,49 @@ from export_stage3_scene_plane_fusion import (
 
 
 class Stage3ScenePlaneFusionMappingTest(unittest.TestCase):
+    def test_complete_global_cache_reconstructs_pointmaps_in_pixel_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cache.npz"
+            points = np.asarray(
+                [[2, 0, 0], [0, 0, 0], [3, 0, 0], [1, 0, 0]],
+                dtype=np.float32,
+            )
+            pixel_xy = np.asarray(
+                [[0, 1], [0, 0], [1, 1], [1, 0]], dtype=np.int32
+            )
+            np.savez_compressed(
+                path,
+                points=points,
+                colors=np.zeros((4, 3), dtype=np.uint8),
+                confidence=np.arange(4, dtype=np.float32),
+                view_indices=np.zeros(4, dtype=np.int32),
+                pixel_xy=pixel_xy,
+                pixel_coordinate_order=np.asarray("xy"),
+                pixel_coordinate_space=np.asarray("dust3r_aligned_pointmap"),
+                scene_key=np.asarray("scene"),
+                dust3r_global_alignment_loss=np.asarray(0.25, np.float32),
+                dust3r_view_registry_json=np.asarray(
+                    json.dumps(
+                        [
+                            {
+                                "alignment_view_index": 0,
+                                "image_path": "/data/view.png",
+                                "points_hw": [2, 2],
+                            }
+                        ]
+                    )
+                ),
+            )
+
+            views, loss, scene_key = load_global_views_from_cache(
+                path, expected_image_paths=["/data/view.png"]
+            )
+
+            view = views[path_key("/data/view.png")]
+            self.assertEqual(scene_key, "scene")
+            self.assertAlmostEqual(loss, 0.25)
+            self.assertEqual(view["points"][:, :, 0].tolist(), [[0, 1], [2, 3]])
+
     def test_pointmap_gather_uses_explicit_view_and_xy_provenance(self):
         first = np.zeros((2, 3, 3), dtype=np.float32)
         second = np.zeros((1, 2, 3), dtype=np.float32)

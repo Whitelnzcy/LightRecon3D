@@ -215,6 +215,8 @@ def save_result(output_dir, scene_key, cache, supports, method, runtime, config)
         plane_normals=normals, plane_offsets=offsets, plane_inlier_counts=counts,
         source_views=cache["view_indices"].astype(np.int32),
         pixel_xy=cache["pixel_xy"].astype(np.int32), method=np.asarray(method),
+        pixel_coordinate_order=np.asarray("xy"),
+        pixel_coordinate_space=np.asarray("dust3r_aligned_pointmap"),
         runtime_seconds=np.asarray(runtime, np.float64),
         config_json=np.asarray(json.dumps(config, sort_keys=True)), scene_key=np.asarray(scene_key),
     )

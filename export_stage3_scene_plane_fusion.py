@@ -388,6 +388,110 @@ def write_global_cloud_cache(path, global_views, scene_key, alignment_loss):
     )
     return str(path)
 
+
+def load_global_views_from_cache(path, expected_image_paths=(), path_prefix_maps=()):
+    """Reconstruct per-view pointmaps without rerunning DUSt3R alignment."""
+
+    required = {
+        "points",
+        "colors",
+        "confidence",
+        "view_indices",
+        "pixel_xy",
+        "pixel_coordinate_order",
+        "pixel_coordinate_space",
+        "scene_key",
+        "dust3r_global_alignment_loss",
+        "dust3r_view_registry_json",
+    }
+    with np.load(path, allow_pickle=False) as raw:
+        missing = sorted(required - set(raw.files))
+        if missing:
+            raise ValueError(f"Global cloud cache missing fields: {missing}")
+        if str(raw["pixel_coordinate_order"].item()) != "xy":
+            raise ValueError("Global cloud cache pixel order must be xy")
+        if (
+            str(raw["pixel_coordinate_space"].item())
+            != "dust3r_aligned_pointmap"
+        ):
+            raise ValueError(
+                "Global cloud cache pixels must be DUSt3R aligned-pointmap pixels"
+            )
+        points = raw["points"].astype(np.float32)
+        colors = raw["colors"].astype(np.uint8)
+        confidence = raw["confidence"].astype(np.float32).reshape(-1)
+        view_indices = raw["view_indices"].astype(np.int32).reshape(-1)
+        pixel_xy = raw["pixel_xy"].astype(np.int32)
+        if not (
+            points.shape == (len(view_indices), 3)
+            and colors.shape == (len(view_indices), 3)
+            and confidence.shape == (len(view_indices),)
+            and pixel_xy.shape == (len(view_indices), 2)
+        ):
+            raise ValueError("Global cloud cache arrays have inconsistent shapes")
+        registry = json.loads(str(raw["dust3r_view_registry_json"].item()))
+        scene_key = str(raw["scene_key"].item())
+        alignment_loss = float(raw["dust3r_global_alignment_loss"].item())
+
+    registry_by_index = {}
+    for record in registry:
+        view_index = int(record["alignment_view_index"])
+        if view_index in registry_by_index:
+            raise ValueError(f"Duplicate cache registry view index: {view_index}")
+        registry_by_index[view_index] = record
+    cache_view_indices = set(int(value) for value in np.unique(view_indices))
+    if cache_view_indices != set(registry_by_index):
+        raise ValueError(
+            "Cache registry/view-index mismatch: "
+            f"points={sorted(cache_view_indices)}, "
+            f"registry={sorted(registry_by_index)}"
+        )
+
+    global_views = {}
+    for view_index, record in sorted(registry_by_index.items()):
+        height, width = map(int, record["points_hw"])
+        mask = view_indices == view_index
+        xy = pixel_xy[mask]
+        if not (
+            (xy[:, 0] >= 0).all()
+            and (xy[:, 0] < width).all()
+            and (xy[:, 1] >= 0).all()
+            and (xy[:, 1] < height).all()
+        ):
+            raise ValueError(f"Cache view {view_index} has out-of-range pixels")
+        linear = xy[:, 1].astype(np.int64) * width + xy[:, 0]
+        if len(linear) != height * width or len(np.unique(linear)) != height * width:
+            raise ValueError(
+                f"Cache view {view_index} does not contain one complete pointmap"
+            )
+        xyz = np.empty((height * width, 3), dtype=np.float32)
+        rgb = np.empty((height * width, 3), dtype=np.uint8)
+        conf = np.empty((height * width,), dtype=np.float32)
+        xyz[linear] = points[mask]
+        rgb[linear] = colors[mask]
+        conf[linear] = confidence[mask]
+        image_path = remap_path(str(record["image_path"]), path_prefix_maps)
+        key = path_key(image_path)
+        if key in global_views:
+            raise ValueError(f"Duplicate cache image path: {image_path}")
+        global_views[key] = {
+            "points": xyz.reshape(height, width, 3),
+            "colors": rgb.reshape(height, width, 3),
+            "conf": conf.reshape(height, width),
+            "image_path": image_path,
+            "alignment_view_index": view_index,
+        }
+
+    expected_keys = {path_key(path) for path in expected_image_paths}
+    if expected_keys and expected_keys != set(global_views):
+        raise ValueError(
+            "Cached alignment images do not match Stage2 group images: "
+            f"missing={sorted(expected_keys - set(global_views))}, "
+            f"extra={sorted(set(global_views) - expected_keys)}"
+        )
+    return global_views, alignment_loss, scene_key
+
+
 def pixel_array_for_role(raw, role, point_count):
     key = f"pixel_xy{role}"
     fallback_key = "pixel_xy" if role == 1 else key
@@ -1107,8 +1211,27 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             include_second_view=args.include_second_view,
             path_prefix_maps=getattr(args, "path_prefix_maps", ()),
         )
-        global_views, global_alignment_loss, alignment_scene = run_dust3r_global_alignment(
-            image_paths, model, device, args)
+        if args.global_cloud_cache:
+            if plane_feedback_enabled:
+                raise RuntimeError(
+                    "--plane_feedback requires a live DUSt3R scene and cannot "
+                    "be used with --global_cloud_cache"
+                )
+            global_views, global_alignment_loss, cache_scene_key = (
+                load_global_views_from_cache(
+                    args.global_cloud_cache,
+                    expected_image_paths=image_paths,
+                    path_prefix_maps=getattr(args, "path_prefix_maps", ()),
+                )
+            )
+            if cache_scene_key != scene_key:
+                raise ValueError(
+                    f"Cache scene key {cache_scene_key!r} != group key {scene_key!r}"
+                )
+            global_cloud_cache = str(Path(args.global_cloud_cache))
+        else:
+            global_views, global_alignment_loss, alignment_scene = run_dust3r_global_alignment(
+                image_paths, model, device, args)
         global_view_registry = [
             {
                 "alignment_view_index": int(view["alignment_view_index"]),
@@ -1119,9 +1242,10 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             for key, view in sorted(global_views.items(), key=lambda item: item[1]["alignment_view_index"])
         ]
 
-        cache_name = f"{safe_filename(scene_key)}_dust3r_global_cloud_cache.npz"
-        global_cloud_cache = write_global_cloud_cache(
-            output_dir / cache_name, global_views, scene_key, global_alignment_loss)
+        if not args.global_cloud_cache:
+            cache_name = f"{safe_filename(scene_key)}_dust3r_global_cloud_cache.npz"
+            global_cloud_cache = write_global_cloud_cache(
+                output_dir / cache_name, global_views, scene_key, global_alignment_loss)
     else:
         global_cloud_cache = ""
 
@@ -1400,6 +1524,12 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         plane_quality_json=np.asarray(json.dumps(plane_quality), dtype=object),
         quality_summary_json=np.asarray(json.dumps(quality_summary), dtype=object),
         scene_key=np.asarray(scene_key),
+        method=np.asarray(
+            "stage2_support_direct_global_svd"
+            if args.merge_mode == "none"
+            else "stage2_manual_merge_support"
+        ),
+        merge_mode=np.asarray(args.merge_mode),
         fusion_mode=np.asarray(args.fusion_mode),
         dust3r_image_paths=np.asarray(image_paths, dtype=object),
         dust3r_global_alignment_loss=np.asarray(global_alignment_loss if global_alignment_loss is not None else np.nan, dtype=np.float32),
@@ -1513,6 +1643,14 @@ def main():
                         help="none = per-Stage1-support global SVD refit; manual = geometric threshold merge")
     parser.add_argument("--weights_path", default="")
     parser.add_argument(
+        "--global_cloud_cache",
+        default="",
+        help=(
+            "Reuse an existing complete DUSt3R global-cloud cache instead of "
+            "loading the model or recomputing alignment"
+        ),
+    )
+    parser.add_argument(
         "--path_prefix_map",
         action="append",
         default=[],
@@ -1573,7 +1711,9 @@ def main():
 
     model = None
     device = None
-    if args.fusion_mode == "dust3r_global":
+    if args.global_cloud_cache and args.fusion_mode != "dust3r_global":
+        raise RuntimeError("--global_cloud_cache requires --fusion_mode dust3r_global")
+    if args.fusion_mode == "dust3r_global" and not args.global_cloud_cache:
         if not args.weights_path:
             raise RuntimeError("--weights_path is required when --fusion_mode dust3r_global")
         setup_dust3r_imports()

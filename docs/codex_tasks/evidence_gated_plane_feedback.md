@@ -177,6 +177,18 @@ Server update on 2026-07-14:
   adds support-conditioned IoU, pairwise identity F1, predicted cluster purity
   and GT completeness. These conditioned scores must always be reported with
   coverage and label rate; they do not treat sparse support as dense output.
+* The corrected support-domain audit shows useful single-scene identity signal.
+  Manual support has pairwise identity F1 0.819 versus RANSAC 0.704, predicted
+  cluster purity 0.897 versus 0.756, and purity/completeness F1 0.875 versus
+  0.798. Its three accepted planes have conditioned IoU 0.961 and 0.61-degree
+  normal error. It still observes only six of seven GT planes, accepts only
+  three, fragments two relationships and over-merges one.
+* These manual numbers are provisional and optimistic because the first lift
+  dropped 3,431 repeated pixel keys whose manual labels disagreed. The next P1
+  audit therefore preserves all 80,000 observation records, maps GT by exact
+  `(view,x,y)`, and compares manual merge with a no-cross-candidate-merge
+  direct-global-SVD baseline on the same repeated records. This distinguishes
+  useful merging from errors hidden by conflict dropping.
 
 ### P2. Leave-one-view-out factor audit
 
