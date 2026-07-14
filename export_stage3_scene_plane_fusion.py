@@ -65,6 +65,38 @@ def path_key(path):
     return os.path.normpath(text).replace("\\", "/")
 
 
+def parse_path_prefix_maps(values):
+    mappings = []
+    for value in values or ():
+        if "=" not in value:
+            raise ValueError(
+                f"Bad --path_prefix_map {value!r}; expected SOURCE_PREFIX=DESTINATION_PREFIX"
+            )
+        source, destination = value.split("=", 1)
+        source = path_key(source).rstrip("/")
+        destination = str(destination).strip()
+        if not source or not destination:
+            raise ValueError(
+                f"Bad --path_prefix_map {value!r}; source and destination must be non-empty"
+            )
+        mappings.append((source, destination))
+    mappings.sort(key=lambda item: len(item[0]), reverse=True)
+    return tuple(mappings)
+
+
+def remap_path(path, prefix_maps=()):
+    original = str(path).strip()
+    normalized = path_key(original)
+    for source, destination in prefix_maps or ():
+        if normalized == source:
+            return os.path.normpath(destination)
+        prefix = source + "/"
+        if normalized.startswith(prefix):
+            suffix = normalized[len(prefix):]
+            return os.path.normpath(os.path.join(destination, *suffix.split("/")))
+    return original
+
+
 def group_key(raw, fallback, mode):
     scene = scalar_string(raw, "scene_name", fallback)
     pair_group = scalar_string(raw, "pair_group", "")
@@ -125,7 +157,7 @@ def setup_dust3r_imports():
     sys.path.insert(1, dust3r_root)
 
 
-def collect_group_images(files, include_second_view=True):
+def collect_group_images(files, include_second_view=True, path_prefix_maps=()):
     paths = []
     seen = set()
     for path in files:
@@ -135,6 +167,7 @@ def collect_group_images(files, include_second_view=True):
             keys.append("rgb_path2")
         for key in keys:
             value = scalar_string(raw, key, "")
+            value = remap_path(value, path_prefix_maps)
             norm = path_key(value)
             if norm and norm not in seen:
                 seen.add(norm)
@@ -390,7 +423,10 @@ def map_stage2_points_to_global(raw, global_views, args, return_provenance=False
             stats["kept_counts"][str(role)] = 0
             continue
 
-        rgb_path = scalar_string(raw, f"rgb_path{role}", "")
+        rgb_path = remap_path(
+            scalar_string(raw, f"rgb_path{role}", ""),
+            getattr(args, "path_prefix_maps", ()),
+        )
         view = global_views.get(path_key(rgb_path))
         if view is None:
             stats["missing_view_roles"].append(role)
@@ -1033,7 +1069,11 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     image_paths = []
     global_view_registry = []
     if args.fusion_mode == "dust3r_global":
-        image_paths = collect_group_images(files, include_second_view=args.include_second_view)
+        image_paths = collect_group_images(
+            files,
+            include_second_view=args.include_second_view,
+            path_prefix_maps=getattr(args, "path_prefix_maps", ()),
+        )
         global_views, global_alignment_loss, alignment_scene = run_dust3r_global_alignment(
             image_paths, model, device, args)
         global_view_registry = [
@@ -1384,6 +1424,16 @@ def main():
     parser.add_argument("--merge_mode", default="manual", choices=("none", "manual"),
                         help="none = per-Stage1-support global SVD refit; manual = geometric threshold merge")
     parser.add_argument("--weights_path", default="")
+    parser.add_argument(
+        "--path_prefix_map",
+        action="append",
+        default=[],
+        metavar="SOURCE=DESTINATION",
+        help=(
+            "Remap stored RGB path prefixes without rewriting source NPZs; "
+            "repeat for multiple prefixes."
+        ),
+    )
     parser.add_argument("--image_size", type=int, default=512)
     parser.add_argument("--scene_graph", default="complete")
     parser.add_argument("--batch_size", type=int, default=1)
@@ -1421,6 +1471,10 @@ def main():
     parser.add_argument("--plane_feedback_min_relative_improvement", type=float, default=1e-4)
     parser.add_argument("--plane_feedback_log_every", type=int, default=20)
     args = parser.parse_args()
+    try:
+        args.path_prefix_maps = parse_path_prefix_maps(args.path_prefix_map)
+    except ValueError as error:
+        parser.error(str(error))
 
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)

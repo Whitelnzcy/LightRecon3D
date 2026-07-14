@@ -847,3 +847,147 @@ Run one retained showcase group on the server with `--plane_feedback`, inspect
 the acceptance record, DUSt3R base loss, plane residual, non-support movement,
 and before/after PLY. Do not batch all validation groups until this smoke test
 passes without harmful geometry movement.
+
+## 23. Session update: 2026-07-14 third-pass innovation archive
+
+Branch: `codex/bounded-support-head`
+
+Current commit SHA: `cbf37ef` (documentation changes from this session are not
+committed at the time of this entry)
+
+Files changed/added in this session:
+
+```text
+docs/codex_handoff/STRUCTURED_PLANE_LITERATURE_AUDIT.md
+docs/codex_tasks/evidence_gated_plane_feedback.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Research finding:
+
+* A third-pass audit checked the exact v1 mechanism against planar bundle
+  adjustment, plane SLAM/data association, HSfM, MERG3R, TALO, VGGT-SLAM++ and
+  G3T.
+* “Plane constraints in BA,” “external structure fed back into DUSt3R,”
+  “training-free/model-agnostic adapter,” “latent landmark association” and
+  “per-view Sim(3) correction” are not defensible standalone novelty claims.
+* The leading hypothesis is now evidence-gated plane feedback: use held-out
+  views, bounded visibility/free-space evidence, reversible factor switches and
+  per-factor influence checks to prevent self-confirming plane constraints from
+  corrupting live pointmap alignment.
+* This is explicitly a hypothesis. Switchable constraints and joint data
+  association are established; novelty would depend on the exact held-out
+  bounded-evidence mechanism inside a frozen pointmap optimizer and on real,
+  cross-scene evidence.
+
+Task note generated:
+
+```text
+docs/codex_tasks/evidence_gated_plane_feedback.md
+```
+
+It records the P0-P5 experiment order, identical-cache baselines, metrics,
+required artifacts and stop/go rules. The immediate implementation priority did
+not change: first run the existing v1 single-group server smoke, then construct
+point-aligned GT before adding a learned association or a larger optimizer.
+
+Commands/tests completed:
+
+```text
+git status --short
+git diff --stat
+git log -6 --oneline --decorate
+git diff --check -- docs/codex_handoff/STRUCTURED_PLANE_LITERATURE_AUDIT.md docs/codex_tasks/evidence_gated_plane_feedback.md docs/codex_handoff/CURRENT_STATE.md
+```
+
+Results:
+
+```text
+Markdown diff check: passed (line-ending conversion warnings only)
+No code test, training, server run or new global-alignment visualization was
+executed. This session only inspected the repository, audited primary
+literature and updated Markdown archives.
+```
+
+Inherited unrelated tracked and untracked user changes remain in the worktree
+and were not modified by this documentation session.
+
+Unresolved:
+
+* Real-plane-feedback acceptance and geometry improvement remain unverified.
+* Point-aligned Structured3D GT remains missing.
+* The proposed held-out gate has not been implemented or shown to predict
+  harmful plane factors.
+* No systematic-review completeness or novelty claim is asserted.
+
+Next exact step:
+
+Run P0 from `docs/codex_tasks/evidence_gated_plane_feedback.md` on one retained
+server group without overwriting previous outputs. Archive the exact command,
+Git SHA, view registry, acceptance JSON and before/after diagnostics before
+deciding whether to implement the held-out factor audit.
+
+## 24. Session update: 2026-07-14 P0 server launch preparation
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA: `cbf37ef`
+
+Implemented behavior:
+
+* Added an optional repeatable `--path_prefix_map SOURCE=DESTINATION` to Stage3.
+  It remaps stored RGB path prefixes at read time without modifying source NPZs,
+  allowing the same schema-v2 exports to run across server and Windows roots.
+* The same remapped path is used both when registering DUSt3R images and when
+  resolving each support point's source view.
+* Added focused tests for prefix parsing/remapping and support-to-global-view
+  lookup after remapping.
+* Added `run_plane_feedback_p0.sh`, a server-ready single-group P0 smoke script
+  for the retained `scene_00180` showcase. It records the Git SHA/GPU/log and
+  refuses to overwrite an existing output directory.
+
+Files changed/added for this update:
+
+```text
+export_stage3_scene_plane_fusion.py
+tests/test_stage3_scene_plane_fusion_mapping.py
+run_plane_feedback_p0.sh
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+python -m py_compile export_stage3_scene_plane_fusion.py tests/test_stage3_scene_plane_fusion_mapping.py
+python tests/test_stage3_scene_plane_fusion_mapping.py
+PYTHONPATH=. python tests/test_plane_regularized_alignment.py
+<Git-for-Windows-bash> -n run_plane_feedback_p0.sh
+git diff --check -- export_stage3_scene_plane_fusion.py tests/test_stage3_scene_plane_fusion_mapping.py
+```
+
+Results:
+
+```text
+py_compile: passed
+Stage3 mapping/path-remap tests: 3 passed
+plane-feedback tests: 3 passed
+P0 shell syntax check: passed
+diff check: passed (line-ending conversion warnings only)
+```
+
+Execution status:
+
+* A local P0 launch was prepared after confirming all five local RGB files and
+  the DUSt3R checkpoint exist, but it was stopped before model execution when
+  the run target was changed to the server.
+* No P0 acceptance result, metric or new diagnostic visualization is reported.
+
+Next exact step on the server:
+
+```bash
+git pull
+bash run_plane_feedback_p0.sh
+```
+
+If the default output directory already exists, set a new `OUT_DIR`; do not
+delete or overwrite the old run.

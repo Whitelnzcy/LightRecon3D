@@ -1,9 +1,10 @@
 # Structured Plane Reconstruction Literature Audit
 
-Date: 2026-07-12
+Date: 2026-07-12; third-pass update: 2026-07-14
 
-Status: first-pass novelty audit. This document records claims supported by the
-papers inspected so far; it is not yet a complete systematic review.
+Status: ongoing novelty audit. This document records claims supported by the
+papers inspected so far; it is not yet a complete systematic review or a proof
+of novelty.
 
 ## 1. Scope
 
@@ -470,3 +471,110 @@ has not been found in the papers inspected, but classical plane bundle adjustmen
 joint layout-registration and recent plane foundation models are close enough
 that novelty depends on the specific formulation and cross-backbone experimental
 evidence.
+
+## 15. Third-pass correction: structural feedback itself is occupied
+
+The 2026-07-14 pass focused on the exact mechanism implemented in
+`plane_regularized_alignment.py`: adding a structural loss to a live pointmap
+global optimizer so that depth, pose and camera variables can change.
+
+Additional close work materially narrows the claim space:
+
+| Work | Relevant occupied space | Consequence |
+|---|---|---|
+| Planar Bundle Adjustment, 2020 | Joint point-to-plane optimization of sensor poses and plane parameters | Joint pose/plane refinement and point-to-plane BA are not novel. |
+| Efficient Second-Order Plane Adjustment, CVPR 2023 | Eliminates plane variables and efficiently optimizes poses under plane residuals | Solver efficiency or alternating closed-form plane refits are not a sufficient contribution. |
+| PAS-SLAM, 2024 | Plane processing, multi-signal plane data association and factor-graph pose optimization | Plane association plus structural pose optimization is already established. |
+| Data-Association-Free Landmark SLAM, 2023 | Jointly reasons over trajectory, unknown landmark count and unknown association | Treating plane identity as a latent discrete-continuous variable is not novel by itself. |
+| HSfM, CVPR 2025 | Adds human-derived constraints to DUSt3R-style global scene optimization and jointly updates humans, depth maps and cameras | Sending an external structured prior back into foundation-model scene alignment is not unique to planes. |
+| MERG3R, CVPR 2026 | Training-free, model-agnostic global alignment and confidence-weighted bundle adjustment for neural visual geometry | “Training-free plug-in for frozen 3D foundation models” is an evaluation/property claim, not a standalone innovation. |
+| TALO, CVPR 2026 | Targets spatially varying inconsistency that cannot be reconciled by one global transform | The per-view Sim(3) v0 is an ablation, not an adequate final deformation model. |
+| VGGT-SLAM++, 2026 | Uses planar-canonical local scene structure and a spatially corrective backend | Generic planar canonicalization or local structural correction is also crowded. |
+| G3T, 2026 | Predicts gravity-aligned pointmaps to exploit shared structural frames | Gravity/upright alignment is a separate occupied direction and should not be presented as this project's main idea. |
+
+The current v1 implementation remains useful as a mechanism probe, but its
+present scientific claim must be limited to:
+
+```text
+Does a fixed, externally supplied multi-view plane identity provide a beneficial
+gradient signal inside DUSt3R global alignment on real planar indoor scenes?
+```
+
+This question has not yet been answered because only synthetic behavior tests
+have run. The current global Huber loss and whole-update rollback are safety
+controls, not innovations.
+
+## 16. New leading hypothesis: evidence-gated plane feedback
+
+The most specific remaining failure is **self-confirming structural feedback**.
+The same imperfect pointmaps currently generate a plane, decide its cross-view
+identity and receive a gradient that forces those points toward that plane. A
+wrong merge can therefore lower plane residual while making pose, non-planar
+geometry or true plane identity worse.
+
+Working label:
+
+```text
+Evidence-Gated Plane BA: held-out bounded-plane factors for foundation pointmaps
+```
+
+The proposed distinction is not “use planes in BA.” It is to require every plane
+factor to earn influence using evidence that was not used to fit that factor:
+
+1. Form a broad, reversible candidate observation group and include a null/
+   dustbin assignment.
+2. For each source view, fit the plane from the other views only.
+3. Test the held-out view using signed incidence, visibility-aware bounded
+   support reprojection, confidence and free-space contradiction.
+4. Convert held-out evidence into a per-plane/per-observation switch instead of
+   applying all candidate planes with one global weight.
+5. Optimize the live pointmap alignment with the original foundation loss plus
+   only the accepted/switched plane factors.
+6. Measure each factor's counterfactual influence on held-out plane error, base
+   alignment loss, pose/full-cloud metrics, non-support motion and boundary
+   error; disable harmful factors and keep merges reversible.
+
+This is still a hypothesis, not a novelty claim. Switchable constraints, robust
+pose-graph optimization and joint data association are established. The
+potentially defensible unit is the combination of held-out multi-view
+verification, bounded visibility/free-space evidence and per-factor influence
+control inside a frozen pointmap foundation model's live global optimizer.
+
+## 17. Ranked candidates after the third pass
+
+Scores use 1 (weak/expensive) to 5 (strong/feasible).
+
+| Candidate | Novelty | Feasibility | Evaluation clarity | Verdict |
+|---|---:|---:|---:|---|
+| A. Held-out evidence-gated bounded-plane feedback | 4 | 3 | 5 | Best current mechanism hypothesis; validate the gate before building full joint association. |
+| B. Spatially adaptive plane-normal pointmap correction with boundary anchors | 3 | 3 | 4 | Useful if TALO-style spatial distortion is observed; crowded and more invasive. |
+| C. Uncertainty-calibrated, reversible plane association | 2 | 4 | 5 | Strong component/ablation, but PAS-SLAM and data-association-free SLAM weaken a main claim. |
+| D. Cross-backbone PlaneGraph-BA adapter | 2 | 3 | 4 | Cross-backbone transfer is strong evidence, but MERG3R weakens the plug-in claim itself. |
+| E. Pointmap plane-feedback failure benchmark | 2 | 5 | 5 | Valuable supporting contribution if it exposes reproducible confirmation-bias failures. |
+
+## 18. Third-pass sources and claim discipline
+
+Primary sources added in this pass:
+
+* Planar Bundle Adjustment: https://arxiv.org/abs/2006.00187
+* Efficient Second-Order Plane Adjustment: https://openaccess.thecvf.com/content/CVPR2023/html/Zhou_Efficient_Second-Order_Plane_Adjustment_CVPR_2023_paper.html
+* PAS-SLAM: https://arxiv.org/abs/2402.06131
+* Data-Association-Free Landmark SLAM: https://arxiv.org/abs/2302.13264
+* HSfM: https://openaccess.thecvf.com/content/CVPR2025/html/Muller_Reconstructing_People_Places_and_Cameras_CVPR_2025_paper.html
+* MERG3R: https://openaccess.thecvf.com/content/CVPR2026/html/Cheng_MERG3R_A_Divide-and-Conquer_Approach_to_Large-Scale_Neural_Visual_Geometry_CVPR_2026_paper.html
+* TALO: https://openaccess.thecvf.com/content/CVPR2026/html/Zhang_TALO_Pushing_3D_Vision_Foundation_Models_Towards_Globally_Consistent_Online_CVPR_2026_paper.html
+* VGGT-SLAM++: https://arxiv.org/abs/2604.06830
+* G3T: https://arxiv.org/abs/2605.27372
+* Switchable Constraints: https://nikosuenderhauf.github.io/assets/papers/IROS12-switchableConstraints.pdf
+
+Claims that remain unsafe without additional evidence:
+
+* “first plane-aware bundle adjustment”;
+* “first structural feedback for DUSt3R/pointmaps”;
+* “first training-free model-agnostic geometry adapter”;
+* “joint plane identity and pose optimization is novel”;
+* “rollback or robust weighting is a research contribution”;
+* “cross-backbone compatibility alone establishes novelty.”
+
+The immediate research task is recorded in
+`docs/codex_tasks/evidence_gated_plane_feedback.md`.
