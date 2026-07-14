@@ -991,3 +991,69 @@ bash run_plane_feedback_p0.sh
 
 If the default output directory already exists, set a new `OUT_DIR`; do not
 delete or overwrite the old run.
+
+## 25. Session update: 2026-07-14 P0 `roma` dependency guard
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA: `74b2a14`
+
+Observed server result:
+
+* The first P0 launch stopped during DUSt3R module import with
+  `ModuleNotFoundError: No module named 'roma'`.
+* `roma` is an upstream dependency listed in the vendored
+  `dust3r/requirements.txt`; the failure occurred before global alignment or
+  plane feedback ran.
+* Therefore there is still no P0 acceptance decision, metric or diagnostic
+  visualization to report.
+
+Implemented behavior:
+
+* `run_plane_feedback_p0.sh` now checks whether the selected server Python can
+  import `roma` and installs the missing package before creating any run output.
+* The installed `roma` version is printed to the console and retained in the
+  run log for reproducibility.
+* The default output directory advances from `v1` to `v2`, preserving the
+  failed `v1` directory rather than deleting or overwriting it.
+
+Files changed:
+
+```text
+run_plane_feedback_p0.sh
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+<Git-for-Windows-bash> -n run_plane_feedback_p0.sh
+git diff --check -- run_plane_feedback_p0.sh docs/codex_handoff/CURRENT_STATE.md
+```
+
+Results:
+
+```text
+P0 shell syntax check: passed
+diff check: passed (line-ending conversion warning only)
+No model run, metric or visualization was produced locally.
+```
+
+Plan status:
+
+* Work remains strictly at P0, the existing-v1 single-scene behavior smoke.
+* P1 identical-cache quantitative baselines and point-aligned GT have not
+  started.
+* P2 leave-one-view-out factor auditing and P3 evidence gating have not
+  started; no innovation claim is made from this dependency repair.
+
+Next exact step on the server:
+
+```bash
+cd /gemini/code/LightRecon3D
+git pull --ff-only origin codex/bounded-support-head
+bash run_plane_feedback_p0.sh
+```
+
+Retain the generated log, acceptance record, before/after PLY files and
+displacement visualization before deciding whether P0 passes.
