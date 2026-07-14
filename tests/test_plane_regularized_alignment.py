@@ -96,6 +96,12 @@ class PlaneRegularizedAlignmentTest(unittest.TestCase):
         )
         self.assertFalse(result["accepted"])
         torch.testing.assert_close(scene.points, original)
+        proposed = torch.as_tensor(np.stack(result["proposed_pointmaps"]))
+        self.assertEqual(tuple(proposed.shape), (2, 2, 2, 3))
+        original_pointmaps = original.view(2, 2, 2, 3)
+        self.assertGreater(
+            float(torch.linalg.vector_norm(proposed - original_pointmaps).max()), 0.0
+        )
 
 
 if __name__ == "__main__":

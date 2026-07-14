@@ -4,7 +4,7 @@ set -euo pipefail
 PROJ=${PROJ:-/gemini/code/LightRecon3D}
 PYTHON=${PYTHON:-/root/miniconda3/envs/lightrecon/bin/python}
 INPUT_DIR=${INPUT_DIR:-/gemini/data-1/lightrecon_runs/stage3_val_showcase_v1/group_000_pairs_10/stage2_merge}
-OUT_DIR=${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_feedback_p0_scene00180_20260714_v3}
+OUT_DIR=${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_feedback_p0_scene00180_20260714_v4}
 WEIGHTS=${WEIGHTS:-/gemini/pretrain/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth}
 
 cd "$PROJ"

@@ -117,6 +117,17 @@ def _gather_confidence(scene, view_indices, pixel_xy):
     return (confidence / median).clamp(0.1, 10.0)
 
 
+def _snapshot_pointmaps(scene):
+    """Copy the current globally aligned pointmaps before any rollback."""
+
+    snapshots = []
+    for pointmap in scene.get_pts3d():
+        snapshots.append(
+            pointmap.detach().cpu().numpy().astype(np.float32, copy=True)
+        )
+    return snapshots
+
+
 def _balanced_weights(confidence, plane_ids, plane_count):
     weights = confidence.clone()
     for plane_id in range(plane_count):
@@ -272,6 +283,7 @@ def optimize_scene_with_plane_feedback(
         support_displacement = torch.linalg.vector_norm(final_points - initial_points, dim=-1)
         displacement_summary = _residual_summary(support_displacement.detach().cpu().numpy())
         normals_world, offsets_world = _world_planes(normal_raw, offsets, center, scale)
+        proposed_pointmaps = _snapshot_pointmaps(scene)
 
     residual_before = _residual_summary(initial_residual)
     residual_after = _residual_summary(final_residual)
@@ -317,6 +329,7 @@ def optimize_scene_with_plane_feedback(
         "residual_after": residual_after,
         "support_displacement": displacement_summary,
         "proposed": proposed,
+        "proposed_pointmaps": proposed_pointmaps,
         "plane_normals": normals_world.detach().cpu().numpy().astype(np.float32),
         "plane_offsets": offsets_world.detach().cpu().numpy().astype(np.float32),
         "history": history,

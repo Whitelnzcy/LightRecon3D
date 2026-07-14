@@ -227,6 +227,39 @@ def flatten_global_views(global_views):
     }
 
 
+def gather_pointmap_points(pointmaps, view_indices, pixel_xy):
+    """Gather explicit pointmap pixels using ``(view_index, x, y)`` provenance."""
+
+    views = np.asarray(view_indices, dtype=np.int64).reshape(-1)
+    pixels = np.asarray(pixel_xy, dtype=np.int64)
+    if pixels.shape != (len(views), 2):
+        raise ValueError("pixel_xy must have shape (N, 2) matching view_indices")
+    points = np.empty((len(views), 3), dtype=np.float32)
+    for view_index in np.unique(views):
+        if view_index < 0 or view_index >= len(pointmaps):
+            raise ValueError(f"Invalid alignment view index {int(view_index)}")
+        pointmap = np.asarray(pointmaps[int(view_index)], dtype=np.float32)
+        if pointmap.ndim != 3 or pointmap.shape[2] != 3:
+            raise ValueError(
+                f"Pointmap {int(view_index)} must have shape (H, W, 3), got {pointmap.shape}"
+            )
+        mask = views == view_index
+        xy = pixels[mask]
+        height, width = pointmap.shape[:2]
+        valid = (
+            (xy[:, 0] >= 0)
+            & (xy[:, 0] < width)
+            & (xy[:, 1] >= 0)
+            & (xy[:, 1] < height)
+        )
+        if not bool(valid.all()):
+            raise ValueError(
+                f"Pointmap pixels are out of range for alignment view {int(view_index)}"
+            )
+        points[mask] = pointmap[xy[:, 1], xy[:, 0]]
+    return points
+
+
 def numeric_summary(values):
     values = np.asarray(values, dtype=np.float64)
     if len(values) == 0:
@@ -1145,8 +1178,10 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
     plane_feedback = None
     plane_feedback_cache = ""
     plane_feedback_before_ply = ""
+    plane_feedback_proposed_ply = ""
     plane_feedback_after_ply = ""
     plane_feedback_displacement_ply = ""
+    plane_feedback_proposed_displacement_ply = ""
     if plane_feedback_enabled:
         if alignment_scene is None:
             raise RuntimeError("--plane_feedback requires --fusion_mode dust3r_global")
@@ -1168,6 +1203,12 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             min_relative_plane_improvement=args.plane_feedback_min_relative_improvement,
             log_every=args.plane_feedback_log_every,
         )
+        proposed_pointmaps = plane_feedback.pop("proposed_pointmaps")
+        proposed_points = gather_pointmap_points(
+            proposed_pointmaps,
+            original_global_cloud["view_indices"],
+            original_global_cloud["pixel_xy"],
+        )
         global_views = global_views_from_scene(alignment_scene, image_paths)
         refined_global_cloud = flatten_global_views(global_views)
         if not np.array_equal(
@@ -1178,6 +1219,9 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             raise RuntimeError("Plane feedback changed global-cloud registry/order")
         displacement = np.linalg.norm(
             refined_global_cloud["points"] - original_global_cloud["points"], axis=1
+        )
+        proposed_displacement = np.linalg.norm(
+            proposed_points - original_global_cloud["points"], axis=1
         )
         full_keys = (
             (original_global_cloud["view_indices"].astype(np.int64) << 42)
@@ -1194,6 +1238,12 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         plane_feedback["full_cloud_displacement"] = numeric_summary(displacement)
         plane_feedback["non_support_displacement"] = numeric_summary(
             displacement[non_support]
+        )
+        plane_feedback["proposed_full_cloud_displacement"] = numeric_summary(
+            proposed_displacement
+        )
+        plane_feedback["proposed_non_support_displacement"] = numeric_summary(
+            proposed_displacement[non_support]
         )
         display_indices = np.linspace(
             0,
@@ -1231,15 +1281,40 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             ),
             axis=1,
         ).astype(np.uint8)
+        proposed_displacement_scale = max(
+            float(np.percentile(proposed_displacement, 95)), 1e-12
+        )
+        proposed_displacement_level = np.clip(
+            proposed_displacement / proposed_displacement_scale, 0.0, 1.0
+        )
+        proposed_displacement_colors = np.stack(
+            (
+                255.0 * proposed_displacement_level,
+                255.0 * (1.0 - np.abs(2.0 * proposed_displacement_level - 1.0)),
+                255.0 * (1.0 - proposed_displacement_level),
+            ),
+            axis=1,
+        ).astype(np.uint8)
         feedback_stem = f"{safe_filename(scene_key)}_plane_feedback_v1"
         plane_feedback_before_ply = str(output_dir / f"{feedback_stem}_before.ply")
+        plane_feedback_proposed_ply = str(
+            output_dir / f"{feedback_stem}_proposed.ply"
+        )
         plane_feedback_after_ply = str(output_dir / f"{feedback_stem}_after.ply")
         plane_feedback_displacement_ply = str(
             output_dir / f"{feedback_stem}_displacement_heatmap.ply"
         )
+        plane_feedback_proposed_displacement_ply = str(
+            output_dir / f"{feedback_stem}_proposed_displacement_heatmap.ply"
+        )
         write_ascii_ply(
             Path(plane_feedback_before_ply),
             original_global_cloud["points"][display_indices],
+            diagnostic_colors[display_indices],
+        )
+        write_ascii_ply(
+            Path(plane_feedback_proposed_ply),
+            proposed_points[display_indices],
             diagnostic_colors[display_indices],
         )
         write_ascii_ply(
@@ -1251,6 +1326,11 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             Path(plane_feedback_displacement_ply),
             refined_global_cloud["points"][display_indices],
             displacement_colors[display_indices],
+        )
+        write_ascii_ply(
+            Path(plane_feedback_proposed_displacement_ply),
+            proposed_points[display_indices],
+            proposed_displacement_colors[display_indices],
         )
         views_by_index = {
             int(view["alignment_view_index"]): view for view in global_views.values()
@@ -1333,8 +1413,12 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             bool(plane_feedback["accepted"]) if plane_feedback is not None else False),
         plane_feedback_cache=np.asarray(plane_feedback_cache),
         plane_feedback_before_ply=np.asarray(plane_feedback_before_ply),
+        plane_feedback_proposed_ply=np.asarray(plane_feedback_proposed_ply),
         plane_feedback_after_ply=np.asarray(plane_feedback_after_ply),
         plane_feedback_displacement_ply=np.asarray(plane_feedback_displacement_ply),
+        plane_feedback_proposed_displacement_ply=np.asarray(
+            plane_feedback_proposed_displacement_ply
+        ),
         plane_feedback_json=np.asarray(
             json.dumps(
                 {
@@ -1393,8 +1477,12 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
         },
         "plane_feedback_cache": plane_feedback_cache,
         "plane_feedback_before_ply": plane_feedback_before_ply,
+        "plane_feedback_proposed_ply": plane_feedback_proposed_ply,
         "plane_feedback_after_ply": plane_feedback_after_ply,
         "plane_feedback_displacement_ply": plane_feedback_displacement_ply,
+        "plane_feedback_proposed_displacement_ply": (
+            plane_feedback_proposed_displacement_ply
+        ),
         "mapping_records": loaded.get("mapping_records", []),
         "plane_quality": plane_quality,
         "quality_summary": quality_summary,

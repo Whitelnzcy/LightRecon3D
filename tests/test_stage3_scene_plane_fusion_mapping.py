@@ -8,6 +8,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from export_stage3_scene_plane_fusion import (
+    gather_pointmap_points,
     map_stage2_points_to_global,
     parse_path_prefix_maps,
     path_key,
@@ -16,6 +17,27 @@ from export_stage3_scene_plane_fusion import (
 
 
 class Stage3ScenePlaneFusionMappingTest(unittest.TestCase):
+    def test_pointmap_gather_uses_explicit_view_and_xy_provenance(self):
+        first = np.zeros((2, 3, 3), dtype=np.float32)
+        second = np.zeros((1, 2, 3), dtype=np.float32)
+        first[1, 2] = [1.0, 2.0, 3.0]
+        second[0, 1] = [4.0, 5.0, 6.0]
+
+        points = gather_pointmap_points(
+            [first, second],
+            np.asarray([1, 0], dtype=np.int32),
+            np.asarray([[1, 0], [2, 1]], dtype=np.int32),
+        )
+
+        np.testing.assert_allclose(points, [[4.0, 5.0, 6.0], [1.0, 2.0, 3.0]])
+
+        with self.assertRaisesRegex(ValueError, "out of range"):
+            gather_pointmap_points(
+                [first],
+                np.asarray([0], dtype=np.int32),
+                np.asarray([[3, 0]], dtype=np.int32),
+            )
+
     def test_path_prefix_remap_supports_cross_machine_npz_paths(self):
         mappings = parse_path_prefix_maps(
             ["/gemini/data-1/Structured3D=E:/Study/code/LightRecon3D/data/Structured3D"]

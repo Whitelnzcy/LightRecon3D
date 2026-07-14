@@ -1,6 +1,6 @@
 # LightRecon3D Current State
 
-Last updated: 2026-07-05
+Last updated: 2026-07-14
 
 ## 1. Current project state
 
@@ -1123,3 +1123,118 @@ bash run_plane_feedback_p0.sh
 
 After completion, inspect the `v3` manifest and plane-feedback block. Preserve
 the partial `v2` directory as failure evidence.
+
+## 27. Session update: 2026-07-14 completed P0 rollback and proposed-state diagnostics
+
+Branch: `codex/bounded-support-head`
+
+Server execution commit SHA: `fae720a3e92eb2c493b861d660d9b2aa632e098e`
+
+Completed server output:
+
+```text
+/gemini/data-1/lightrecon_runs/plane_feedback_p0_scene00180_20260714_v3
+```
+
+Observed P0 result:
+
+```text
+accepted                         = false
+observations                     = 17310
+active planes                    = 4
+base loss before                 = 0.0076693739
+base loss proposed               = 0.0080806026
+base loss acceptance limit       = 0.0078994651
+plane residual mean before       = 0.0058277562
+plane residual mean proposed     = 0.0005458354
+relative plane improvement       = 0.9063387
+support displacement mean/p95    = 0.00748175 / 0.03111751
+feedback runtime seconds         = 2.1792
+```
+
+Interpretation:
+
+* The proposed feedback update reduced its plane residual by about 90.63%, but
+  increased the DUSt3R base objective by about 5.36%, exceeding the configured
+  3% tolerance.
+* The whole update was correctly rejected and the scene parameters were
+  restored. Committed support/full-cloud/non-support displacement is therefore
+  zero.
+* This is a successful rollback behavior check, not evidence of geometry
+  improvement or novelty. It motivates auditing individual harmful factors.
+
+Retained artifacts include the original global-cloud cache, result NPZ,
+manifest, HTML, GLB, plane parameter files, textured plane PLY, and the
+before/after/displacement PLY diagnostics. The directory totals about 69 MiB.
+
+Diagnostic gap found after the run:
+
+* The optimizer restored the differentiable scene before returning to Stage3.
+  Consequently the existing `after.ply` and displacement heatmap correctly
+  visualize the committed rollback state, but do not visualize the rejected
+  candidate that caused the 5.36% base-loss increase.
+* The rejected candidate pointmaps were not retained, preventing full-cloud and
+  non-support candidate-motion inspection.
+
+Implemented behavior after the P0 run:
+
+* The optimizer now snapshots all proposed globally aligned pointmaps before a
+  possible rollback.
+* Stage3 maps those pointmaps through explicit `(alignment_view_index, x, y)`
+  provenance and writes separate `proposed.ply` and
+  `proposed_displacement_heatmap.ply` files.
+* The manifest/NPZ now record proposed diagnostic paths plus proposed
+  full-cloud and non-support displacement summaries, while the existing
+  `after` fields continue to represent the committed state.
+* The P0 server script advances its default output to `v4`, preserving `v3`.
+
+Files changed:
+
+```text
+plane_regularized_alignment.py
+export_stage3_scene_plane_fusion.py
+tests/test_plane_regularized_alignment.py
+tests/test_stage3_scene_plane_fusion_mapping.py
+run_plane_feedback_p0.sh
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+python -m py_compile plane_regularized_alignment.py export_stage3_scene_plane_fusion.py tests/test_plane_regularized_alignment.py tests/test_stage3_scene_plane_fusion_mapping.py
+PYTHONPATH=. python tests/test_plane_regularized_alignment.py
+python tests/test_stage3_scene_plane_fusion_mapping.py
+<Git-for-Windows-bash> -n run_plane_feedback_p0.sh
+git diff --check -- <six changed implementation/test/handoff files>
+```
+
+Results:
+
+```text
+py_compile: passed
+plane-feedback tests: 3 passed
+Stage3 mapping/provenance tests: 4 passed
+P0 shell syntax check: passed
+diff check: passed (line-ending conversion warnings only)
+```
+
+An initial `python -m unittest tests...` invocation resolved the environment's
+installed Ultralytics `tests` package and failed while reading its settings.
+Running the repository test files directly avoided that unrelated namespace
+collision and produced the passing results above.
+
+Unresolved:
+
+* The new proposed-state diagnostic has not yet been run on the server.
+* The exact proposed full-cloud/non-support displacement for `scene_00180` is
+  unknown until the `v4` rerun.
+* GitHub access from the server is intermittent; no direct SSH control path is
+  available to Codex.
+* P1 point-aligned GT and identical-cache quantitative baselines remain pending.
+
+Next exact step:
+
+Pull the diagnostic commit when server GitHub access permits and rerun P0 into
+the new `v4` directory. Archive the proposed full-cloud/non-support movement and
+proposed heatmap, then mark P0 complete and begin P1.
