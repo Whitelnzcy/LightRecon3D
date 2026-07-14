@@ -143,6 +143,16 @@ Implementation status on 2026-07-14:
   reconstruction metrics still require Structured3D depth and camera poses.
 * Server execution and the remaining P1 baselines are not yet complete.
 
+Server update on 2026-07-14:
+
+* The retained five-view group produced 715,848 filtered cache points, 693,839
+  labeled points (96.93%), seven plane identities and one recorded source-cache
+  SHA-256. The real GT NPZ/PLY and manifest are complete.
+* The next baseline is scalable sequential RANSAC on that exact filtered cache.
+  Hypotheses may be scored on a fixed deterministic subset, but final inliers,
+  assignments and metrics use the full cache; this approximation is recorded
+  in each method configuration.
+
 ### P2. Leave-one-view-out factor audit
 
 Create one row per `(scene, plane candidate, held-out view)` and record the

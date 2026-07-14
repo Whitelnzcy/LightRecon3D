@@ -1329,3 +1329,88 @@ bash run_plane_feedback_p1_gt.sh
 The required acceptance checks are: one cache checksum, five registered views,
 nonzero labeled points, stable source plane IDs across views, and a visually
 sensible colored GT PLY before running comparative baselines.
+
+## 29. Session update: 2026-07-14 real P1 GT and scalable RANSAC preparation
+
+Branch: `codex/bounded-support-head`
+
+Server execution commit SHA: `e444c8a2f730254c22a754e084279b01e53fede4`
+
+Completed server output:
+
+```text
+/gemini/data-1/lightrecon_runs/plane_feedback_p1_gt_scene00180_20260714_v1
+```
+
+Observed point-aligned GT result:
+
+```text
+source cache SHA-256 = 77b745a52bf28d170977f9ffd14da79c11df5e7940c886b4f36e69f0daf32101
+filtered points        = 715848
+labeled points         = 693839
+labeled coverage       = 96.93%
+planes                 = 7
+source plane IDs       = [0, 1, 19, 27, 29, 35, 45]
+registered views       = 5
+min confidence         = 1.0
+boundary ignore radius = 1 pixel
+```
+
+The real GT NPZ, colored PLY, manifest and run log were generated. This passes
+the point-aligned plane-label acceptance check. It still does not provide
+absolute pose or metric depth/full-cloud GT.
+
+Implemented next P1 baseline:
+
+* Sequential RANSAC now scores hypotheses on at most a fixed deterministic
+  subset (`hypothesis_max_points`) and validates/refits the winning hypothesis
+  against every remaining full-cache point.
+* Large inlier sets use deterministic occupied-voxel connectivity; small sets
+  retain the exact radius-connected implementation. The threshold and mode are
+  stored in the method configuration.
+* Added a server RANSAC entrypoint that runs both an oracle GT self-evaluation
+  sanity row and the full-cache RANSAC row against the same GT NPZ.
+* Replaced the optional SciPy/greedy assignment path with an exact pure-NumPy
+  rectangular Hungarian matcher, preventing environment ABI issues or greedy
+  plane-match errors from changing evaluation metrics.
+
+Files changed/added:
+
+```text
+global_plane_baselines.py
+evaluate_global_plane_baselines.py
+tests/test_global_plane_baselines.py
+tests/test_evaluate_global_plane_baselines.py
+run_plane_feedback_p1_ransac.sh
+docs/codex_tasks/evidence_gated_plane_feedback.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands/tests completed:
+
+```text
+python -m py_compile global_plane_baselines.py evaluate_global_plane_baselines.py tests/test_global_plane_baselines.py tests/test_evaluate_global_plane_baselines.py
+PYTHONPATH=. python tests/test_global_plane_baselines.py
+PYTHONPATH=. python tests/test_evaluate_global_plane_baselines.py
+<Git-for-Windows-bash> -n run_plane_feedback_p1_ransac.sh
+git diff --check -- <RANSAC/evaluator/test/script files>
+```
+
+Results:
+
+```text
+global plane baseline tests: 5 passed
+global plane evaluation tests: 3 passed
+P1 RANSAC shell syntax check: passed
+diff check: passed (line-ending conversion warnings only)
+```
+
+Next exact server step after pulling the next commit:
+
+```bash
+bash run_plane_feedback_p1_ransac.sh
+```
+
+Archive the RANSAC method manifest, CSV/JSON metrics, PLY and runtime before
+building the Stage1 support adapters. The P0 `v4` proposed-state rerun remains a
+useful diagnostic but no longer blocks the completed P0 behavior verdict.

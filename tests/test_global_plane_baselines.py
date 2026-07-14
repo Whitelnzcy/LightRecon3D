@@ -7,10 +7,19 @@ from global_plane_baselines import (
     global_cache_keep_mask,
     sequential_plane_ransac,
     supports_to_primitives,
+    voxel_components,
 )
 
 
 class GlobalPlaneBaselineTest(unittest.TestCase):
+    def test_voxel_components_split_large_gaps(self):
+        points = np.asarray(
+            [[0, 0, 0], [0.04, 0, 0], [2, 0, 0], [2.04, 0, 0]],
+            dtype=np.float32,
+        )
+        components = voxel_components(points, voxel_size=0.1, min_points=2)
+        self.assertEqual([set(component.tolist()) for component in components], [{0, 1}, {2, 3}])
+
     def test_identical_cache_filter_rejects_low_confidence_and_invalid_points(self):
         points = np.asarray(
             [[0, 0, 0], [1, 0, 0], [np.nan, 0, 0], [1e6, 0, 0]],

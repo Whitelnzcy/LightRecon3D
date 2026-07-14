@@ -5,17 +5,73 @@ import json
 from pathlib import Path
 
 import numpy as np
-try:
-    from scipy.optimize import linear_sum_assignment
-except ImportError:
-    def linear_sum_assignment(cost):
-        # Deterministic greedy fallback; SciPy uses exact Hungarian matching when available.
-        candidates = sorted((float(cost[i, j]), i, j) for i in range(cost.shape[0]) for j in range(cost.shape[1]))
-        rows, cols, used_r, used_c = [], [], set(), set()
-        for _, i, j in candidates:
-            if i not in used_r and j not in used_c:
-                rows.append(i); cols.append(j); used_r.add(i); used_c.add(j)
-        return np.asarray(rows), np.asarray(cols)
+
+
+def linear_sum_assignment(cost):
+    """Exact rectangular Hungarian matching without a SciPy dependency."""
+
+    cost = np.asarray(cost, dtype=np.float64)
+    if cost.ndim != 2:
+        raise ValueError("assignment cost must be a matrix")
+    original_rows, original_cols = cost.shape
+    transposed = original_rows > original_cols
+    if transposed:
+        cost = cost.T
+    rows, cols = cost.shape
+    if rows == 0 or cols == 0:
+        return np.zeros((0,), dtype=np.int64), np.zeros((0,), dtype=np.int64)
+    u = np.zeros(rows + 1, dtype=np.float64)
+    v = np.zeros(cols + 1, dtype=np.float64)
+    p = np.zeros(cols + 1, dtype=np.int64)
+    way = np.zeros(cols + 1, dtype=np.int64)
+    for row in range(1, rows + 1):
+        p[0] = row
+        min_values = np.full(cols + 1, np.inf, dtype=np.float64)
+        used = np.zeros(cols + 1, dtype=bool)
+        column0 = 0
+        while True:
+            used[column0] = True
+            row0 = p[column0]
+            delta = np.inf
+            column1 = 0
+            for column in range(1, cols + 1):
+                if used[column]:
+                    continue
+                current = cost[row0 - 1, column - 1] - u[row0] - v[column]
+                if current < min_values[column]:
+                    min_values[column] = current
+                    way[column] = column0
+                if min_values[column] < delta:
+                    delta = min_values[column]
+                    column1 = column
+            for column in range(cols + 1):
+                if used[column]:
+                    u[p[column]] += delta
+                    v[column] -= delta
+                else:
+                    min_values[column] -= delta
+            column0 = column1
+            if p[column0] == 0:
+                break
+        while True:
+            column1 = way[column0]
+            p[column0] = p[column1]
+            column0 = column1
+            if column0 == 0:
+                break
+    matched_rows = []
+    matched_cols = []
+    for column in range(1, cols + 1):
+        if p[column] != 0:
+            matched_rows.append(int(p[column] - 1))
+            matched_cols.append(int(column - 1))
+    matched_rows = np.asarray(matched_rows, dtype=np.int64)
+    matched_cols = np.asarray(matched_cols, dtype=np.int64)
+    order = np.argsort(matched_rows)
+    matched_rows, matched_cols = matched_rows[order], matched_cols[order]
+    if transposed:
+        return matched_cols, matched_rows
+    return matched_rows, matched_cols
 
 
 def iou_matrix(pred, gt, pred_ids, gt_ids):

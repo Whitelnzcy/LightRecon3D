@@ -2,10 +2,17 @@ import unittest
 
 import numpy as np
 
-from evaluate_global_plane_baselines import evaluate_arrays
+from evaluate_global_plane_baselines import evaluate_arrays, linear_sum_assignment
 
 
 class GlobalPlaneEvaluationTest(unittest.TestCase):
+    def test_rectangular_hungarian_finds_non_greedy_optimum(self):
+        cost = np.asarray([[1.0, 2.0, 9.0], [1.1, 9.0, 9.0]], dtype=np.float64)
+        rows, cols = linear_sum_assignment(cost)
+        self.assertEqual(rows.tolist(), [0, 1])
+        self.assertEqual(cols.tolist(), [1, 0])
+        self.assertAlmostEqual(float(cost[rows, cols].sum()), 3.1)
+
     def test_perfect_prediction(self):
         points = np.array([[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]], np.float32)
         labels = np.array([0, 0, 1, 1], np.int32)

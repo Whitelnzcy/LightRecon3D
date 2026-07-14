@@ -76,34 +76,91 @@ def euclidean_components(points, radius, min_points):
     return sorted(result, key=len, reverse=True)
 
 
+def voxel_components(points, voxel_size, min_points):
+    """Scalable occupancy components for large planar inlier sets."""
+
+    points = np.asarray(points, dtype=np.float32)
+    if not len(points):
+        return []
+    cells = np.floor(points / float(voxel_size)).astype(np.int64)
+    buckets = {}
+    for index, cell in enumerate(cells):
+        buckets.setdefault(tuple(cell), []).append(index)
+    unseen = set(buckets)
+    result = []
+    while unseen:
+        seed = min(unseen)
+        unseen.remove(seed)
+        stack = [seed]
+        component = []
+        while stack:
+            cell = stack.pop()
+            component.extend(buckets[cell])
+            cx, cy, cz = cell
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        neighbor = (cx + dx, cy + dy, cz + dz)
+                        if neighbor in unseen:
+                            unseen.remove(neighbor)
+                            stack.append(neighbor)
+        if len(component) >= int(min_points):
+            result.append(np.asarray(component, dtype=np.int64))
+    return sorted(result, key=len, reverse=True)
+
+
 def sequential_plane_ransac(points, distance_threshold=0.03, iterations=1000,
                             min_inliers=200, cluster_radius=0.08,
-                            min_component_points=100, max_planes=64, seed=0):
+                            min_component_points=100, max_planes=64, seed=0,
+                            hypothesis_max_points=50000,
+                            component_exact_max_points=20000):
     points = np.asarray(points, dtype=np.float32)
     rng = np.random.default_rng(seed)
     remaining = np.arange(len(points), dtype=np.int64)
     supports = []
     while len(remaining) >= min_inliers and len(supports) < max_planes:
         xyz = points[remaining]
-        best = None
+        if len(xyz) > int(hypothesis_max_points):
+            score_indices = rng.choice(
+                len(xyz), int(hypothesis_max_points), replace=False
+            )
+            score_xyz = xyz[score_indices]
+        else:
+            score_xyz = xyz
+        best_model = None
+        best_count = -1
         for _ in range(iterations):
-            sample = xyz[rng.choice(len(xyz), 3, replace=False)]
+            sample = score_xyz[rng.choice(len(score_xyz), 3, replace=False)]
             normal = np.cross(sample[1] - sample[0], sample[2] - sample[0])
             norm = float(np.linalg.norm(normal))
             if norm < 1e-8:
                 continue
             normal /= norm
             offset = -float(normal @ sample[0])
-            mask = np.abs(xyz @ normal + offset) <= distance_threshold
-            if best is None or int(mask.sum()) > int(best.sum()):
-                best = mask
-        if best is None or int(best.sum()) < min_inliers:
+            count = int(
+                (np.abs(score_xyz @ normal + offset) <= distance_threshold).sum()
+            )
+            if count > best_count:
+                best_count = count
+                best_model = (normal.copy(), offset)
+        if best_model is None:
             break
-        candidate_global = remaining[best]
+        normal, offset = best_model
+        candidate = np.abs(xyz @ normal + offset) <= distance_threshold
+        if int(candidate.sum()) < min_inliers:
+            break
+        candidate_global = remaining[candidate]
         normal, offset, _ = fit_plane(points[candidate_global])
         refined = np.abs(xyz @ normal + offset) <= distance_threshold
         candidate_global = remaining[refined]
-        components = euclidean_components(points[candidate_global], cluster_radius, min_component_points)
+        if len(candidate_global) <= int(component_exact_max_points):
+            components = euclidean_components(
+                points[candidate_global], cluster_radius, min_component_points
+            )
+        else:
+            components = voxel_components(
+                points[candidate_global], cluster_radius, min_component_points
+            )
         accepted = []
         for component in components:
             indices = candidate_global[component]
@@ -193,13 +250,16 @@ def main():
     parser.add_argument("--min_component_points", type=int, default=100)
     parser.add_argument("--max_planes", type=int, default=64)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--hypothesis_max_points", type=int, default=50000)
+    parser.add_argument("--component_exact_max_points", type=int, default=20000)
     args = parser.parse_args()
     config = vars(args).copy()
     cache = load_global_cache(args.global_cloud_npz, args.min_conf)
     started = time.perf_counter()
     supports = sequential_plane_ransac(
         cache["points"], args.distance_threshold, args.iterations, args.min_inliers,
-        args.cluster_radius, args.min_component_points, args.max_planes, args.seed)
+        args.cluster_radius, args.min_component_points, args.max_planes, args.seed,
+        args.hypothesis_max_points, args.component_exact_max_points)
     runtime = time.perf_counter() - started
     row = save_result(Path(args.output_dir), args.scene_key, cache, supports,
                       "global_ransac_cc", runtime, config)
