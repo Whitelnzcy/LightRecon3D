@@ -2231,3 +2231,60 @@ smoke shell syntax: passed
 No three-group execution metrics are claimed yet. The next server interaction
 is the one-command smoke run from
 `docs/research_practice/manifests/three_group_smoke_execute.json`.
+
+## 2026-07-15 three-group smoke aggregate and gate audit
+
+The supplied `aggregate_method_summary.json` contains completed metric rows for
+all three smoke view groups (two independent Structured3D scene IDs). This is a
+smoke signal only; the per-group gate and `batch_execution.json` still need to
+be audited before any method decision.
+
+Conflict-preserving support-record medians:
+
+```text
+method                         pairwise F1  GT coverage  assignment  plane precision  observed recall
+global RANSAC                  0.704429     0.999740     0.780800    0.600000         0.500000
+raw manual support merge       0.769270     0.994722     0.994400    0.250000         0.500000
+raw direct per-support SVD      0.119595     0.994722     0.994400    0.000000         0.000000
+```
+
+The difference between the manual and RANSAC aggregate median F1 values is
+`+0.064841`, but their means are nearly tied (`0.742417` versus `0.741845`).
+Raw manual merge reduces median overmerge excess from 2 to 1, while increasing
+fragmentation excess from 1 to 2 and reducing plane precision from 0.60 to
+0.25. It also contains a median 9,084 conflicting positive keys and 36,297
+conflicting records. Per-group deltas are required to determine the 70% win
+rate gate; aggregate medians alone cannot answer it.
+
+The conflict-drop numbers are not valid primary improvements:
+
+```text
+method                         pairwise F1  GT coverage  assignment
+manual unique conflict-drop    0.844669     0.544519     0.412850
+direct unique conflict-drop    0.827462     0.000585     0.000550
+```
+
+Both obtain a higher identity score by discarding coverage. Direct
+conflict-drop is especially degenerate and must not be shown as a successful
+method. These remain coverage-collapse ablations only.
+
+Implemented `audit_research_practice_batch_results.py` and
+`run_research_practice_smoke_gate.sh`. The audit reads the archived per-group
+metric rows and batch ledger, rejects failed/missing methods, computes the
+manual-versus-RANSAC F1 delta for every group, and applies the pre-registered
+median gain, group win rate, coverage, assignment and overmerge gates. It also
+reports conflict-drop coverage collapse separately and refuses promotion
+before eight independent scenes. Outputs are JSON, CSV and Markdown, and the
+audit refuses to overwrite an existing directory.
+
+Local audit validation completed:
+
+```text
+smoke-gate tests: 4 passed
+Python syntax check: passed
+shell syntax check: passed
+```
+
+No final stop/go decision is claimed from the aggregate summary. The next
+server step is the CPU-only smoke gate on the existing batch files; no GPU or
+reconstruction rerun is needed.

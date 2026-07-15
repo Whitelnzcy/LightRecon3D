@@ -5,8 +5,9 @@ Date: 2026-07-15
 Deadline: 2026-07-31 23:00 Asia/Shanghai
 
 Status: active and scope-frozen. W1 engineering output is complete. W2 input
-preflight passed 3/3 retained groups; the identical-cache smoke executor is
-implemented locally and awaiting its server run.
+preflight passed 3/3 retained groups and the identical-cache smoke produced
+all three groups. Its aggregate result is mixed; the per-group gate audit is
+implemented locally and awaiting a CPU-only server run.
 
 ## Objective
 
@@ -176,8 +177,8 @@ committed.
 
 ## Immediate next step
 
-Commit and run the three-group identical-cache smoke. Inspect its failure rows,
-per-method identity/support/geometry tables and qualitative outputs before
-freezing the final 8-12 independent-scene manifest. Structural lines remain an
-output-only A5 ablation after their real-scene constraint usefulness gate
-failed.
+Run the CPU-only per-group smoke gate against the existing batch JSON. Use its
+explicit stop/go result to choose raw manual aggregation or RANSAC as the
+retained deterministic method, then freeze the final 8-12 independent-scene
+manifest. Conflict-drop results are coverage-collapse ablations, and
+structural lines remain output-only A5.
