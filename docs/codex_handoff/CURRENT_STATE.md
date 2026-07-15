@@ -2116,3 +2116,57 @@ read a nonexistent `roma.__version__` attribute. No extraction or output
 directory creation occurred; only the sibling `v2_run.log` was written. The
 probe now obtains the installed distribution version through
 `importlib.metadata.version("roma")`. The next real launch must use `v3`.
+
+## 2026-07-15 real structural-line gate and batch preflight
+
+The real scene-00180 structural-line smoke completed on server commit
+`314c7fc`, using the frozen 715,848-point global cache with SHA256
+`77b745a52bf28d170977f9ffd14da79c11df5e7940c886b4f36e69f0daf32101`.
+It processed five views in 1.3295 seconds, detected 291 2D segments and
+exported 289 lifted 3D segments. The two-sided plane association ledger
+contained 77 unassigned, 92 within-plane, 3 plane-boundary and 117
+single-plane-edge segments.
+
+The engineering gate passed: exact pointmap lifting, line NPZ/JSON, PLY and
+all five overlays were produced. The reconstruction-constraint usefulness
+gate failed. The overlays were dominated by window/material-frame edges and
+duplicate parallel responses, while only three segments were associated with
+two distinct planes. The Stage2 plane labels also covered only 15,972 of
+715,848 cache points (2.23%). Structural lines are therefore retained as an
+auxiliary point/line/plane output and a report ablation. They are not used to
+modify global alignment or plane geometry, and no line-detector tuning or new
+line model is authorized before the deadline.
+
+Implemented the first W2 batch component:
+
+* `research_practice_batch.py` reads a schema-versioned manifest and performs
+  a CPU-only preflight before expensive GPU execution.
+* Every Stage2 input file is hashed. Stage2 metadata, image existence, scene
+  name, pair group and minimum unique-view count are validated through the
+  existing Stage3 view-registry implementation.
+* Optional frozen artifacts can be required and checked against an expected
+  SHA256. Missing files and checksum mismatches become explicit failure rows.
+* Duplicate scene/pair group entries are rejected. Unique view groups and
+  unique Structured3D scenes are counted separately so repeated room
+  perspectives cannot be reported as independent scenes.
+* JSON, UTF-8 CSV and Markdown summaries are written to a new directory; the
+  tool refuses to overwrite an existing output.
+* `docs/research_practice/manifests/three_group_smoke.json` freezes the first
+  three retained groups. They contain three view groups but only two unique
+  Structured3D scene IDs, which the report must state explicitly.
+* `run_research_practice_batch_preflight.sh` is the single server entrypoint
+  for this non-GPU discovery step.
+
+Local validation completed:
+
+```text
+research-practice batch tests: 4 passed
+python syntax checks: passed
+batch preflight shell syntax: passed
+```
+
+No three-group server preflight, new global alignment, cross-scene metric or
+efficiency number is claimed yet. The next server action is the CPU-only
+three-group input preflight. Its archived JSON will freeze the valid view
+groups and checksums; cache inventory and any required one-time global
+alignment generation follow only for those passing rows.

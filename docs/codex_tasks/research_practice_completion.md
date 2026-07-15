@@ -4,7 +4,8 @@ Date: 2026-07-15
 
 Deadline: 2026-07-31 23:00 Asia/Shanghai
 
-Status: active and scope-frozen.
+Status: active and scope-frozen. W1 engineering output is complete; W2 batch
+preflight is implemented locally and awaiting the three-group server audit.
 
 ## Objective
 
@@ -174,6 +175,7 @@ committed.
 
 ## Immediate next step
 
-Implement and test the structural-line exporter against a synthetic complete
-pointmap cache, then connect it to one existing server cache without rerunning
-DUSt3R.
+Run the CPU-only three-group manifest preflight and archive its JSON/CSV/Markdown
+bundle. Use those verified input rows to connect cache generation and the
+identical-cache batch executor. Structural lines remain an output-only A5
+ablation after their real-scene constraint usefulness gate failed.
