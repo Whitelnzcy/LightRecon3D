@@ -1,6 +1,6 @@
 # LightRecon3D Current State
 
-Last updated: 2026-07-14
+Last updated: 2026-07-15
 
 ## 1. Current project state
 
@@ -2035,3 +2035,63 @@ gate is a multi-scene identical-cache audit; no new neural model is authorized
 until the identity gain is cross-scene, conflict-preserving and better than
 RANSAC by the pre-registered margin. No pointmap recache or long server run has
 been performed for this pivot.
+
+## 2026-07-15 research-practice completion sprint and structural lines
+
+The project scope is now frozen around completing the approved undergraduate
+research-practice deliverables by 2026-07-31. The active task is
+`docs/codex_tasks/research_practice_completion.md`; the bounded-plane identity
+pivot remains one time-bounded experiment rather than a new open-ended main
+line. Strong novelty and paper submission are not completion requirements.
+
+Implemented the missing lightweight structural-line path:
+
+* `extract_structural_lines.py` reconstructs every saved DUSt3R pointmap RGB,
+  XYZ and confidence image from the complete global cache.
+* OpenCV LSD detects 2D lines in the exact aligned-pointmap resolution. Line
+  pixels are stored in explicit `(x,y)` order and
+  `dust3r_aligned_pointmap` space.
+* 3D lifting samples only the same view and exact pointmap pixels, filters
+  confidence/invalid geometry, splits invalid or large 3D gaps, keeps the
+  longest contiguous run and fits a deterministic PCA segment.
+* Optional plane labels are joined by exact `(alignment_view_index,x,y)`.
+  Duplicate agreement is collapsed and conflicting duplicate keys are dropped
+  and counted rather than guessed.
+* Both sides of a line are associated with plane labels as unassigned,
+  within-plane, plane-boundary or single-plane-edge evidence.
+* Outputs are a schema-versioned NPZ, JSON line ledger, edge PLY, one overlay
+  per view and a checksum/config/runtime manifest. The exporter refuses to
+  overwrite an existing output directory.
+* `run_research_practice_line_smoke.sh` targets the retained scene-00180 cache,
+  checks/installs `roma==1.5.6`, checks OpenCV, records checksums/GPU/Git SHA
+  and runs without recomputing DUSt3R alignment.
+
+Focused validation completed locally:
+
+```text
+python -m py_compile extract_structural_lines.py tests/test_extract_structural_lines.py
+python tests/test_extract_structural_lines.py
+python tests/test_stage3_scene_plane_fusion_mapping.py
+<Git-for-Windows-bash> -n run_research_practice_line_smoke.sh
+```
+
+Results:
+
+```text
+structural-line tests: 7 passed
+Stage3 mapping/cache tests: 5 passed
+shell syntax: passed
+```
+
+The structural-line tests cover conflict-preserving label rasterization, both
+supported prediction schemas, clipped `(x,y)` sampling, two-sided boundary
+association, longest-contiguous-run 3D fitting, edge PLY output and one full
+synthetic CLI artifact set. The retained synthetic visual diagnostic detected
+four lines, lifted all four, classified two as plane boundaries and two as
+within-plane, and produced the expected overlay. It is a behavior diagnostic,
+not a real-scene metric.
+
+No real server structural-line run, cross-scene batch result, efficiency
+benchmark or report result is claimed yet. The next exact step is to push this
+implementation and run `bash run_research_practice_line_smoke.sh` on the
+retained cache before connecting the multi-scene batch runner.

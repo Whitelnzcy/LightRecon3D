@@ -2,8 +2,10 @@
 
 Date: 2026-07-15
 
-Status: active signal-audit task. No method novelty or cross-scene gain is
-claimed.
+Status: subsumed on 2026-07-15 by
+`docs/codex_tasks/research_practice_completion.md`. The cross-scene identity
+audit remains one bounded experiment in the completion plan, not a new main
+research program. No method novelty or cross-scene gain is claimed.
 
 ## Decision being implemented
 
