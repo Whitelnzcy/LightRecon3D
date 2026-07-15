@@ -2170,3 +2170,64 @@ efficiency number is claimed yet. The next server action is the CPU-only
 three-group input preflight. Its archived JSON will freeze the valid view
 groups and checksums; cache inventory and any required one-time global
 alignment generation follow only for those passing rows.
+
+## 2026-07-15 three-group preflight result and smoke executor
+
+The server preflight completed successfully on commit `147615f`. All three
+retained view groups passed exact metadata and image checks:
+
+```text
+items                       3
+passed_items                3
+failed_items                0
+Stage2 records             30
+unique views per group      5, 5, 5
+unique view groups          3
+unique Structured3D scenes  2
+input bytes                 5,550,864
+```
+
+The smoke set is therefore three room/perspective view groups, not three
+independent scenes. Group 000 and group 001 both belong to `scene_00180`;
+group 002 belongs to `scene_00181`. This smoke can validate the batch machinery
+but cannot satisfy the final eight-scene requirement or the cross-scene
+promotion gate.
+
+Implemented `execute_research_practice_batch.py` and the server entrypoint
+`run_research_practice_batch_smoke.sh`:
+
+* Group 000 reuses the frozen cache with verified SHA256
+  `77b745a52bf28d170977f9ffd14da79c11df5e7940c886b4f36e69f0daf32101`.
+  Groups 001 and 002 generate one DUSt3R global alignment each. No plane
+  feedback is enabled.
+* Every method within a group consumes that group's identical global cache.
+  The frozen stages are direct per-support global SVD, point-aligned
+  Structured3D GT, current manual support merge, sequential RANSAC, exact
+  support lift and structural-line output.
+* Full-cache metrics compare GT, RANSAC, direct-support conflict-drop and
+  manual-support conflict-drop outputs only after exact cache indexing.
+* The primary identity audit keeps repeated raw support records and their
+  conflicts. Conflict-drop results are labeled as ablations, never as the
+  primary score.
+* Structural lines produce NPZ, PLY and five overlays per group but do not
+  modify points, poses or plane assignments.
+* Each subprocess streams to its own log. A failed stage becomes an explicit
+  item failure row, while partial outputs and checksums remain available.
+* The batch writes `batch_execution.json`, item CSV, concatenated metric
+  JSON/CSV, per-method mean/median JSON/CSV and Markdown. Unique view groups
+  and independent scene IDs remain separate counters.
+* The server launcher fixes the project Python, checks CUDA, NumPy, SciPy and
+  torch, checks/installs `roma==1.5.6`, `trimesh==4.9.0` and a pre-5 OpenCV
+  build without allowing those repairs to replace NumPy.
+
+Local validation completed:
+
+```text
+focused tests: 50 passed
+Python syntax checks: passed
+smoke shell syntax: passed
+```
+
+No three-group execution metrics are claimed yet. The next server interaction
+is the one-command smoke run from
+`docs/research_practice/manifests/three_group_smoke_execute.json`.

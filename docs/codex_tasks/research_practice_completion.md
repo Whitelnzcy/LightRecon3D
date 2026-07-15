@@ -4,8 +4,9 @@ Date: 2026-07-15
 
 Deadline: 2026-07-31 23:00 Asia/Shanghai
 
-Status: active and scope-frozen. W1 engineering output is complete; W2 batch
-preflight is implemented locally and awaiting the three-group server audit.
+Status: active and scope-frozen. W1 engineering output is complete. W2 input
+preflight passed 3/3 retained groups; the identical-cache smoke executor is
+implemented locally and awaiting its server run.
 
 ## Objective
 
@@ -175,7 +176,8 @@ committed.
 
 ## Immediate next step
 
-Run the CPU-only three-group manifest preflight and archive its JSON/CSV/Markdown
-bundle. Use those verified input rows to connect cache generation and the
-identical-cache batch executor. Structural lines remain an output-only A5
-ablation after their real-scene constraint usefulness gate failed.
+Commit and run the three-group identical-cache smoke. Inspect its failure rows,
+per-method identity/support/geometry tables and qualitative outputs before
+freezing the final 8-12 independent-scene manifest. Structural lines remain an
+output-only A5 ablation after their real-scene constraint usefulness gate
+failed.
