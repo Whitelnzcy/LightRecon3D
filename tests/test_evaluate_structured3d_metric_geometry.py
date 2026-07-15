@@ -8,6 +8,7 @@ from evaluate_structured3d_metric_geometry import (
     apply_similarity,
     estimate_similarity,
     evaluate_predictions,
+    oracle_view_switch,
 )
 
 
@@ -93,6 +94,39 @@ class Structured3DMetricGeometryTest(unittest.TestCase):
             )
             self.assertEqual(rows["moved"]["matched_metric_points"], 8)
             self.assertEqual(result["source_global_cloud_sha256"], "")
+            self.assertEqual(
+                rows["moved"]["oracle_view_switch_upper_bound"]
+                ["joint_pareto_oracle"]["selected_corrected_views"],
+                [],
+            )
+
+    def test_oracle_view_switch_keeps_only_jointly_helpful_view(self):
+        gt_points = np.asarray([
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 1.0],
+            [0.0, 2.0, 1.0], [0.0, 2.0, 2.0],
+        ], dtype=np.float64)
+        views = np.asarray([0, 0, 0, 0, 1, 1, 1, 1], np.int32)
+        plane_ids = np.asarray([0, 0, 0, 0, 1, 1, 1, 1], np.int32)
+        match = {
+            "gt_points": gt_points,
+            "gt_views": views,
+            "gt_plane_ids": plane_ids,
+            "gt_mask": np.ones(8, bool),
+        }
+        gt = {
+            "plane_normals": np.asarray([[0, 0, 1], [1, 0, 0]], np.float64),
+            "plane_offsets": np.asarray([0, 0], np.float64),
+        }
+        reference = gt_points.copy()
+        reference[views == 1, 0] += 0.1
+        candidate = reference.copy()
+        candidate[views == 1] = gt_points[views == 1]
+        result = oracle_view_switch(candidate, match, reference, match, gt)
+        oracle = result["joint_pareto_oracle"]
+        self.assertEqual(oracle["selected_corrected_views"], [1])
+        self.assertLess(oracle["delta_vs_reference"]["correspondence_rmse_m"], 0.0)
+        self.assertLess(oracle["delta_vs_reference"]["gt_plane_mean_residual_m"], 0.0)
 
 
 if __name__ == "__main__":

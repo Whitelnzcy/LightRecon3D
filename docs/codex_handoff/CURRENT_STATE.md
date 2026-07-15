@@ -1886,3 +1886,117 @@ manual_ba/*_summary.json
 oracle_ba/*_summary.json
 run.log
 ```
+
+## 34. Session update: 2026-07-15 metric/oracle result and final P1 rollback gate
+
+Branch: `codex/bounded-support-head`
+
+Server commit SHA: `b973258fa419dbc582dcaf1227ab6ee013f78087`
+
+Completed server run:
+
+```text
+/gemini/data-1/lightrecon_runs/plane_feedback_p1_metric_oracle_scene00180_20260715_v1
+```
+
+Input integrity and GT:
+
+* Global cache SHA-256 remained
+  `77b745a52bf28d170977f9ffd14da79c11df5e7940c886b4f36e69f0daf32101`.
+* Manual support SHA-256 remained
+  `39d963d24a2eb4a8b951a942c4ffafa23f1235f2a87547236c4ac8a8baaf4cb5`.
+* Metric GT contains 715,848 filtered cache points, 693,839 valid/labeled
+  structural points, seven plane identities and five views.
+* Layout-to-world consistency remained exact within numerical precision:
+  maximum normal error 0 degrees and maximum offset error 2.0374e-5 mm.
+
+PlaneGraph-BA behavior:
+
+* Manual support mapped 77,503/79,831 records to 24,759 unique
+  `(cache point, manual label)` observations. Eleven planes were present but
+  only four were multiview-active. Runtime was 0.537 seconds. Its internal
+  overall mean residual fell from 0.0105015 to 0.0103899.
+* Dense oracle identity mapped all 693,839 observations. Seven planes were
+  present and six were multiview-active. Runtime was 5.743 seconds. Its
+  internal mean residual fell from 0.0054363 to 0.0053121, although the median
+  residual increased from 0.0009017 to 0.0012978.
+
+Metric stop/go result after a global Sim(3):
+
+```text
+method                       correspondence RMSE   mean GT-plane residual
+original DUSt3R              0.2644067 m           0.0959640 m
+manual PlaneGraph-BA         0.2650402 m           0.0949075 m
+oracle-identity PlaneGraph   0.2666520 m           0.0922639 m
+```
+
+Interpretation:
+
+* Manual BA improved the target plane residual by 1.06 mm (1.10%) but worsened
+  structural correspondence RMSE by 0.63 mm (0.24%).
+* Even dense GT identity improved plane residual by 3.70 mm (3.86%) while
+  worsening correspondence RMSE by 2.25 mm (0.85%).
+* Fixed all-plane PlaneGraph-BA v0 therefore fails the P1 geometry gate. The
+  result is the same failure mode as live feedback v1: the structural loss can
+  improve while real point correspondence degrades. Correct plane association
+  does not by itself make every plane factor geometrically helpful.
+* Do not present PlaneGraph-BA v0 as a successful method and do not start the
+  full P2 audit from this aggregate result alone.
+
+Implemented final cheap P1 discriminator:
+
+* `evaluate_structured3d_metric_geometry.py` schema v2 now records fixed-gauge
+  per-view deltas against original DUSt3R.
+* It also computes two explicitly GT-supervised upper bounds from the already
+  generated final corrections: a correspondence oracle that keeps a corrected
+  view only when its RMSE improves, and a joint-Pareto oracle that keeps it
+  only when both correspondence RMSE and mean GT-plane residual improve.
+* The oracle switch uses `alignment_view_index` as its unit and requires exact
+  identical GT key coverage. It never performs a nearest-neighbour join.
+* Added `run_plane_feedback_p1_metric_gate_recheck.sh`. It checks/installs
+  `roma==1.5.6`, reuses the existing metric GT and BA NPZs, refuses to
+  overwrite outputs, reruns only the evaluator and prints every per-view
+  decision plus aggregate oracle metrics.
+
+Files changed/added:
+
+```text
+evaluate_structured3d_metric_geometry.py
+tests/test_evaluate_structured3d_metric_geometry.py
+run_plane_feedback_p1_metric_gate_recheck.sh
+docs/codex_tasks/evidence_gated_plane_feedback.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Validation completed:
+
+```text
+metric evaluator tests: 3 passed
+metric GT tests: 3 passed
+PlaneGraph-BA tests: 4 passed
+Stage3 mapping/cache tests: 5 passed
+support-record partition tests: 5 passed
+global plane evaluator tests: 5 passed
+exact support-lift tests: 6 passed
+global plane baseline tests: 5 passed
+py_compile: passed
+metric gate shell syntax: passed
+```
+
+Final P1 stop/go rule:
+
+* If the joint-Pareto oracle selects no useful views, or its mixed result does
+  not improve both aggregate correspondence RMSE and GT-plane residual, stop
+  the plane-feedback main line and pivot to cross-scene bounded-plane identity
+  aggregation/output quality.
+* If the joint-Pareto oracle has a material aggregate joint gain, then and only
+  then proceed to P2 and ask whether held-out non-GT evidence predicts its
+  keep/rollback labels.
+
+Next exact server step after pulling the evaluator commit:
+
+```bash
+bash run_plane_feedback_p1_metric_gate_recheck.sh
+```
+
+This command does not rerun DUSt3R, rebuild GT or rerun either BA optimization.

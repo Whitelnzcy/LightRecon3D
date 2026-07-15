@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def file_sha256(path):
@@ -204,11 +204,16 @@ def transform_json(transform, inlier_count):
     }
 
 
-def metric_rows(aligned, match, gt):
+def metric_error_arrays(aligned, match, gt):
     point_error = np.linalg.norm(aligned - match["gt_points"], axis=1)
     normals = gt["plane_normals"][match["gt_plane_ids"]]
     offsets = gt["plane_offsets"][match["gt_plane_ids"]]
     plane_residual = np.abs(np.einsum("ij,ij->i", aligned, normals) + offsets)
+    return point_error, plane_residual
+
+
+def metric_rows(aligned, match, gt):
+    point_error, plane_residual = metric_error_arrays(aligned, match, gt)
     per_view = []
     for view_index in sorted(int(value) for value in np.unique(match["gt_views"])):
         mask = match["gt_views"] == view_index
@@ -222,6 +227,93 @@ def metric_rows(aligned, match, gt):
         "correspondence_error_m": numeric_summary(point_error),
         "gt_plane_residual_m": numeric_summary(plane_residual),
         "per_view": per_view,
+    }
+
+
+def metric_delta(candidate, reference):
+    return {
+        "correspondence_rmse_m": (
+            candidate["correspondence_error_m"]["rmse"]
+            - reference["correspondence_error_m"]["rmse"]
+        ),
+        "gt_plane_mean_residual_m": (
+            candidate["gt_plane_residual_m"]["mean"]
+            - reference["gt_plane_residual_m"]["mean"]
+        ),
+    }
+
+
+def oracle_view_switch(candidate_aligned, candidate_match, reference_aligned,
+                       reference_match, gt):
+    """GT upper bound that keeps or rolls back each final per-view correction."""
+
+    if not np.array_equal(candidate_match["gt_mask"], reference_match["gt_mask"]):
+        return {
+            "available": False,
+            "reason": "candidate/reference metric GT key coverage differs",
+        }
+    if not np.array_equal(candidate_match["gt_views"], reference_match["gt_views"]):
+        raise ValueError("Candidate/reference GT view order differs despite equal key coverage")
+    reference_error, reference_plane = metric_error_arrays(
+        reference_aligned, reference_match, gt
+    )
+    candidate_error, candidate_plane = metric_error_arrays(
+        candidate_aligned, candidate_match, gt
+    )
+    decisions = []
+    correspondence_views = []
+    joint_views = []
+    for view_index in sorted(int(value) for value in np.unique(reference_match["gt_views"])):
+        mask = reference_match["gt_views"] == view_index
+        reference_rmse = float(np.sqrt(np.mean(reference_error[mask] ** 2)))
+        candidate_rmse = float(np.sqrt(np.mean(candidate_error[mask] ** 2)))
+        reference_plane_mean = float(reference_plane[mask].mean())
+        candidate_plane_mean = float(candidate_plane[mask].mean())
+        improves_correspondence = candidate_rmse < reference_rmse
+        improves_plane = candidate_plane_mean < reference_plane_mean
+        if improves_correspondence:
+            correspondence_views.append(view_index)
+        if improves_correspondence and improves_plane:
+            joint_views.append(view_index)
+        decisions.append({
+            "view_index": view_index,
+            "points": int(mask.sum()),
+            "reference_correspondence_rmse_m": reference_rmse,
+            "candidate_correspondence_rmse_m": candidate_rmse,
+            "correspondence_rmse_delta_m": candidate_rmse - reference_rmse,
+            "reference_gt_plane_mean_residual_m": reference_plane_mean,
+            "candidate_gt_plane_mean_residual_m": candidate_plane_mean,
+            "gt_plane_mean_residual_delta_m": candidate_plane_mean - reference_plane_mean,
+            "improves_correspondence": bool(improves_correspondence),
+            "improves_plane": bool(improves_plane),
+            "joint_pareto_improvement": bool(improves_correspondence and improves_plane),
+        })
+
+    reference_metrics = metric_rows(reference_aligned, reference_match, gt)
+
+    def switched_row(selected_views):
+        selected = np.isin(reference_match["gt_views"], selected_views)
+        mixed = reference_aligned.copy()
+        mixed[selected] = candidate_aligned[selected]
+        metrics = metric_rows(mixed, reference_match, gt)
+        return {
+            "selected_corrected_views": [int(value) for value in selected_views],
+            "rolled_back_views": [
+                int(value) for value in np.unique(reference_match["gt_views"])
+                if int(value) not in selected_views
+            ],
+            "selected_points": int(selected.sum()),
+            "metrics": metrics,
+            "delta_vs_reference": metric_delta(metrics, reference_metrics),
+        }
+
+    return {
+        "available": True,
+        "selection_unit": "alignment_view_index",
+        "selection_uses_gt": True,
+        "per_view_decisions": decisions,
+        "correspondence_oracle": switched_row(correspondence_views),
+        "joint_pareto_oracle": switched_row(joint_views),
     }
 
 
@@ -253,15 +345,16 @@ def evaluate_predictions(gt_path, prediction_specs, reference_name, trim_quantil
         keep_quantile=trim_quantile,
     )
     methods = []
+    aligned_shared = {}
     for prediction in predictions:
         match = matches[prediction["name"]]
         transform, keep = trimmed_similarity(
             match["pred_points"], match["gt_points"], keep_quantile=trim_quantile
         )
         independent = metric_rows(apply_similarity(match["pred_points"], transform), match, gt)
-        shared = metric_rows(
-            apply_similarity(match["pred_points"], reference_transform), match, gt
-        )
+        shared_points = apply_similarity(match["pred_points"], reference_transform)
+        shared = metric_rows(shared_points, match, gt)
+        aligned_shared[prediction["name"]] = shared_points
         methods.append({
             "name": prediction["name"],
             "method": prediction["method"],
@@ -287,6 +380,17 @@ def evaluate_predictions(gt_path, prediction_specs, reference_name, trim_quantil
                 - reference_plane
             ),
         }
+        row["shared_reference_delta_vs_reference"] = metric_delta(
+            row["shared_reference_alignment_metrics"],
+            reference_row["shared_reference_alignment_metrics"],
+        )
+        row["oracle_view_switch_upper_bound"] = oracle_view_switch(
+            aligned_shared[row["name"]],
+            matches[row["name"]],
+            aligned_shared[reference_name],
+            matches[reference_name],
+            gt,
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "metric_gt": str(gt_path),

@@ -226,6 +226,20 @@ Server and implementation update on 2026-07-15:
 * The metric GT covers layout planes only. Furniture/non-planar geometry still
   requires `depth.png`, and pose error is not reported because the retained
   cache did not persist DUSt3R optimized camera poses.
+* The first metric server result rejects fixed all-plane PlaneGraph-BA v0 as a
+  geometry-improving method. Manual-support BA reduced mean GT-plane residual
+  by 1.06 mm (95.96 -> 94.91 mm) but worsened structural correspondence RMSE
+  by 0.63 mm (264.41 -> 265.04 mm). Dense oracle-identity BA reduced the plane
+  residual by 3.70 mm (95.96 -> 92.26 mm) but worsened RMSE by 2.25 mm
+  (264.41 -> 266.65 mm). Correct identity alone therefore does not solve the
+  harmful-factor problem.
+* Do not start the full P2 audit yet. One final P1 upper bound reuses the same
+  final corrections and lets GT keep or roll back each alignment view. It
+  reports a correspondence-only oracle and a stricter joint-Pareto oracle that
+  keeps a view only when both correspondence RMSE and GT-plane error improve.
+  If the joint oracle has no useful selected views or no aggregate joint gain,
+  stop the feedback main line. If it has a material joint gain, proceed to P2
+  to test whether held-out evidence can predict those GT decisions.
 
 ### P2. Leave-one-view-out factor audit
 
