@@ -1761,3 +1761,128 @@ bash run_plane_feedback_p1_direct_svd.sh
 Archive `scene00180_support_record_partition_audit.json` and the Stage3
 manifest. The manual-vs-direct gap will show whether the current merge adds
 useful cross-candidate identity or mainly hides/creates association errors.
+
+## 33. Session update: 2026-07-15 repeated-record result and metric P1 gate
+
+Branch: `codex/bounded-support-head`
+
+Starting commit SHA: `dc6b225`
+
+Archived repeated-record result:
+
+* All four methods were evaluated on the same 80,000 Stage2 observation
+  records. GT matched 77,672 registry records and labeled 75,248 of them. Six
+  of the seven scene GT identities are observed on this support domain.
+* Direct global SVD with no cross-candidate merge emitted 63 identities. It
+  assigned 79,831 records, but 19,974/19,985 unique positive keys and
+  79,820/79,831 positive records had conflicting candidate IDs. Pairwise
+  precision/recall/F1 were 0.8425/0.0644/0.1196; purity/completeness/F1 were
+  0.8843/0.0934/0.1689.
+* Manual merge on the identical records emitted 11 identities. Its pairwise
+  precision/recall/F1 were 0.8505/0.7022/0.7693 and
+  purity/completeness/F1 were 0.8843/0.8103/0.8457. It therefore removes 52
+  candidate fragments and recovers most within-GT pairs without reducing
+  purity. Cross-candidate identity aggregation is genuinely useful on this
+  scene.
+* Manual merge is not solved: only three of six observed GT planes match at
+  conditioned IoU 0.5; precision is 3/11, observed recall is 3/6, and the
+  output has two fragmentation excesses plus one over-merge. RANSAC has lower
+  pairwise F1 (0.7044) and purity (0.7562), but higher recall/completeness
+  (0.8354/0.8455) and only five groups. The manual method is purer but more
+  fragmented.
+* This is single-scene support-identity evidence. It does not demonstrate
+  global geometry improvement, pose improvement, generalization or novelty.
+
+Implemented metric P1 stop/go infrastructure:
+
+* `build_structured3d_point_aligned_gt.py` schema v2 now preserves the old
+  DUSt3R-frame identity GT and additionally reconstructs metric structural
+  points. For every exact `(alignment_view_index,x,y)`, it inverts the
+  vendored DUSt3R PIL resize/integer crop with a recorded half-pixel mapping,
+  forms a ray from Structured3D half-FOV calibration, intersects the matching
+  camera-frame layout plane, and transforms the point to Structured3D world
+  coordinates in metres.
+* The Structured3D perspective camera convention is explicitly handled as a
+  left-handed camera frame (`+x` right, `+y` up, `+z` view direction) mapped to
+  the right-handed world frame. Plane equations use `n dot X + d = 0`.
+* The writer stores metric camera/world points, validity, world plane
+  parameters, camera bases/FOVs, annotation provenance, plane-consistency
+  diagnostics and separate DUSt3R-frame and metric-world PLYs.
+* `evaluate_structured3d_metric_geometry.py` refuses nearest-XYZ joins. It
+  joins predictions by exact registry keys, verifies that the reference NPZ
+  SHA-256 equals the GT source-cache checksum, estimates one recorded global
+  Sim(3), and reports correspondence error plus GT-plane residual globally and
+  per view. Both independent gauge removal and the original reference gauge
+  are reported.
+* `planegraph_ba.py` now accepts the point-aligned GT's canonical
+  `view_indices + pixel_xy` provenance, enabling a dense oracle-identity
+  PlaneGraph-BA upper bound without changing the cache.
+* `run_plane_feedback_p1_metric_oracle.sh` preflights pinned `roma==1.5.6`,
+  refuses overwrite, checks inputs/outputs, builds metric GT, runs manual and
+  oracle-identity PlaneGraph-BA, evaluates both against original DUSt3R, and
+  writes before/after PLYs and a metrics JSON.
+
+Files changed/added:
+
+```text
+build_structured3d_point_aligned_gt.py
+evaluate_structured3d_metric_geometry.py
+planegraph_ba.py
+run_plane_feedback_p1_metric_oracle.sh
+tests/test_structured3d_point_aligned_gt.py
+tests/test_evaluate_structured3d_metric_geometry.py
+tests/test_planegraph_ba.py
+docs/codex_tasks/evidence_gated_plane_feedback.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Validation completed:
+
+```text
+py_compile: passed
+metric GT tests: 3 passed
+metric evaluator tests: 2 passed
+PlaneGraph-BA tests: 4 passed
+Stage3 mapping/cache tests: 5 passed
+support-record partition tests: 5 passed
+global plane evaluator tests: 5 passed
+exact support-lift tests: 6 passed
+global plane baseline tests: 5 passed
+metric/oracle shell syntax: passed
+```
+
+Real-coordinate diagnostic:
+
+```text
+scene: scene_00180 / space 445895 / views 0..4
+layout-to-world plane comparisons: 34
+maximum normal error: 0.0 degrees
+maximum offset error: 2.0374e-5 mm
+```
+
+Limitations and stop/go rule:
+
+* Metric GT currently covers structural layout planes. It does not measure
+  furniture or other non-planar geometry without Structured3D `depth.png`.
+* The retained global cache lacks optimized DUSt3R camera poses, so this audit
+  reports metric structural point error rather than direct camera-pose error.
+* Do not enter P2 until the manual and oracle upper-bound results are read. If
+  oracle identity does not improve gauge-invariant metric correspondence and
+  GT-plane error, revise or stop this feedback direction even if its internal
+  plane residual falls.
+
+Next exact server step after pulling the implementation commit:
+
+```bash
+bash run_plane_feedback_p1_metric_oracle.sh
+```
+
+Archive these outputs without overwriting them:
+
+```text
+scene00180_metric_structural_gt_manifest.json
+scene00180_metric_geometry_metrics.json
+manual_ba/*_summary.json
+oracle_ba/*_summary.json
+run.log
+```

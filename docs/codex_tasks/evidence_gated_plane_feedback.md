@@ -190,6 +190,43 @@ Server update on 2026-07-14:
   direct-global-SVD baseline on the same repeated records. This distinguishes
   useful merging from errors hidden by conflict dropping.
 
+Server and implementation update on 2026-07-15:
+
+* The all-record audit confirmed that the merge is useful rather than merely
+  hiding conflicts. Direct global SVD produced 63 candidate identities and
+  conflicting labels on 19,974/19,985 unique positive keys. Its pairwise
+  precision/recall/F1 were 0.842/0.064/0.120 and GT completeness was 0.093.
+  Manual merge reduced the same records to 11 identities, retained pairwise
+  precision 0.850 and purity 0.884, and raised recall/F1/completeness to
+  0.702/0.769/0.810. Thus cross-candidate identity aggregation is necessary on
+  this scene.
+* Manual merge is still incomplete: only three of six observed GT identities
+  pass the conditioned-IoU match, with two fragmentation excesses and one
+  over-merge. RANSAC has lower pairwise F1 (0.704) and purity (0.756), but
+  slightly higher recall/completeness. This remains single-scene identity
+  evidence, not a geometry or novelty claim.
+* P1 now reconstructs metric structural GT without requiring `depth.png`.
+  Each exact cache pixel is inverted through the recorded PIL resize/crop,
+  converted to a calibrated Structured3D camera ray, intersected with its
+  camera-coordinate `layout.json` plane, and transformed through
+  `camera_pose.txt` into the world frame in metres. The plane equation and the
+  left-handed perspective-camera convention are explicit in schema v2.
+* The coordinate derivation was checked on all 34 layout/world plane pairs in
+  the retained five-view scene: maximum normal error was 0 degrees and maximum
+  offset error was 2.04e-5 mm against `annotation_3d.json`.
+* `evaluate_structured3d_metric_geometry.py` uses only exact `(view,x,y)` joins,
+  verifies that the reference cache checksum matches the GT source, removes
+  the global DUSt3R gauge with one recorded Sim(3), and reports structural
+  correspondence error and GT-plane residual globally and per view. It also
+  reports corrected methods under the original reference transform.
+* `run_plane_feedback_p1_metric_oracle.sh` compares original DUSt3R, current
+  manual-support PlaneGraph-BA and dense oracle-GT-identity PlaneGraph-BA. This
+  is the P1 stop/go upper-bound test. Do not enter P2 merely because the
+  optimizer lowers its own plane residual.
+* The metric GT covers layout planes only. Furniture/non-planar geometry still
+  requires `depth.png`, and pose error is not reported because the retained
+  cache did not persist DUSt3R optimized camera poses.
+
 ### P2. Leave-one-view-out factor audit
 
 Create one row per `(scene, plane candidate, held-out view)` and record the

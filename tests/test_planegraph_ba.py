@@ -73,6 +73,26 @@ class PlaneGraphBATest(unittest.TestCase):
         np.testing.assert_allclose(result["parameters"][0], np.zeros(7), atol=1e-12)
         self.assertEqual(int(result["active_planes"].sum()), 3)
 
+    def test_load_inputs_accepts_point_aligned_gt_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            cache_path = directory / "cache.npz"
+            support_path = directory / "gt.npz"
+            points = np.asarray(
+                [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], np.float32
+            )
+            views = np.asarray([0, 0, 1, 1], np.int32)
+            pixels = np.asarray([[0, 0], [1, 0], [0, 0], [1, 0]], np.int32)
+            np.savez_compressed(
+                cache_path, points=points, colors=np.zeros((4, 3), np.uint8),
+                confidence=np.ones(4, np.float32), view_indices=views, pixel_xy=pixels)
+            np.savez_compressed(
+                support_path, point_plane_ids=np.asarray([5, 5, 5, -1], np.int32),
+                view_indices=views, pixel_xy=pixels)
+            _, support = load_inputs(cache_path, support_path, min_plane_points=3)
+            self.assertEqual(support["cache_indices"].tolist(), [0, 1, 2])
+            self.assertEqual(support["source_plane_ids"].tolist(), [5])
+
 
 if __name__ == "__main__":
     unittest.main()

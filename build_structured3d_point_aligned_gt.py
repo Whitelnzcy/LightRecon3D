@@ -1,9 +1,12 @@
-"""Build Structured3D plane labels on an exact DUSt3R global-cloud registry.
+"""Build Structured3D plane labels and metric rays on a DUSt3R cache registry.
 
 This writer preserves the cached DUSt3R XYZ samples and attaches visible
 Structured3D layout-plane identities at the same ``(view_index, x, y)``
-locations.  Fitted GT plane parameters therefore live in the DUSt3R global
-frame; they evaluate support/identity, not absolute metric reconstruction.
+locations.  Fitted plane parameters in ``plane_normals`` still live in the
+DUSt3R global frame for identity evaluation.  When ``camera_pose.txt`` and the
+camera-coordinate plane equations in ``layout.json`` are available, the same
+pixels are also intersected with their GT structural planes and transformed to
+Structured3D world coordinates in metres.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import numpy as np
 from global_plane_baselines import global_cache_keep_mask
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PLANE_COLORS = np.asarray(
     [
         [230, 57, 70], [29, 53, 87], [69, 123, 157], [42, 157, 143],
@@ -136,6 +139,127 @@ def preprocess_plane_mask(mask, transform, boundary_ignore_radius=1):
     return cropped
 
 
+def parse_camera_pose(path):
+    """Parse Structured3D's eye, view direction, up and half-FOV record."""
+
+    values = np.loadtxt(path, dtype=np.float64).reshape(-1)
+    if values.shape != (12,):
+        raise ValueError(f"Expected 12 camera-pose values in {path}, got {values.shape}")
+    position = values[:3]
+    forward = values[3:6]
+    up_hint = values[6:9]
+    forward_norm = float(np.linalg.norm(forward))
+    if forward_norm <= 1e-12:
+        raise ValueError(f"Camera view direction is degenerate in {path}")
+    forward = forward / forward_norm
+    up_hint = up_hint - forward * float(up_hint @ forward)
+    up_norm = float(np.linalg.norm(up_hint))
+    if up_norm <= 1e-12:
+        raise ValueError(f"Camera up direction is degenerate in {path}")
+    up_hint /= up_norm
+    right = np.cross(forward, up_hint)
+    right /= max(float(np.linalg.norm(right)), 1e-12)
+    up = np.cross(right, forward)
+    up /= max(float(np.linalg.norm(up)), 1e-12)
+    camera_to_world_basis = np.column_stack((right, up, forward))
+    determinant = float(np.linalg.det(camera_to_world_basis))
+    # Structured3D's perspective camera coordinates are left-handed
+    # (+x right, +y up, +z view direction), while its world frame is
+    # right-handed.  The camera-to-world basis is therefore an improper
+    # orthogonal matrix with determinant -1.
+    if abs(abs(determinant) - 1.0) > 1e-6:
+        raise ValueError(f"Camera basis is not orthogonal in {path}")
+    return {
+        "position_mm": position,
+        "camera_to_world_basis": camera_to_world_basis,
+        "camera_basis_determinant": determinant,
+        "half_fov_rad": values[9:11],
+        "trailing_value": float(values[11]),
+    }
+
+
+def pointmap_pixels_to_original_xy(pixel_xy, transform):
+    """Invert DUSt3R's PIL resize and integer crop using pixel centres."""
+
+    pixel_xy = np.asarray(pixel_xy, dtype=np.float64)
+    if pixel_xy.ndim != 2 or pixel_xy.shape[1] != 2:
+        raise ValueError(f"pixel_xy must have shape (N,2), got {pixel_xy.shape}")
+    original_h, original_w = map(float, transform["original_hw"])
+    resized_h, resized_w = map(float, transform["resized_hw"])
+    left, top, _, _ = map(float, transform["crop_xyxy"])
+    resized_x = pixel_xy[:, 0] + left
+    resized_y = pixel_xy[:, 1] + top
+    original_x = (resized_x + 0.5) * original_w / resized_w - 0.5
+    original_y = (resized_y + 0.5) * original_h / resized_h - 0.5
+    return np.column_stack((original_x, original_y))
+
+
+def camera_rays_from_original_xy(original_xy, original_hw, half_fov_rad):
+    """Return Structured3D camera rays with +x right, +y up and +z forward."""
+
+    original_xy = np.asarray(original_xy, dtype=np.float64)
+    height, width = map(int, original_hw)
+    if height <= 1 or width <= 1:
+        raise ValueError(f"Original image is too small for calibrated rays: {original_hw}")
+    center_x = 0.5 * (width - 1)
+    center_y = 0.5 * (height - 1)
+    x = (original_xy[:, 0] - center_x) / center_x * np.tan(float(half_fov_rad[0]))
+    y = -(original_xy[:, 1] - center_y) / center_y * np.tan(float(half_fov_rad[1]))
+    return np.column_stack((x, y, np.ones(len(original_xy), dtype=np.float64)))
+
+
+def intersect_camera_rays_with_plane(rays, normal, offset, epsilon=1e-9):
+    """Intersect rays with Structured3D's camera plane ``n.x + d = 0``."""
+
+    rays = np.asarray(rays, dtype=np.float64)
+    normal = np.asarray(normal, dtype=np.float64).reshape(3)
+    denominator = rays @ normal
+    distance = np.full(len(rays), np.nan, dtype=np.float64)
+    valid = np.abs(denominator) > float(epsilon)
+    distance[valid] = -float(offset) / denominator[valid]
+    valid &= np.isfinite(distance) & (distance > 0.0)
+    points = rays * distance[:, None]
+    points[~valid] = np.nan
+    return points, valid
+
+
+def camera_plane_to_world(normal, offset, camera_pose):
+    """Transform ``n_c.x_c + d_c = 0`` to Structured3D world coordinates."""
+
+    rotation = camera_pose["camera_to_world_basis"]
+    position = camera_pose["position_mm"]
+    world_normal = rotation @ np.asarray(normal, dtype=np.float64).reshape(3)
+    world_normal /= max(float(np.linalg.norm(world_normal)), 1e-12)
+    world_offset = float(offset) - float(world_normal @ position)
+    return world_normal, world_offset
+
+
+def find_scene_annotation(image_path):
+    for parent in (Path(image_path), *Path(image_path).parents):
+        candidate = parent / "annotation_3d.json"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def plane_consistency_row(layout_plane, world_plane, camera_pose):
+    normal, offset = camera_plane_to_world(
+        layout_plane["normal"], layout_plane["offset"], camera_pose
+    )
+    expected_normal = np.asarray(world_plane["normal"], dtype=np.float64)
+    expected_normal /= max(float(np.linalg.norm(expected_normal)), 1e-12)
+    expected_offset = float(world_plane["offset"])
+    if float(normal @ expected_normal) < 0:
+        normal = -normal
+        offset = -offset
+    cosine = np.clip(float(normal @ expected_normal), -1.0, 1.0)
+    return {
+        "plane_id": int(layout_plane["ID"]),
+        "normal_error_deg": float(np.degrees(np.arccos(cosine))),
+        "offset_error_mm": abs(float(offset) - expected_offset),
+    }
+
+
 def fit_plane(points):
     points = np.asarray(points, dtype=np.float64)
     center = points.mean(axis=0)
@@ -190,6 +314,7 @@ def build_point_aligned_gt(
     boundary_ignore_radius=1,
     path_prefix_maps=(),
     output_ply=None,
+    output_metric_ply=None,
     max_display_points=100000,
 ):
     raw = np.load(global_cloud_npz, allow_pickle=False)
@@ -214,22 +339,44 @@ def build_point_aligned_gt(
     view_indices = raw["view_indices"][keep].astype(np.int32)
     pixel_xy = raw["pixel_xy"][keep].astype(np.int32)
     raw_labels = np.full(len(points), -1, dtype=np.int32)
+    metric_points_camera_mm = np.full((len(points), 3), np.nan, dtype=np.float64)
+    metric_points_world_mm = np.full((len(points), 3), np.nan, dtype=np.float64)
+    metric_valid = np.zeros(len(points), dtype=bool)
 
     registry = json.loads(str(raw["dust3r_view_registry_json"].item()))
+    scene_key = str(raw["scene_key"].item()) if "scene_key" in raw else "scene"
+    raw.close()
     records = {int(row["alignment_view_index"]): row for row in registry}
     transforms = []
     layout_paths = []
+    camera_view_indices = []
+    camera_to_world_m = []
+    camera_half_fov_rad = []
+    plane_consistency = []
+    annotation_path = None
+    annotation_planes = None
     for view_index in sorted(int(value) for value in np.unique(view_indices)):
         if view_index not in records:
             raise ValueError(f"View {view_index} is missing from the cache registry")
         image_path = Path(remap_path(records[view_index]["image_path"], path_prefix_maps))
         layout_path = image_path.with_name("layout.json")
+        camera_pose_path = image_path.with_name("camera_pose.txt")
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if image is None:
             raise FileNotFoundError(f"Cannot read registry RGB image: {image_path}")
         if not layout_path.is_file():
             raise FileNotFoundError(f"Cannot find Structured3D layout: {layout_path}")
+        if not camera_pose_path.is_file():
+            raise FileNotFoundError(f"Cannot find Structured3D camera pose: {camera_pose_path}")
         layout = json.loads(layout_path.read_text(encoding="utf-8"))
+        camera_pose = parse_camera_pose(camera_pose_path)
+        if annotation_path is None:
+            annotation_path = find_scene_annotation(image_path)
+            if annotation_path is not None:
+                annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+                annotation_planes = {
+                    int(row["ID"]): row for row in annotation.get("planes", [])
+                }
         original_hw = image.shape[:2]
         transform = dust3r_resize_crop_transform(
             original_hw, image_size=image_size, patch_size=patch_size, square_ok=square_ok
@@ -255,10 +402,54 @@ def build_point_aligned_gt(
         ):
             raise ValueError(f"Cache pixels are out of range for view {view_index}")
         raw_labels[mask] = processed_mask[xy[:, 1], xy[:, 0]]
+        original_xy = pointmap_pixels_to_original_xy(xy, transform)
+        rays = camera_rays_from_original_xy(
+            original_xy, original_hw, camera_pose["half_fov_rad"]
+        )
+        local_indices = np.flatnonzero(mask)
+        layout_by_id = {
+            int(plane["ID"]): plane
+            for plane in layout.get("planes", [])
+            if plane.get("ID") is not None
+        }
+        for plane_id in sorted(int(value) for value in np.unique(raw_labels[mask]) if value >= 0):
+            if plane_id not in layout_by_id:
+                raise ValueError(f"View {view_index} has mask plane {plane_id} without an equation")
+            selected_local = raw_labels[mask] == plane_id
+            camera_points, valid_intersection = intersect_camera_rays_with_plane(
+                rays[selected_local],
+                layout_by_id[plane_id]["normal"],
+                layout_by_id[plane_id]["offset"],
+            )
+            selected_global = local_indices[selected_local]
+            metric_points_camera_mm[selected_global] = camera_points
+            world_points = (
+                camera_points @ camera_pose["camera_to_world_basis"].T
+                + camera_pose["position_mm"]
+            )
+            metric_points_world_mm[selected_global] = world_points
+            metric_valid[selected_global] = valid_intersection
+        if annotation_planes is not None:
+            for plane in layout.get("planes", []):
+                plane_id = plane.get("ID")
+                if plane_id is not None and int(plane_id) in annotation_planes:
+                    row = plane_consistency_row(
+                        plane, annotation_planes[int(plane_id)], camera_pose
+                    )
+                    row["alignment_view_index"] = view_index
+                    plane_consistency.append(row)
+        camera_matrix = np.eye(4, dtype=np.float64)
+        camera_matrix[:3, :3] = camera_pose["camera_to_world_basis"]
+        camera_matrix[:3, 3] = camera_pose["position_mm"] * 0.001
+        camera_view_indices.append(view_index)
+        camera_to_world_m.append(camera_matrix)
+        camera_half_fov_rad.append(camera_pose["half_fov_rad"])
         transforms.append({
             "alignment_view_index": view_index,
             "image_path": str(image_path),
             "layout_path": str(layout_path),
+            "camera_pose_path": str(camera_pose_path),
+            "pixel_inverse_mapping": "pillow_half_pixel_after_integer_crop",
             **transform,
         })
         layout_paths.append(str(layout_path))
@@ -280,6 +471,23 @@ def build_point_aligned_gt(
     normals = np.asarray(normals, dtype=np.float32).reshape(-1, 3)
     offsets = np.asarray(offsets, dtype=np.float32)
     counts = np.asarray(counts, dtype=np.int32)
+    metric_valid &= point_plane_ids >= 0
+
+    world_plane_normals, world_plane_offsets_m = [], []
+    if annotation_planes is None:
+        raise FileNotFoundError(
+            f"Cannot find scene annotation_3d.json above registry image {registry[0]['image_path']}"
+        )
+    for source_id in source_plane_ids:
+        if source_id not in annotation_planes:
+            raise ValueError(f"Structured3D world annotation has no plane ID {source_id}")
+        plane = annotation_planes[source_id]
+        normal = np.asarray(plane["normal"], dtype=np.float64)
+        normal /= max(float(np.linalg.norm(normal)), 1e-12)
+        world_plane_normals.append(normal)
+        world_plane_offsets_m.append(float(plane["offset"]) * 0.001)
+    world_plane_normals = np.asarray(world_plane_normals, dtype=np.float32).reshape(-1, 3)
+    world_plane_offsets_m = np.asarray(world_plane_offsets_m, dtype=np.float32)
 
     output_npz = Path(output_npz)
     output_npz.parent.mkdir(parents=True, exist_ok=True)
@@ -295,38 +503,71 @@ def build_point_aligned_gt(
         source_cache_indices=source_indices.astype(np.int64),
         point_plane_ids=point_plane_ids,
         raw_structured3d_plane_ids=raw_labels,
+        metric_valid_mask=metric_valid,
+        metric_points_camera_m=(metric_points_camera_mm * 0.001).astype(np.float32),
+        metric_points_world_m=(metric_points_world_mm * 0.001).astype(np.float32),
         plane_ids=np.arange(len(normals), dtype=np.int32),
         source_gt_plane_ids=np.asarray(source_plane_ids, dtype=np.int32),
         plane_normals=normals,
         plane_offsets=offsets,
         plane_inlier_counts=counts,
+        structured3d_world_plane_normals=world_plane_normals,
+        structured3d_world_plane_offsets_m=world_plane_offsets_m,
+        camera_view_indices=np.asarray(camera_view_indices, dtype=np.int32),
+        camera_to_world_m=np.asarray(camera_to_world_m, dtype=np.float64),
+        camera_half_fov_rad=np.asarray(camera_half_fov_rad, dtype=np.float64),
         pixel_coordinate_order=np.asarray("xy"),
         pixel_coordinate_space=np.asarray("dust3r_aligned_pointmap"),
-        geometry_interpretation=np.asarray("support_labels_in_dust3r_global_frame"),
+        geometry_interpretation=np.asarray(
+            "identity_in_dust3r_frame_plus_metric_structural_rays_in_structured3d_world"
+        ),
+        metric_length_unit=np.asarray("metre"),
+        structured3d_plane_equation=np.asarray("normal_dot_point_plus_offset_equals_zero"),
         source_global_cloud_npz=np.asarray(str(global_cloud_npz)),
         source_global_cloud_sha256=np.asarray(checksum),
         min_conf=np.asarray(float(min_conf), dtype=np.float32),
         min_plane_points=np.asarray(int(min_plane_points), dtype=np.int32),
         view_transforms_json=np.asarray(json.dumps(transforms)),
         source_layout_paths_json=np.asarray(json.dumps(layout_paths)),
-        scene_key=np.asarray(str(raw["scene_key"].item()) if "scene_key" in raw else "scene"),
+        source_annotation_3d_path=np.asarray(str(annotation_path)),
+        plane_consistency_json=np.asarray(json.dumps(plane_consistency)),
+        scene_key=np.asarray(scene_key),
     )
     if output_ply is not None:
         write_colored_ply(
             Path(output_ply), points, colors, point_plane_ids, max_points=max_display_points
         )
+    if output_metric_ply is not None:
+        write_colored_ply(
+            Path(output_metric_ply),
+            (metric_points_world_mm[metric_valid] * 0.001).astype(np.float32),
+            colors[metric_valid],
+            point_plane_ids[metric_valid],
+            max_points=max_display_points,
+        )
     return {
         "output_npz": str(output_npz),
         "output_ply": str(output_ply) if output_ply is not None else "",
+        "output_metric_ply": (
+            str(output_metric_ply) if output_metric_ply is not None else ""
+        ),
         "source_global_cloud_npz": str(global_cloud_npz),
         "source_global_cloud_sha256": checksum,
         "points": int(len(points)),
         "labeled_points": int((point_plane_ids >= 0).sum()),
+        "metric_points": int(metric_valid.sum()),
         "planes": int(len(normals)),
         "source_gt_plane_ids": source_plane_ids,
         "views": int(len(transforms)),
         "min_conf": float(min_conf),
         "boundary_ignore_radius": int(boundary_ignore_radius),
+        "source_annotation_3d_path": str(annotation_path),
+        "max_plane_normal_consistency_error_deg": float(
+            max((row["normal_error_deg"] for row in plane_consistency), default=0.0)
+        ),
+        "max_plane_offset_consistency_error_mm": float(
+            max((row["offset_error_mm"] for row in plane_consistency), default=0.0)
+        ),
     }
 
 
@@ -335,6 +576,7 @@ def main():
     parser.add_argument("--global_cloud_npz", required=True)
     parser.add_argument("--output_npz", required=True)
     parser.add_argument("--output_ply", default="")
+    parser.add_argument("--output_metric_ply", default="")
     parser.add_argument("--output_manifest", default="")
     parser.add_argument("--min_conf", type=float, default=1.0)
     parser.add_argument("--min_plane_points", type=int, default=64)
@@ -360,6 +602,7 @@ def main():
         boundary_ignore_radius=args.boundary_ignore_radius,
         path_prefix_maps=mappings,
         output_ply=args.output_ply or None,
+        output_metric_ply=args.output_metric_ply or None,
         max_display_points=args.max_display_points,
     )
     manifest = Path(args.output_manifest) if args.output_manifest else Path(args.output_npz).with_suffix(".json")

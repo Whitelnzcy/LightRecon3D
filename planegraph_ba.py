@@ -99,10 +99,14 @@ def load_inputs(global_cloud_npz, support_npz, min_conf=0.0, min_plane_points=64
         # The global RANSAC baseline already uses the global-cache convention.
         support_views = support_raw["source_views"].astype(np.int32)
         support_pixels = support_raw["pixel_xy"].astype(np.int32)
+    elif "view_indices" in support_raw and "pixel_xy" in support_raw:
+        # Point-aligned Structured3D GT uses the cache's canonical provenance.
+        support_views = support_raw["view_indices"].astype(np.int32)
+        support_pixels = support_raw["pixel_xy"].astype(np.int32)
     else:
         raise ValueError(
-            "support NPZ needs alignment_view_indices + pointmap_pixel_xy; "
-            "regenerate Stage3 output with provenance enabled"
+            "support NPZ needs one of alignment_view_indices + pointmap_pixel_xy, "
+            "source_views + pixel_xy, or view_indices + pixel_xy"
         )
     support_labels = support_raw["point_plane_ids"].astype(np.int64).reshape(-1)
     if len(support_views) != len(support_labels) or support_pixels.shape != (len(support_labels), 2):
