@@ -2095,3 +2095,24 @@ No real server structural-line run, cross-scene batch result, efficiency
 benchmark or report result is claimed yet. The next exact step is to push this
 implementation and run `bash run_research_practice_line_smoke.sh` on the
 retained cache before connecting the multi-scene batch runner.
+
+The first server launch of commit `283c43a` stopped before line extraction.
+The runner had defaulted to `/root/miniconda3/bin/python`; installing `roma`
+there could not satisfy its runtime import because that base environment had no
+`torch`. Its OpenCV fallback also upgraded base-environment NumPy. No global
+cache or output directory was modified, although the sibling `_run.log` was
+created.
+
+The runner now defaults explicitly to
+`/root/miniconda3/envs/lightrecon/bin/python`, refuses to fall back when that
+executable or `torch` is missing, installs `roma==1.5.6` with `--no-deps`, and
+uses an OpenCV `<5` no-dependency fallback so dependency repair cannot silently
+replace NumPy. The real rerun must use a new `v2` output path because the `v1`
+run log is retained as failure evidence.
+
+The explicit-Python `v2` launch reached the dependency/version preflight and
+confirmed `cv2=4.13.0` and `numpy=2.2.6`, but stopped because the logging probe
+read a nonexistent `roma.__version__` attribute. No extraction or output
+directory creation occurred; only the sibling `v2_run.log` was written. The
+probe now obtains the installed distribution version through
+`importlib.metadata.version("roma")`. The next real launch must use `v3`.
