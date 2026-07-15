@@ -578,3 +578,34 @@ Claims that remain unsafe without additional evidence:
 
 The immediate research task is recorded in
 `docs/codex_tasks/evidence_gated_plane_feedback.md`.
+
+## 2026-07-15 correction after the fixed-gauge oracle gate
+
+The PlaneGraph-BA / plane-feedback contribution candidate is closed. On the
+retained metric scene, neither manual support nor GT plane identity yielded one
+of five per-view corrections that jointly improved structural correspondence
+RMSE and GT-plane error under the original fixed Sim(3). A per-view GT rollback
+oracle selected no joint-Pareto update. This invalidates the planned claim that
+evidence gating can rescue the current fixed-plane correction objective.
+
+The surviving engineering result is cross-candidate bounded-plane identity
+aggregation on frozen aligned pointmaps. It must not yet be described as a
+novel contribution. PlaneFormers already learns sparse-view plane
+correspondence jointly with pose; PlaneMVS and classic piecewise-planar methods
+already reconstruct or assign multi-view bounded supports; Plane-DUSt3R and
+PLANA3R already cover unposed plane-aware reconstruction; and associative
+embedding has already been used for plane instance grouping.
+
+The narrower unverified hypothesis is that exact repeated-pixel provenance,
+signed conflict evidence and reversible null-state clustering provide a useful
+association mechanism specifically for frozen foundation-model pointmaps. Its
+claim rank is currently exploratory only. Promotion requires a pre-registered
+multi-scene win against RANSAC, geometry-only constrained agglomeration and
+manual merge, while retaining conflict records and bounded-support coverage.
+
+Current priority order:
+
+1. multi-scene same-cache identity/support signal audit;
+2. deterministic provenance-aware reversible consensus, only after the audit;
+3. learned association, only if a stable oracle gap remains;
+4. no further plane-feedback optimization under the failed formulation.

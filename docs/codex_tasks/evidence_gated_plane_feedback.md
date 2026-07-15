@@ -2,8 +2,9 @@
 
 Date: 2026-07-14
 
-Status: research and validation task note. No novelty or real-scene improvement
-is claimed.
+Status: **STOPPED on 2026-07-15 after the final P1 oracle gate failed.** No
+novelty or real-scene improvement is claimed. Do not execute P2-P5 unless new
+evidence invalidates the fixed-gauge oracle result below.
 
 ## Objective
 
@@ -330,6 +331,49 @@ unresolved errors or rejected groups
 ```
 
 Do not overwrite previous caches, NPZs, PLYs or visualizations.
+
+## Final P1 decision on 2026-07-15
+
+The pre-registered stop condition fired on the retained five-view scene. The
+final server run used commit `1b01dc8` and the same 715,848-point cache and
+693,839-point metric layout GT as the earlier P1 comparisons.
+
+Under the original fixed global Sim(3), manual-support PlaneGraph-BA changed:
+
+```text
+aggregate structural correspondence RMSE: -0.250 mm
+aggregate GT-plane mean residual:          +3.335 mm
+views jointly improving both metrics:      0 / 5
+```
+
+The correspondence-only view oracle selected views 1, 2 and 4 and improved
+aggregate RMSE by 1.743 mm, but worsened mean plane error by 3.914 mm. The
+joint-Pareto oracle selected no views and therefore made no update.
+
+Dense GT-identity PlaneGraph-BA was not a useful upper bound either:
+
+```text
+aggregate structural correspondence RMSE: +4.366 mm
+aggregate GT-plane mean residual:          +5.708 mm
+views jointly improving both metrics:      0 / 5
+```
+
+Its correspondence-only oracle selected views 1, 3 and 4 and improved RMSE by
+0.811 mm, but worsened mean plane error by 6.374 mm. Its joint-Pareto oracle
+also selected no views.
+
+This result is stronger than a failed threshold choice: even GT identity and a
+GT per-view keep/rollback oracle cannot identify one correction that improves
+both registered structural correspondence and plane incidence. The current
+fixed-plane-correction feedback objective is therefore systematically
+conflicted on this case. P2, P3, P4 and P5 are closed, not postponed.
+
+The reusable positive result is narrower. On the same 80,000 provenance
+records, cross-candidate manual aggregation reduced 63 fragments to 11 and
+raised pairwise identity F1 from 0.120 to 0.769, above the global-RANSAC value
+of 0.704. That is one-scene evidence for identity/support aggregation, not a
+geometry improvement or novelty claim. Follow-up work is tracked in
+`docs/codex_tasks/bounded_plane_identity_pivot.md`.
 
 ## Closest-work checklist before a paper claim
 

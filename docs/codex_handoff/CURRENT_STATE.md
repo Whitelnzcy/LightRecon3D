@@ -2000,3 +2000,38 @@ bash run_plane_feedback_p1_metric_gate_recheck.sh
 ```
 
 This command does not rerun DUSt3R, rebuild GT or rerun either BA optimization.
+
+## 2026-07-15 final plane-feedback gate and research pivot
+
+The evidence-gated plane-feedback main line is now stopped. The final P1
+server run used commit `1b01dc8`, the same 715,848-point scene-00180 cache and
+693,839 metric layout correspondences, and evaluated the already computed
+per-view corrections under the original fixed global Sim(3).
+
+Manual-support PlaneGraph-BA improved aggregate structural correspondence RMSE
+by only 0.250 mm while worsening GT-plane mean residual by 3.335 mm. None of
+the five views improved both metrics. A correspondence-only oracle selected
+views 1, 2 and 4 and improved RMSE by 1.743 mm, but worsened plane error by
+3.914 mm; the joint-Pareto oracle selected no views.
+
+GT-identity PlaneGraph-BA worsened aggregate correspondence RMSE by 4.366 mm
+and plane residual by 5.708 mm under the fixed gauge. Again, none of five views
+jointly improved both metrics. Its correspondence-only oracle selected views
+1, 3 and 4, improving RMSE by 0.811 mm while worsening plane error by 6.374 mm;
+the joint oracle selected no views.
+
+Decision: do not run P2-P5 and do not tune PlaneGraph-BA or the live plane loss
+as the main solution. This is an oracle failure showing an objective conflict,
+not merely a weak association or acceptance threshold.
+
+The only retained research signal is cross-candidate identity aggregation on
+frozen geometry. On the same 80,000 provenance records, manual aggregation
+reduced 63 direct-SVD fragments to 11 and raised pairwise identity F1 from
+0.120 to 0.769, above global RANSAC at 0.704. This is still single-scene,
+manual-rule evidence.
+
+The next task is `docs/codex_tasks/bounded_plane_identity_pivot.md`. Its first
+gate is a multi-scene identical-cache audit; no new neural model is authorized
+until the identity gain is cross-scene, conflict-preserving and better than
+RANSAC by the pre-registered margin. No pointmap recache or long server run has
+been performed for this pivot.
