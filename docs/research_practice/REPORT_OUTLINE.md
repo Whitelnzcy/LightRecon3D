@@ -3,6 +3,11 @@
 Target: at least 8,000 Chinese characters and 30 references. First complete
 draft due 2026-07-26.
 
+Current state on 2026-07-16: `REPORT_DRAFT.md` contains 8,421 Chinese
+characters, and `REFERENCES.md` contains 30 primary-source entries. The
+remaining report work is evidence-table insertion, figure selection, GB/T 7714
+metadata cleanup and Word/template rendering rather than additional padding.
+
 ## 1. Introduction and problem definition (about 1,000 characters)
 
 * indoor weak-texture and clutter failure modes;
@@ -72,6 +77,26 @@ Write this as an improvement under the frozen project protocol, not as a
 published-dataset state-of-the-art claim. Raw manual identity is a negative
 ablation (`3/8` wins; median F1 delta `-0.106110`). Conflict-drop scores must
 always be printed together with their collapsed coverage.
+
+Frozen W3 result for Tables 2 and 5:
+
+```text
+Stage1 sampled support records: 80 pairs from 8 independent scenes
+Stage1 pairwise precision / recall / F1 mean: 0.883814 / 0.629410 / 0.724166
+Stage1 purity / completeness / combined F1 mean: 0.928410 / 0.726850 / 0.809942
+Stage1 head: 79,906,572 parameters, 304.898 MiB checkpoint
+Stage1 head per-image latency: P50 75.160 ms, P95 101.401 ms
+Stage1 head incremental peak allocation: 361.899 MiB
+Stage2 MLP: 203,521 parameters, 0.783 MiB checkpoint
+Stage2 64-candidate latency: P50 0.451 ms, P95 0.483 ms
+five-view DUSt3R inference + 300-step alignment: P50 9.123 s, P95 11.922 s
+structural-line stage: mean 1.725 s over 8 scenes
+```
+
+The Stage1 head is 14.0% of the shared DUSt3R parameter count and must not be
+called tiny. The alignment views were resized from `1280 x 720` to `512 x 288`
+under the image-size-512 setting. The guided method passed the quality path,
+not the efficiency path; its runtime is not a promoted contribution.
 
 ## 7. Failure analysis and limitations (about 800 characters)
 

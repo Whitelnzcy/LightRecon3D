@@ -13,8 +13,11 @@ the final eight-independent-scene GPU batch and paired audit have now passed
 completely. Guided RANSAC won pairwise F1 on all `8/8` scenes, achieved mean
 and median paired gains of `+0.039248` and `+0.035580`, and passed the frozen
 quality path. It is the final method; global RANSAC is the primary baseline.
-The efficiency path failed and no acceleration claim is permitted. W3
-accuracy/latency/model-footprint measurement is the active work package.
+The efficiency path failed and no acceleration claim is permitted. W3 is now
+complete: the frozen server benchmark measured Stage1 accuracy over 80 pair
+records, model footprint, GPU latency/memory and archived per-stage runtime.
+W4 report, figures, reproducibility index and defense materials are now the
+active work package.
 
 ## Objective
 
@@ -184,10 +187,7 @@ committed.
 
 ## Immediate next step
 
-Run `run_research_practice_efficiency.sh` once. It measures the frozen Stage1
-support accuracy over the final source records, separates contributed-head
-footprint from the shared DUSt3R backbone, records P50/P95 latency and peak GPU
-memory at `512 x 512`, repeats one fixed five-view global alignment, and
-summarizes archived downstream stages. It performs no training or tuning.
-After this bundle is archived, freeze Tables 2/3/5 and start the full report
-draft and failure-gallery selection.
+Freeze report Tables 2, 3 and 5 from the archived final audit and W3 JSON/CSV
+artifacts. Complete the Chinese report draft, claim ledger, figure index and
+failure-gallery selection. Do not rerun the final batch or W3 benchmark unless
+an artifact-integrity check fails.

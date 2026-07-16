@@ -2682,3 +2682,44 @@ tracebacks are retained, and `nvidia-smi` is printed on failure. The benchmark
 still requires CUDA and never falls back silently to CPU. Because the second
 attempt stopped before `RUN_LOG` creation, the same `_v2` path may be reused
 unless a path was created by an external action.
+
+## 2026-07-16 W3 completed and W4 started
+
+The server pull for the next attempt timed out, so the benchmark ran at
+`b5d80c2` rather than diagnostic-only commit `123e9d5`. This is valid because
+`b5d80c2` contains the cache-reader correction and `123e9d5` does not change
+benchmark computation. The run completed at:
+
+```text
+/gemini/data-1/lightrecon_runs/research_practice_efficiency_20260716_v2
+```
+
+It evaluated 80 Stage1 pair records from eight independent scenes. Mean
+pairwise precision, recall and F1 were `0.883814`, `0.629410` and `0.724166`.
+Mean purity/completeness F1 was `0.809942` with `0.998100` assignment and GT
+coverage. The Stage1 head has `79,906,572` parameters and a `304.898 MiB`
+checkpoint; per-image P50/P95 latency was `75.160/101.401 ms` with `361.899
+MiB` incremental peak allocation. It is an added task head, not a tiny head.
+
+The Stage2 MLP has `203,521` parameters and processed 64 candidate pairs in
+`0.451 ms` P50. Five-view DUSt3R inference plus 300-step alignment measured
+`9.123 s` P50 and `11.922 s` P95 over three repeats. The actual 16:9 images
+were loaded at `512 x 288` under the image-size-512 setting. Structural-line
+output averaged `1.725 s` across eight scenes.
+
+W3 is complete. No acceleration claim is made: the final method was promoted
+through the frozen quality path only. W4 report and defense work is active.
+The local report evidence record is
+`docs/research_practice/W3_EFFICIENCY_RESULT.md`; canonical values remain in
+the server's `efficiency_results.json` and CSV files.
+
+The first Chinese report body now exists at
+`docs/research_practice/REPORT_DRAFT.md`. It contains 8,421 Chinese characters
+before the bibliography, covering the task, true guided-RANSAC implementation,
+frozen protocol, W3/final results, negative ablations, limitations and
+reproducibility. `docs/research_practice/REFERENCES.md` records 30 primary
+paper sources. The prose was audited to avoid claiming that the 79.9M-parameter
+Stage1 head is tiny, that structural lines improve plane metrics, or that the
+guided method is universally faster. Remaining W4 work is GB/T 7714 metadata
+cleanup, table/figure generation, failure-gallery selection, Word formatting,
+slides and the static demo.
