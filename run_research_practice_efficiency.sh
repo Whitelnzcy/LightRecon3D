@@ -23,8 +23,48 @@ if [[ ! -x "${PYTHON_BIN}" ]]; then
   echo "Missing executable project Python: ${PYTHON_BIN}" >&2
   exit 2
 fi
-if ! "${PYTHON_BIN}" -c 'import cv2, numpy, scipy, torch; assert torch.cuda.is_available()' >/dev/null 2>&1; then
-  echo "The fixed lightrecon Python must provide cv2, NumPy, SciPy, torch and CUDA." >&2
+if ! "${PYTHON_BIN}" - <<'PY'
+import importlib
+import os
+import sys
+import traceback
+
+modules = {}
+for name in ("cv2", "numpy", "scipy", "torch"):
+    try:
+        modules[name] = importlib.import_module(name)
+    except Exception:
+        print(f"[environment-check] failed to import {name}", file=sys.stderr)
+        traceback.print_exc()
+        raise SystemExit(2)
+
+torch = modules["torch"]
+print(
+    "[environment-check] "
+    f"cv2={modules['cv2'].__version__} "
+    f"numpy={modules['numpy'].__version__} "
+    f"scipy={modules['scipy'].__version__} "
+    f"torch={torch.__version__} "
+    f"torch_cuda={torch.version.cuda} "
+    f"cuda_available={torch.cuda.is_available()} "
+    f"cuda_device_count={torch.cuda.device_count()} "
+    f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}"
+)
+if not torch.cuda.is_available():
+    print("[environment-check] PyTorch cannot see a CUDA device.", file=sys.stderr)
+    raise SystemExit(3)
+try:
+    probe = torch.zeros(1, device="cuda")
+    torch.cuda.synchronize()
+    print(f"[environment-check] cuda_probe_device={probe.device}")
+except Exception:
+    print("[environment-check] CUDA tensor allocation failed", file=sys.stderr)
+    traceback.print_exc()
+    raise SystemExit(4)
+PY
+then
+  echo "The fixed lightrecon Python environment check failed; see the exact diagnostic above." >&2
+  nvidia-smi || true
   exit 2
 fi
 if ! "${PYTHON_BIN}" -c 'import roma' >/dev/null 2>&1; then

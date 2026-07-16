@@ -2665,3 +2665,20 @@ registry by `alignment_view_index`, while retaining `dust3r_image_paths` as a
 backward-compatible fallback. A focused test constructs the real registry
 schema and verifies deterministic view ordering. The failed `_v1` launcher
 log is preserved; the corrected rerun must use a fresh `_v2` output path.
+
+### Second W3 server attempt and environment diagnostics
+
+The corrected `_v2` attempt pulled commit `b5d80c2` successfully but stopped
+in the launcher environment preflight before creating a run log or entering
+the benchmark. The old preflight combined imports of OpenCV, NumPy, SciPy and
+PyTorch with `torch.cuda.is_available()` while redirecting all diagnostic
+output to `/dev/null`, so the supplied message cannot distinguish a failed
+package import from a temporarily unavailable CUDA device.
+
+The launcher now reports every package version, the PyTorch CUDA build,
+`CUDA_VISIBLE_DEVICES`, CUDA device count and availability. It also performs
+one real CUDA tensor allocation and synchronization. Import and allocation
+tracebacks are retained, and `nvidia-smi` is printed on failure. The benchmark
+still requires CUDA and never falls back silently to CPU. Because the second
+attempt stopped before `RUN_LOG` creation, the same `_v2` path may be reused
+unless a path was created by an external action.
