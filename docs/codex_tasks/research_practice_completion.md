@@ -9,10 +9,11 @@ three-group identical-cache smoke and per-group gate are complete. Raw manual
 identity aggregation failed its pre-registered cross-group gate and is frozen
 as an ablation. Learning-support-guided RANSAC improved F1 in all three smoke
 groups but failed the pre-registered quality and efficiency promotion paths;
-it is retained as an innovation ablation while global RANSAC remains primary.
-The deterministic eight-independent-scene manifest is frozen, with five
-existing Stage2 groups and three groups awaiting one final GPU materialization
-and batch run.
+the final eight-independent-scene GPU batch has now passed completely. Its
+aggregate means favor guided RANSAC on partition F1, matched IoU, plane
+precision, recall and overmerge, with a normal-angle tradeoff. Final promotion
+awaits the frozen paired-scene gate because the supplied aggregate summary
+does not contain per-scene wins or paired median deltas.
 
 ## Objective
 
@@ -182,9 +183,10 @@ committed.
 
 ## Immediate next step
 
-Run `run_research_practice_final_batch.sh` once on the frozen eight-scene
-selection. It materializes only scene 00186/00187/00189 Stage1/Stage2 inputs,
-strictly preflights all eight independent scene IDs, then runs every retained
-method on identical global caches. Global RANSAC is the primary baseline;
-guided RANSAC, manual identity, conflict-drop, structural lines and archived
-feedback remain explicit ablations. No scene-specific tuning is permitted.
+Run `run_research_practice_final_audit.sh` once against the archived final
+eight-scene directory. This CPU-only step reapplies the frozen guided-RANSAC
+quality/efficiency gate to paired per-scene rows, generates report-ready
+tables and uncertainty diagnostics, and reruns the raw-manual identity gate.
+It must not recompute global alignment or tune thresholds. After this decision
+is archived, proceed to the W3 Stage1 latency/parameter/checkpoint/memory
+benchmark and then freeze the report result tables.

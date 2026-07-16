@@ -2509,3 +2509,76 @@ final batch shell syntax: passed
 No eight-scene accuracy or runtime result is claimed yet. The next authorized
 server action is the final one-command GPU batch after this implementation is
 committed and pushed.
+
+## 2026-07-16 final eight-scene batch result and paired audit
+
+The user-supplied server output records a complete final batch on commit
+`788ed0db701a2d8f26e23ac5cca5557ed7b0a6ae`. Input materialization passed
+`8/8`, strict preflight passed `8/8`, and final execution passed `8/8` view
+groups from eight independent Structured3D scene IDs. The three missing
+Stage1/Stage2 groups (`scene_00186`, `scene_00187`, `scene_00189`) materialized
+in `58.188`, `64.898`, and `64.199` seconds. All five existing Stage2 groups
+remained read-only.
+
+The supplied aggregate-method JSON gives the following full-cache means:
+
+```text
+metric                         global RANSAC  guided RANSAC  delta
+partition pairwise F1          0.704999       0.744248       +0.039248
+purity/completeness F1         0.776531       0.822015       +0.045484
+support-conditioned IoU        0.614389       0.685150       +0.070761
+plane precision                0.482540       0.600595       +0.118056
+plane recall over all GT       0.415751       0.586584       +0.170833
+support coverage               0.997793       0.999610       +0.001818
+fragmentation excess           1.875          1.250          -0.625
+overmerge excess               2.500          1.125          -1.375
+normal angular error (degrees) 2.974294       4.849207       +1.874913
+runtime (seconds)              14.938125      13.127324      -1.810800
+```
+
+These means show a useful learning-guided signal: better support partition,
+plane detection, coverage and structural separation, with worse matched-plane
+normal angle. Mean runtime is lower, but median runtime is slightly higher
+(`10.187` versus `10.735` seconds), so no acceleration claim is accepted from
+the aggregate alone.
+
+The conflict-drop variants remain invalid primary comparisons despite high
+conditional scores. Their median full-cache coverage is only approximately
+`0.01455` for manual conflict-drop and `0.0000374` for direct conflict-drop.
+
+The supplied attachment is an aggregate-method summary, not the per-scene
+`aggregate_metrics.json`. A difference of aggregate medians cannot establish
+the pre-registered paired median gain or scene win rate. Therefore final
+method promotion is not claimed yet.
+
+Implemented `audit_research_practice_final_results.py` to consume the archived
+`aggregate_metrics.json` and `batch_execution.json` without GPU recomputation.
+It:
+
+* requires exactly matched RANSAC/guided rows and unique scene IDs;
+* reapplies the frozen smoke quality and efficiency thresholds to the eight
+  paired scenes;
+* reports per-scene wins, median paired gain, coverage, precision, overmerge
+  and runtime ratio;
+* emits deterministic paired-scene bootstrap intervals and an exact sign test
+  as descriptive uncertainty diagnostics only, never as a post-hoc gate;
+* preserves input paths and SHA256 and refuses to overwrite an existing audit;
+* reports conflict-drop coverage collapse alongside report-ready JSON, CSV and
+  Markdown tables.
+
+`run_research_practice_final_audit.sh` is a CPU-only one-command entrypoint. It
+runs both the new guided-RANSAC final gate and the existing raw-manual identity
+gate on the exact final artifacts. No DUSt3R alignment, model inference,
+training, or RANSAC recomputation occurs.
+
+Local validation completed:
+
+```text
+final audit + related batch/gate tests: 45 passed
+Python syntax check: passed
+Git Bash shell syntax check: passed
+```
+
+The immediate next server action is this CPU-only paired audit. Its archived
+decision determines whether the report promotes learning-guided RANSAC as the
+final method or retains it as a positive ablation.
