@@ -2372,3 +2372,51 @@ desktop runtime; it did not execute and is not claimed as a pass. The server
 metric is claimed yet. The next exact server action is the one-command guided
 smoke on the existing batch, followed by the unique-scene final manifest only
 if the gate result justifies it.
+
+## 2026-07-16 deterministic final-scene preparation
+
+The downstream final-set selection step is implemented without starting GPU
+work. `prepare_research_practice_final_manifest.py` rebuilds the validation
+pair-group inventory from the same `Structured3DDataset` configuration and
+selects exactly one eligible pair group per Structured3D scene.
+
+Selection is deterministic and metric-blind:
+
+* scene names are sorted and the first target scene IDs with at least ten
+  valid all-pairs records are retained;
+* within one scene, a complete existing Stage2 group is preferred, then pair
+  group paths are sorted lexicographically;
+* no reconstruction score, GT metric or qualitative result participates in
+  selection;
+* duplicate scene IDs and duplicate pair groups are rejected before output.
+
+The selector reads the archived `selected_groups.tsv` rather than inferring
+old group numbers from directories. An existing Stage2 group is considered
+ready only when its expected record count is present. Archived global caches
+are reused only when a passed `batch_execution.json` item has the exact same
+pair-group metadata and a recorded SHA256.
+
+Outputs are a JSON/CSV/Markdown selection plan plus
+`final_unique_scenes_execute.json`. Missing Stage1/Stage2 inputs are listed
+with deterministic target paths under a separate expansion root; the selector
+does not create or run those inputs. The execution manifest may therefore be
+precomputed safely while the guided-RANSAC smoke is pending.
+
+`run_research_practice_final_selection_preflight.sh` is a CPU-only server
+entrypoint. It fixes the `lightrecon` Python, checks `cv2`, NumPy and torch,
+installs `roma==1.5.6` with `--no-deps` if absent, and explicitly records that
+CUDA is not used. It refuses to overwrite its output and performs no Stage1,
+Stage2, DUSt3R, RANSAC or metric execution.
+
+Local validation completed:
+
+```text
+final scene-selection tests: 6 passed
+Python syntax checks: passed
+selection shell syntax: passed
+```
+
+No server scene inventory or exact list of eight scene IDs is claimed yet.
+The guided-RANSAC smoke remains the immediate gate; the prepared selector is
+the next read-only step and prevents the old eight-view-group/five-scene
+counting error from recurring.

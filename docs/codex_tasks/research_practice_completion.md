@@ -9,7 +9,9 @@ three-group identical-cache smoke and per-group gate are complete. Raw manual
 identity aggregation failed its pre-registered cross-group gate and is frozen
 as an ablation. A learning-support-guided RANSAC candidate is implemented and
 awaiting a CPU-only run on the same archived caches before the final
-independent-scene batch is frozen.
+independent-scene batch is frozen. The deterministic one-group-per-scene
+selector and final manifest generator are ready, but no new GPU materialization
+is authorized until that guided smoke returns.
 
 ## Objective
 
