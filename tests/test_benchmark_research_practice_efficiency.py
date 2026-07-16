@@ -8,6 +8,7 @@ import numpy as np
 from benchmark_research_practice_efficiency import (
     aggregate_accuracy,
     archived_stage_timings,
+    first_alignment_images,
     latency_summary,
     stage1_accuracy_rows,
     support_partition_metrics,
@@ -135,6 +136,45 @@ class EfficiencyBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(proxy["scenes"], 1)
         self.assertEqual(proxy["mean_seconds"], 10.0)
+
+    def test_alignment_images_use_global_cache_view_registry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            images = []
+            registry = []
+            for index in (1, 0):
+                image = root / f"view_{index}.png"
+                image.write_bytes(b"image")
+                images.append(image)
+                registry.append(
+                    {
+                        "alignment_view_index": index,
+                        "image_path": str(image),
+                        "points_hw": [10, 10],
+                    }
+                )
+            cache = root / "cache.npz"
+            np.savez(
+                cache,
+                dust3r_view_registry_json=np.asarray(json.dumps(registry)),
+            )
+            batch = {
+                "items": [
+                    {
+                        "id": "item",
+                        "scene_name": "scene",
+                        "artifacts": {
+                            "global_cloud_cache": {
+                                "path": str(cache),
+                                "sha256": "abc",
+                            }
+                        },
+                    }
+                ]
+            }
+            paths, source = first_alignment_images(batch)
+            self.assertEqual(paths, [str(root / "view_0.png"), str(root / "view_1.png")])
+            self.assertEqual(source["image_path_source"], "dust3r_view_registry_json")
 
 
 if __name__ == "__main__":

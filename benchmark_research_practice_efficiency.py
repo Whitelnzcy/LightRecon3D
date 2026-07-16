@@ -368,9 +368,18 @@ def first_alignment_images(batch_execution: dict[str, Any]) -> tuple[list[str], 
         if not cache_path.is_file():
             continue
         with np.load(cache_path, allow_pickle=True) as raw:
-            if "dust3r_image_paths" not in raw.files:
+            if "dust3r_view_registry_json" in raw.files:
+                registry = json.loads(str(raw["dust3r_view_registry_json"].item()))
+                registry = sorted(
+                    registry, key=lambda row: int(row["alignment_view_index"])
+                )
+                paths = [str(row["image_path"]) for row in registry]
+                path_source = "dust3r_view_registry_json"
+            elif "dust3r_image_paths" in raw.files:
+                paths = [str(value) for value in raw["dust3r_image_paths"].tolist()]
+                path_source = "dust3r_image_paths"
+            else:
                 continue
-            paths = [str(value) for value in raw["dust3r_image_paths"].tolist()]
         if len(paths) >= 2 and all(Path(path).is_file() for path in paths):
             return paths, {
                 "item_id": str(item.get("id", "")),
@@ -378,6 +387,7 @@ def first_alignment_images(batch_execution: dict[str, Any]) -> tuple[list[str], 
                 "global_cloud_cache": str(cache_path),
                 "global_cloud_cache_sha256": str(artifact.get("sha256", "")),
                 "views": len(paths),
+                "image_path_source": path_source,
             }
     raise FileNotFoundError("no final global cache with valid image paths")
 

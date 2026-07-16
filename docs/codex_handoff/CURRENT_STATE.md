@@ -2643,3 +2643,25 @@ The benchmark refuses existing output and requires the archived final audit
 decision to be `promote_learning_guided_ransac_final`. It performs inference
 and timing only; no training, recaching, threshold tuning or result mutation
 is allowed.
+
+### First W3 server attempt and cache-schema fix
+
+The first server attempt on commit `f8b4c70` passed dependency checks, loaded
+the fixed checkpoints and reached the alignment-source selection step. It then
+failed before writing the output directory with:
+
+```text
+FileNotFoundError: no final global cache with valid image paths
+```
+
+Cause: method-independent global caches written by
+`write_global_cloud_cache()` store image paths inside
+`dust3r_view_registry_json`; `dust3r_image_paths` exists only in later fused
+prediction NPZ files. The efficiency reader incorrectly assumed the latter
+field was present in the cache.
+
+`first_alignment_images()` now reads and sorts the canonical cache view
+registry by `alignment_view_index`, while retaining `dust3r_image_paths` as a
+backward-compatible fallback. A focused test constructs the real registry
+schema and verifies deterministic view ordering. The failed `_v1` launcher
+log is preserved; the corrected rerun must use a fresh `_v2` output path.
