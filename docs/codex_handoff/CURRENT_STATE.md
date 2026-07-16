@@ -2420,3 +2420,92 @@ No server scene inventory or exact list of eight scene IDs is claimed yet.
 The guided-RANSAC smoke remains the immediate gate; the prepared selector is
 the next read-only step and prevents the old eight-view-group/five-scene
 counting error from recurring.
+
+## 2026-07-16 guided smoke result and final eight-scene launch path
+
+The supplied server output contains a completed guided-RANSAC smoke from the
+existing `research_practice_guided_ransac_smoke_20260716_v1` directory. The
+new launch correctly refused to overwrite it; the archived Markdown was then
+read successfully. Results on the three retained view groups are:
+
+```text
+group                    RANSAC F1  guided F1  delta      RANSAC s  guided s
+group_000 / scene_00180  0.704307   0.720109   +0.015802  18.750    5.087
+group_001 / scene_00180  0.595275   0.608537   +0.013262   3.933   37.318
+group_002 / scene_00181  0.924908   0.926884   +0.001976  10.040   12.918
+```
+
+Guided RANSAC improved F1 in all three groups and retained median coverage
+`0.999683`, plane precision `0.60`, and overmerge excess `2`. This is a
+consistent small accuracy signal, but it did not pass either pre-registered
+promotion path:
+
+* median F1 gain was `+0.013262`, below the quality threshold `+0.02`;
+* median runtime ratio was `1.286575`, above the efficiency threshold `0.75`.
+
+The archived decision `keep_guided_as_ablation_ransac_primary` is accepted
+without post-hoc threshold tuning. Global RANSAC remains the stable primary
+baseline. Learning-guided RANSAC remains an implemented method contribution
+and final-batch ablation whose honest claim is consistent small smoke F1 gain,
+not established superiority or acceleration.
+
+The deterministic selection preflight completed on commit `2e0979b` and
+selected eight unique scene IDs and pair groups:
+
+```text
+scene_00180  existing Stage2, archived cache
+scene_00181  existing Stage2, archived cache
+scene_00182  existing Stage2
+scene_00184  existing Stage2
+scene_00185  existing Stage2
+scene_00186  needs frozen Stage1/Stage2 materialization
+scene_00187  needs frozen Stage1/Stage2 materialization
+scene_00189  needs frozen Stage1/Stage2 materialization
+```
+
+Five Stage2 groups are reused, three require materialization, and two global
+caches are reused with exact pair-group metadata and SHA256. Scene `00188` was
+not silently substituted or manually removed; under the frozen eligibility
+rule the next selected eligible scene after `00187` is `00189`.
+
+Implemented `materialize_research_practice_final_inputs.py`:
+
+* reads and hashes the frozen selection plan;
+* validates unique item, scene and pair-group identities;
+* treats all five existing Stage2 groups as read-only;
+* runs the frozen Stage1 teacher-support exporter and learned Stage2 region
+  merge only for the three `needs_stage1_stage2` rows;
+* freezes the exact dataset indices, validation split, all-pairs strategy,
+  Stage1 support limits and Stage2 safety gate;
+* validates every final input with the existing exact view-registry and image
+  metadata checks;
+* preserves per-stage logs and failure rows and refuses any existing planned
+  materialization root rather than overwriting a partial run.
+
+`run_research_practice_final_batch.sh` is the single GPU server entrypoint for
+the next phase. It checks the fixed `lightrecon` Python and CUDA, installs
+`roma==1.5.6` and `trimesh==4.9.0` with `--no-deps` when needed, and performs:
+
+```text
+three missing Stage1/Stage2 groups
+-> strict eight-independent-scene preflight
+-> identical-cache final executor for all eight scenes
+```
+
+The final executor includes global RANSAC as primary, guided RANSAC as the
+learning-guided ablation, direct/manual/conflict variants, point-aligned GT,
+structural lines, full-cache metrics, support-record metrics and per-method
+aggregate JSON/CSV. Existing output, preflight, materialization or launcher
+paths cause an immediate stop.
+
+Local validation of the new launch path completed:
+
+```text
+materialization tests: 5 passed
+Python syntax checks: passed
+final batch shell syntax: passed
+```
+
+No eight-scene accuracy or runtime result is claimed yet. The next authorized
+server action is the final one-command GPU batch after this implementation is
+committed and pushed.

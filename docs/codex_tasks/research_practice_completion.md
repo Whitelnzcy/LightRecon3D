@@ -7,11 +7,12 @@ Deadline: 2026-07-31 23:00 Asia/Shanghai
 Status: active and scope-frozen. W1 engineering output is complete. The W2
 three-group identical-cache smoke and per-group gate are complete. Raw manual
 identity aggregation failed its pre-registered cross-group gate and is frozen
-as an ablation. A learning-support-guided RANSAC candidate is implemented and
-awaiting a CPU-only run on the same archived caches before the final
-independent-scene batch is frozen. The deterministic one-group-per-scene
-selector and final manifest generator are ready, but no new GPU materialization
-is authorized until that guided smoke returns.
+as an ablation. Learning-support-guided RANSAC improved F1 in all three smoke
+groups but failed the pre-registered quality and efficiency promotion paths;
+it is retained as an innovation ablation while global RANSAC remains primary.
+The deterministic eight-independent-scene manifest is frozen, with five
+existing Stage2 groups and three groups awaiting one final GPU materialization
+and batch run.
 
 ## Objective
 
@@ -124,8 +125,8 @@ A0  DUSt3R + direct global SVD
 A1  A0 + Stage1 support
 A2  A1 + Stage2 local refit
 A3  A2 + current manual merge
-A4  A2 + retained provenance/conflict handling
-A5  A4 + structural line output
+A4  A2 + learning-support-guided RANSAC proposal/consensus/refit
+A5  A4 + retained provenance/conflict diagnostics and structural line output
 NEG PlaneGraph-BA / live feedback on the archived scene only
 ```
 
@@ -181,11 +182,9 @@ committed.
 
 ## Immediate next step
 
-Run `run_research_practice_guided_ransac_smoke.sh` against the archived
-three-group batch. It reuses the exact DUSt3R caches, direct Stage1/Stage2
-support records, point-aligned GT and RANSAC artifacts; it does not recompute
-global alignment. Promote the guided candidate to the final 8-12 independent
-scene run only if its pre-registered quality or efficiency path passes.
-Otherwise keep global RANSAC as the primary result and the guided method as an
-implemented ablation. Conflict-drop remains a coverage-collapse ablation, and
-structural lines remain output-only A5.
+Run `run_research_practice_final_batch.sh` once on the frozen eight-scene
+selection. It materializes only scene 00186/00187/00189 Stage1/Stage2 inputs,
+strictly preflights all eight independent scene IDs, then runs every retained
+method on identical global caches. Global RANSAC is the primary baseline;
+guided RANSAC, manual identity, conflict-drop, structural lines and archived
+feedback remain explicit ablations. No scene-specific tuning is permitted.
