@@ -33,8 +33,8 @@ draft due 2026-07-26.
 * plane instance support prediction;
 * local geometry validation and SVD refit;
 * 2D line detection and exact 3D lifting;
-* bounded support and cross-view plane identity;
-* conflict handling and output schemas;
+* learning-support-guided plane hypotheses, global consensus and weighted refit;
+* bounded connected components, exact provenance and conflict handling;
 * why alignment feedback is excluded from the final method.
 
 ## 5. Data and evaluation protocol (about 1,000 characters)
@@ -48,7 +48,7 @@ draft due 2026-07-26.
 ## 6. Experiments (about 1,800 characters)
 
 * Stage1 accuracy, speed and model size;
-* direct SVD, RANSAC and support-fusion comparison;
+* direct SVD, global RANSAC, guided RANSAC and support-fusion comparison;
 * structural-line diagnostics;
 * ablations;
 * qualitative results;
@@ -74,7 +74,7 @@ Figure 1  final system diagram
 Figure 2  exact coordinate/provenance mapping
 Figure 3  plane and line front-end outputs
 Figure 4  global bounded editable result
-Figure 5  RANSAC/fusion comparison
+Figure 5  global RANSAC/guided RANSAC/fusion comparison
 Figure 6  failure gallery
 Table 1   related-method scope comparison
 Table 2   Stage1 accuracy/speed/model-size result

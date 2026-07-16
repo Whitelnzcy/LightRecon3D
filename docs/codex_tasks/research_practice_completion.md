@@ -4,10 +4,12 @@ Date: 2026-07-15
 
 Deadline: 2026-07-31 23:00 Asia/Shanghai
 
-Status: active and scope-frozen. W1 engineering output is complete. W2 input
-preflight passed 3/3 retained groups and the identical-cache smoke produced
-all three groups. Its aggregate result is mixed; the per-group gate audit is
-implemented locally and awaiting a CPU-only server run.
+Status: active and scope-frozen. W1 engineering output is complete. The W2
+three-group identical-cache smoke and per-group gate are complete. Raw manual
+identity aggregation failed its pre-registered cross-group gate and is frozen
+as an ablation. A learning-support-guided RANSAC candidate is implemented and
+awaiting a CPU-only run on the same archived caches before the final
+independent-scene batch is frozen.
 
 ## Objective
 
@@ -177,8 +179,11 @@ committed.
 
 ## Immediate next step
 
-Run the CPU-only per-group smoke gate against the existing batch JSON. Use its
-explicit stop/go result to choose raw manual aggregation or RANSAC as the
-retained deterministic method, then freeze the final 8-12 independent-scene
-manifest. Conflict-drop results are coverage-collapse ablations, and
+Run `run_research_practice_guided_ransac_smoke.sh` against the archived
+three-group batch. It reuses the exact DUSt3R caches, direct Stage1/Stage2
+support records, point-aligned GT and RANSAC artifacts; it does not recompute
+global alignment. Promote the guided candidate to the final 8-12 independent
+scene run only if its pre-registered quality or efficiency path passes.
+Otherwise keep global RANSAC as the primary result and the guided method as an
+implemented ablation. Conflict-drop remains a coverage-collapse ablation, and
 structural lines remain output-only A5.

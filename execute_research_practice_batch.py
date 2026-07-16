@@ -57,6 +57,14 @@ FROZEN_CONFIG = {
         "hypothesis_max_points": 50000,
         "component_exact_max_points": 20000,
     },
+    "guided_ransac": {
+        "proposal_iterations": 64,
+        "proposal_min_points": 64,
+        "proposal_min_inlier_ratio": 0.60,
+        "proposal_max_points": 4000,
+        "support_score_weight": 1.0,
+        "fallback_iterations": 96,
+    },
     "support_join": {
         "conflict_policy": "drop",
         "min_points_per_plane": 3,
@@ -424,6 +432,63 @@ def execute_item(
             "global_ransac",
         )
 
+        guided_dir = item_dir / "guided_ransac"
+        guided = FROZEN_CONFIG["guided_ransac"]
+        run_required(
+            row,
+            "learning_guided_ransac",
+            [
+                python_bin,
+                str(project_dir / "guided_plane_ransac.py"),
+                "--global_cloud_npz",
+                str(cache_path),
+                "--support_npz",
+                str(direct_npz),
+                "--output_dir",
+                str(guided_dir),
+                "--scene_key",
+                item_id,
+                "--min_conf",
+                str(FROZEN_CONFIG["evaluation_min_conf"]),
+                "--distance_threshold",
+                str(ransac["distance_threshold"]),
+                "--proposal_iterations",
+                str(guided["proposal_iterations"]),
+                "--proposal_min_points",
+                str(guided["proposal_min_points"]),
+                "--proposal_min_inlier_ratio",
+                str(guided["proposal_min_inlier_ratio"]),
+                "--proposal_max_points",
+                str(guided["proposal_max_points"]),
+                "--support_score_weight",
+                str(guided["support_score_weight"]),
+                "--fallback_iterations",
+                str(guided["fallback_iterations"]),
+                "--min_inliers",
+                str(ransac["min_inliers"]),
+                "--cluster_radius",
+                str(ransac["cluster_radius"]),
+                "--min_component_points",
+                str(ransac["min_component_points"]),
+                "--max_planes",
+                str(ransac["max_planes"]),
+                "--seed",
+                str(ransac["seed"]),
+                "--hypothesis_max_points",
+                str(ransac["hypothesis_max_points"]),
+                "--component_exact_max_points",
+                str(ransac["component_exact_max_points"]),
+            ],
+            project_dir,
+            item_dir,
+            runner,
+        )
+        guided_npz = require_file(
+            guided_dir
+            / f"{item_id}_learning_guided_ransac_cc_full_pointcloud_editable_planes_data.npz",
+            "learning_guided_ransac",
+        )
+
         lifted_paths: dict[str, Path] = {}
         for label, source_npz, method in (
             (
@@ -525,6 +590,7 @@ def execute_item(
                 "--pred_npz",
                 str(gt_npz),
                 str(ransac_npz),
+                str(guided_npz),
                 str(lifted_paths["direct_unique"]),
                 str(lifted_paths["manual_unique"]),
                 "--output_csv",
@@ -556,6 +622,7 @@ def execute_item(
                 "--pred_npz",
                 str(gt_npz),
                 str(ransac_npz),
+                str(guided_npz),
                 str(direct_npz),
                 str(manual_npz),
                 str(lifted_paths["direct_unique"]),
@@ -563,6 +630,7 @@ def execute_item(
                 "--method_names",
                 "point_aligned_gt_oracle",
                 "global_ransac_cc",
+                "learning_guided_ransac_cc",
                 "stage2_support_direct_global_svd",
                 "stage2_manual_merge_support",
                 "stage2_direct_svd_unique_conflict_drop",
@@ -589,6 +657,7 @@ def execute_item(
             "direct_support_records": artifact(direct_npz),
             "manual_support_records": artifact(manual_npz),
             "global_ransac": artifact(ransac_npz),
+            "learning_guided_ransac": artifact(guided_npz),
             "direct_unique_conflict_drop": artifact(lifted_paths["direct_unique"]),
             "manual_unique_conflict_drop": artifact(lifted_paths["manual_unique"]),
             "structural_lines_manifest": artifact(line_manifest),

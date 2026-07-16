@@ -2288,3 +2288,87 @@ shell syntax check: passed
 No final stop/go decision is claimed from the aggregate summary. The next
 server step is the CPU-only smoke gate on the existing batch files; no GPU or
 reconstruction rerun is needed.
+
+## 2026-07-16 identity stop gate and learning-guided RANSAC pivot
+
+The CPU-only server gate completed on commit `d8fccba` for all three smoke
+view groups (two independent Structured3D scene IDs). The pre-registered raw
+manual identity gate failed:
+
+```text
+median manual raw F1                  0.769270
+median global RANSAC F1               0.704429
+median per-group manual delta         0.058468
+manual group wins                     2 / 3 (0.666667; required 0.70)
+median manual GT coverage             0.994722
+median manual assignment              0.994400
+median manual plane precision         0.250000
+median RANSAC plane precision         0.600000
+median manual fragmentation excess    2
+median RANSAC fragmentation excess    1
+median manual overmerge excess        1
+median RANSAC overmerge excess        2
+```
+
+The per-group F1 deltas were `+0.064841`, `+0.058468`, and `-0.121594`.
+The decision is therefore
+`stop_identity_method_promotion_use_strongest_baseline`. Manual aggregation
+and conflict-drop are frozen as ablations; no additional identity-threshold
+tuning is authorized. Conflict-drop remains invalid as a primary result
+because median GT coverage collapses to `0.544519` for manual and `0.000585`
+for direct support.
+
+This stop does not remove learned plane support from the project. A narrower
+learning-support-guided RANSAC candidate is now implemented:
+
+```text
+direct Stage1/Stage2 local plane supports
+-> exact (alignment_view_index,x,y) cache mapping
+-> robust support-restricted plane hypotheses
+-> full frozen-global-cloud consensus scoring
+-> DUSt3R-confidence-weighted refit
+-> bounded connected components
+-> reduced random-RANSAC fallback on uncovered points
+```
+
+`guided_plane_ransac.py` deliberately uses the unmerged direct support output,
+not failed cross-view manual plane IDs. Duplicate and conflicting support
+records are preserved as competing hypotheses. They are neither assigned by
+nearest XYZ nor silently dropped. Output uses the same full-cache editable
+plane schema as `global_ransac_cc`.
+
+`evaluate_guided_ransac_smoke.py` reuses each archived batch item's verified
+global cache, direct support records, point-aligned GT and global-RANSAC
+artifact. It runs only the guided method and evaluates an explicit two-path
+gate:
+
+* quality: median F1 gain at least `0.02`, wins at least 2/3 groups, coverage
+  at least `0.90`, and plane precision/overmerge not worse than RANSAC;
+* efficiency: median F1 loss no more than `0.01`, runtime no more than `0.75x`
+  RANSAC, coverage at least `0.90`, and precision/overmerge not worse.
+
+Passing either path is only a smoke signal; final promotion still requires at
+least eight independent scene IDs. Failure keeps the guided implementation as
+an ablation and global RANSAC as the primary engineering baseline.
+
+The existing manifest-driven final executor now includes the guided method in
+both full-cache and support-record evaluations. The new server entrypoint is
+`run_research_practice_guided_ransac_smoke.sh`. It checks the fixed
+`lightrecon` Python, installs `roma==1.5.6` with `--no-deps` if absent, refuses
+to overwrite output, and does not require CUDA or rerun DUSt3R.
+
+Local validation completed with the bundled scientific Python runtime:
+
+```text
+guided/baseline/lift/batch focused tests: 25 passed
+additional metric/audit/batch/mapping tests: 29 passed, 1 skipped
+Python syntax checks: passed
+guided smoke and batch shell syntax: passed
+```
+
+One unrelated Structured3D GT test could not import local `cv2` in the bundled
+desktop runtime; it did not execute and is not claimed as a pass. The server
+`lightrecon` environment already recorded `cv2=4.13.0`. No real guided-RANSAC
+metric is claimed yet. The next exact server action is the one-command guided
+smoke on the existing batch, followed by the unique-scene final manifest only
+if the gate result justifies it.
