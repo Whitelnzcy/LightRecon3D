@@ -9,11 +9,12 @@ three-group identical-cache smoke and per-group gate are complete. Raw manual
 identity aggregation failed its pre-registered cross-group gate and is frozen
 as an ablation. Learning-support-guided RANSAC improved F1 in all three smoke
 groups but failed the pre-registered quality and efficiency promotion paths;
-the final eight-independent-scene GPU batch has now passed completely. Its
-aggregate means favor guided RANSAC on partition F1, matched IoU, plane
-precision, recall and overmerge, with a normal-angle tradeoff. Final promotion
-awaits the frozen paired-scene gate because the supplied aggregate summary
-does not contain per-scene wins or paired median deltas.
+the final eight-independent-scene GPU batch and paired audit have now passed
+completely. Guided RANSAC won pairwise F1 on all `8/8` scenes, achieved mean
+and median paired gains of `+0.039248` and `+0.035580`, and passed the frozen
+quality path. It is the final method; global RANSAC is the primary baseline.
+The efficiency path failed and no acceleration claim is permitted. W3
+accuracy/latency/model-footprint measurement is the active work package.
 
 ## Objective
 
@@ -183,10 +184,10 @@ committed.
 
 ## Immediate next step
 
-Run `run_research_practice_final_audit.sh` once against the archived final
-eight-scene directory. This CPU-only step reapplies the frozen guided-RANSAC
-quality/efficiency gate to paired per-scene rows, generates report-ready
-tables and uncertainty diagnostics, and reruns the raw-manual identity gate.
-It must not recompute global alignment or tune thresholds. After this decision
-is archived, proceed to the W3 Stage1 latency/parameter/checkpoint/memory
-benchmark and then freeze the report result tables.
+Run `run_research_practice_efficiency.sh` once. It measures the frozen Stage1
+support accuracy over the final source records, separates contributed-head
+footprint from the shared DUSt3R backbone, records P50/P95 latency and peak GPU
+memory at `512 x 512`, repeats one fixed five-view global alignment, and
+summarizes archived downstream stages. It performs no training or tuning.
+After this bundle is archived, freeze Tables 2/3/5 and start the full report
+draft and failure-gallery selection.

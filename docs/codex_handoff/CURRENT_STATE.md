@@ -2582,3 +2582,64 @@ Git Bash shell syntax check: passed
 The immediate next server action is this CPU-only paired audit. Its archived
 decision determines whether the report promotes learning-guided RANSAC as the
 final method or retains it as a positive ablation.
+
+## 2026-07-16 final method promotion and W3 efficiency launcher
+
+The supplied paired audit completed successfully on all eight independent
+scenes and returned:
+
+```text
+decision: promote_learning_guided_ransac_final
+quality path: pass
+efficiency path: fail
+guided F1 wins: 8/8 scenes
+median paired F1 gain: +0.035580
+mean paired F1 gain: +0.039248
+paired bootstrap 95% interval: [+0.015288, +0.063010]
+exact two-sided sign-test p: 0.007812
+median coverage: 0.999828
+median plane precision: 0.585714 vs 0.535714
+median overmerge: 0.5 vs 2.0
+median runtime ratio: 1.464814
+```
+
+Learning-support-guided RANSAC is now the frozen final method. Global RANSAC
+is its deterministic geometric baseline. The honest claim is a cross-scene
+quality improvement, not an acceleration claim. The guided method improved
+pairwise F1 in all eight scenes; paired mean F1 increased from `0.704999` to
+`0.744248`, matched IoU increased from `0.614389` to `0.685150`, and mean
+overmerge excess decreased from `2.500` to `1.125`.
+
+Normal error is reported only on seven common valid scene pairs because one
+baseline scene had no finite matched-plane angle. On that paired domain the
+guided mean is `2.195663` degrees versus `2.974294` degrees. This common-pair
+number must not be confused with the separately aggregated guided normal mean
+that includes a scene where the baseline value is undefined.
+
+The raw manual identity method failed its final gate: median F1 delta versus
+RANSAC was `-0.106110`, and it won only `3/8` scenes. It remains a negative
+association ablation. Conflict-drop also remains diagnostic-only because its
+median full-cache coverage is `0.014547` for manual and `0.000037` for direct
+support.
+
+Implemented `benchmark_research_practice_efficiency.py` and
+`run_research_practice_efficiency.sh` for the final W3 server interaction. The
+benchmark freezes resolution at `512 x 512` and separates the shared DUSt3R
+backbone from the contributed Stage1 support head and Stage2 merge MLP. It
+records:
+
+* parameter, trainable-parameter, parameter-byte and checkpoint-byte counts;
+* Stage1-head per-image P50/P95 latency and peak/incremental GPU memory;
+* DUSt3R pair latency, Stage2 candidate-pair latency and a repeated five-view
+  inference-plus-global-alignment benchmark;
+* Stage1 support partition accuracy over the exact final eight-scene source
+  files, with assignment/coverage reported separately;
+* archived per-stage timings for RANSAC, guided RANSAC, lines, evaluation and
+  uncached direct-support alignment-plus-export proxies;
+* Git SHA, hardware, CUDA/library versions and SHA256 for every controlling
+  input and checkpoint.
+
+The benchmark refuses existing output and requires the archived final audit
+decision to be `promote_learning_guided_ransac_final`. It performs inference
+and timing only; no training, recaching, threshold tuning or result mutation
+is allowed.

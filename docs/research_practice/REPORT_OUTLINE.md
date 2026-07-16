@@ -54,6 +54,25 @@ draft due 2026-07-26.
 * qualitative results;
 * archived negative feedback experiment.
 
+Frozen final result for Table 3:
+
+```text
+8 independent Structured3D scenes, identical DUSt3R caches
+global RANSAC pairwise F1 mean: 0.704999
+learning-guided RANSAC pairwise F1 mean: 0.744248
+paired mean / median gain: +0.039248 / +0.035580
+scene wins: 8/8
+paired bootstrap 95% interval: [+0.015288, +0.063010]
+matched IoU mean: 0.614389 -> 0.685150
+overmerge excess mean: 2.500 -> 1.125
+quality gate: passed; efficiency gate: failed
+```
+
+Write this as an improvement under the frozen project protocol, not as a
+published-dataset state-of-the-art claim. Raw manual identity is a negative
+ablation (`3/8` wins; median F1 delta `-0.106110`). Conflict-drop scores must
+always be printed together with their collapsed coverage.
+
 ## 7. Failure analysis and limitations (about 800 characters)
 
 * fragmentation and over-merge;
