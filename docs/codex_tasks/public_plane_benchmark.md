@@ -174,3 +174,11 @@ plane_dust3r_compatibility.md
 
 This job is CPU-only and reads the frozen batch ledger and Structured3D path
 inventory. It does not clone or download Plane-DUSt3R, rerun DUSt3R, or train.
+
+The completed server preflight found `0/17` official `perspective/full` groups
+but `17/17` complete frozen `perspective/empty` five-view groups. Therefore the
+native Plane-DUSt3R table cannot be reproduced from the installed dataset. The
+active external comparison is a same-input reproduction: an auditable dataset
+view exposes the exact empty-render positions under the external evaluator's
+expected directory name. It must be labelled as a protocol adaptation, not as
+the paper's native Structured3D result.
