@@ -200,3 +200,23 @@ retain the original 14/17 run only as recovery provenance. Complete the figure
 index, failure-gallery selection, reference formatting and Word rendering. Do
 not rerun the final batch or W3 benchmark unless an artifact-integrity check
 fails.
+
+## 2026-07-17 public-comparison extension
+
+The recovered 17-scene result remains the frozen research-practice main table,
+but it is only an internal pilot for a paper. The follow-up evaluation track is
+specified in `docs/codex_tasks/public_plane_benchmark.md`.
+
+Immediate order:
+
+1. recompute VOI, Rand Index and Segmentation Covering from the archived
+   point-aligned NPZ files without rerunning inference;
+2. freeze an all-eligible held-out Structured3D manifest before reading new
+   results;
+3. reproduce the closest unposed external method on a compatibility subset;
+4. run a larger held-out test only after the canonical evaluator and adapter
+   checks pass.
+
+This extension does not authorize blind foundation-model retraining. The first
+missing evidence is standardized and larger-scale testing. A new training run
+is conditional on a documented cross-scene or cross-dataset failure.

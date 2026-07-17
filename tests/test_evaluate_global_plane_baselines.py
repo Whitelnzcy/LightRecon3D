@@ -2,7 +2,11 @@ import unittest
 
 import numpy as np
 
-from evaluate_global_plane_baselines import evaluate_arrays, linear_sum_assignment
+from evaluate_global_plane_baselines import (
+    evaluate_arrays,
+    linear_sum_assignment,
+    public_partition_metrics,
+)
 
 
 class GlobalPlaneEvaluationTest(unittest.TestCase):
@@ -23,6 +27,9 @@ class GlobalPlaneEvaluationTest(unittest.TestCase):
         self.assertEqual(metrics["support_matched_iou"], 1.0)
         self.assertEqual(metrics["plane_count_error"], 0)
         self.assertEqual(metrics["support_partition_pairwise_f1"], 1.0)
+        self.assertEqual(metrics["segmentation_voi_nats"], 0.0)
+        self.assertEqual(metrics["segmentation_rand_index"], 1.0)
+        self.assertEqual(metrics["segmentation_covering_symmetric"], 1.0)
 
     def test_fragmentation_is_reported(self):
         points = np.zeros((4, 3), np.float32)
@@ -70,6 +77,35 @@ class GlobalPlaneEvaluationTest(unittest.TestCase):
         self.assertLess(metrics["support_partition_pairwise_precision"], 1.0)
         self.assertEqual(metrics["support_partition_pairwise_recall"], 1.0)
         self.assertLess(metrics["support_partition_pairwise_f1"], 1.0)
+
+    def test_public_metrics_report_known_overmerge(self):
+        pred = np.zeros(4, np.int32)
+        gt = np.asarray([0, 0, 1, 1], np.int32)
+        metrics = public_partition_metrics(pred, gt)
+        self.assertAlmostEqual(metrics["segmentation_voi_nats"], np.log(2.0))
+        self.assertAlmostEqual(metrics["segmentation_rand_index"], 2.0 / 6.0)
+        self.assertAlmostEqual(
+            metrics["segmentation_covering_gt_by_pred"], 0.5
+        )
+        self.assertAlmostEqual(
+            metrics["segmentation_covering_pred_by_gt"], 0.5
+        )
+        self.assertAlmostEqual(metrics["segmentation_covering_symmetric"], 0.5)
+
+    def test_public_metrics_do_not_drop_unassigned_points(self):
+        gt = np.asarray([0, 0, 1, 1], np.int32)
+        complete = public_partition_metrics(gt, gt)
+        sparse = public_partition_metrics(
+            np.asarray([0, -1, 1, -1], np.int32),
+            gt,
+        )
+        self.assertEqual(sparse["segmentation_evaluation_points"], 4)
+        self.assertEqual(sparse["segmentation_pred_segment_count"], 3)
+        self.assertGreater(sparse["segmentation_voi_nats"], 0.0)
+        self.assertLess(
+            sparse["segmentation_covering_symmetric"],
+            complete["segmentation_covering_symmetric"],
+        )
 
 
 if __name__ == "__main__":

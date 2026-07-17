@@ -90,6 +90,112 @@ def pair_count(count):
     return count * (count - 1) // 2
 
 
+def public_partition_metrics(pred_labels, gt_labels):
+    """Compute standard segmentation metrics on all GT-planar points.
+
+    The public plane-reconstruction literature commonly reports Variation of
+    Information (VOI), Rand Index (RI), and Segmentation Covering (SC).  This
+    point-aligned implementation uses every point with a valid GT plane label.
+    Predicted ``-1`` labels are retained as one unassigned segment instead of
+    being dropped, so incomplete methods cannot improve their score by omitting
+    difficult points.
+
+    VOI is measured with natural logarithms (nats).  SC is reported in both
+    directions, plus their arithmetic mean, to make the convention explicit.
+    """
+
+    pred_labels = np.asarray(pred_labels, dtype=np.int64).reshape(-1)
+    gt_labels = np.asarray(gt_labels, dtype=np.int64).reshape(-1)
+    if pred_labels.shape != gt_labels.shape:
+        raise ValueError("prediction and GT labels must have identical shapes")
+
+    valid = gt_labels >= 0
+    pred = pred_labels[valid]
+    gt = gt_labels[valid]
+    point_count = int(len(gt))
+    if point_count == 0:
+        return {
+            "segmentation_evaluation_points": 0,
+            "segmentation_pred_segment_count": 0,
+            "segmentation_gt_segment_count": 0,
+            "segmentation_voi_nats": float("nan"),
+            "segmentation_rand_index": float("nan"),
+            "segmentation_covering_gt_by_pred": float("nan"),
+            "segmentation_covering_pred_by_gt": float("nan"),
+            "segmentation_covering_symmetric": float("nan"),
+        }
+
+    pred_ids, pred_inverse = np.unique(pred, return_inverse=True)
+    gt_ids, gt_inverse = np.unique(gt, return_inverse=True)
+    gt_count = len(gt_ids)
+    flat = pred_inverse.astype(np.int64) * gt_count + gt_inverse
+    contingency = np.bincount(
+        flat,
+        minlength=len(pred_ids) * gt_count,
+    ).reshape(len(pred_ids), gt_count).astype(np.int64, copy=False)
+
+    row_counts = contingency.sum(axis=1)
+    column_counts = contingency.sum(axis=0)
+    probability = contingency.astype(np.float64) / point_count
+    row_probability = row_counts.astype(np.float64) / point_count
+    column_probability = column_counts.astype(np.float64) / point_count
+
+    nonzero = probability > 0
+    mutual_information = float(
+        np.sum(
+            probability[nonzero]
+            * np.log(
+                probability[nonzero]
+                / (
+                    row_probability[:, None]
+                    * column_probability[None, :]
+                )[nonzero]
+            )
+        )
+    )
+    pred_entropy = float(-np.sum(row_probability * np.log(row_probability)))
+    gt_entropy = float(-np.sum(column_probability * np.log(column_probability)))
+    voi = max(0.0, pred_entropy + gt_entropy - 2.0 * mutual_information)
+
+    total_pairs = pair_count(point_count)
+    same_both = sum(pair_count(value) for value in contingency.ravel())
+    same_pred = sum(pair_count(value) for value in row_counts)
+    same_gt = sum(pair_count(value) for value in column_counts)
+    different_both = total_pairs - same_pred - same_gt + same_both
+    rand_index = (
+        float((same_both + different_both) / total_pairs)
+        if total_pairs
+        else 1.0
+    )
+
+    union = row_counts[:, None] + column_counts[None, :] - contingency
+    iou = np.divide(
+        contingency,
+        union,
+        out=np.zeros_like(contingency, dtype=np.float64),
+        where=union > 0,
+    )
+    covering_gt_by_pred = float(
+        np.sum(column_counts * iou.max(axis=0)) / point_count
+    )
+    covering_pred_by_gt = float(
+        np.sum(row_counts * iou.max(axis=1)) / point_count
+    )
+
+    return {
+        "segmentation_evaluation_points": point_count,
+        "segmentation_pred_segment_count": int(len(pred_ids)),
+        "segmentation_gt_segment_count": int(len(gt_ids)),
+        "segmentation_voi_nats": float(voi),
+        "segmentation_rand_index": rand_index,
+        "segmentation_covering_gt_by_pred": covering_gt_by_pred,
+        "segmentation_covering_pred_by_gt": covering_pred_by_gt,
+        "segmentation_covering_symmetric": float(
+            0.5 * (covering_gt_by_pred + covering_pred_by_gt)
+        ),
+    }
+
+
 def evaluate_support_conditioned_partition(
     pred_labels,
     pred_normals,
@@ -303,6 +409,7 @@ def evaluate_arrays(points, pred_labels, pred_normals, pred_offsets, gt_labels,
             min_observed_plane_points,
         )
     )
+    result.update(public_partition_metrics(pred_labels, gt_labels))
     return result
 
 
