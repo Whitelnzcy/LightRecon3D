@@ -187,18 +187,19 @@ def select_unique_scene_groups(
     target_scenes: int,
     expansion_root: Path,
 ) -> list[dict[str, Any]]:
-    if target_scenes < 1:
-        raise ValueError("target_scenes must be positive")
+    if target_scenes < 0:
+        raise ValueError("target_scenes must be non-negative (zero means all)")
     by_scene: dict[str, list[dict[str, Any]]] = {}
     for row in eligible_groups:
         by_scene.setdefault(str(row["scene_name"]), []).append(row)
-    if len(by_scene) < target_scenes:
+    selected_scene_count = len(by_scene) if target_scenes == 0 else target_scenes
+    if len(by_scene) < selected_scene_count:
         raise ValueError(
-            f"only {len(by_scene)} eligible independent scenes; require {target_scenes}"
+            f"only {len(by_scene)} eligible independent scenes; require {selected_scene_count}"
         )
 
     selected: list[dict[str, Any]] = []
-    for scene_name in sorted(by_scene)[:target_scenes]:
+    for scene_name in sorted(by_scene)[:selected_scene_count]:
         candidates = sorted(
             by_scene[scene_name],
             key=lambda row: (
@@ -236,7 +237,10 @@ def select_unique_scene_groups(
 
 
 def execution_manifest(
-    selected: list[dict[str, Any]], *, pattern: str
+    selected: list[dict[str, Any]],
+    *,
+    pattern: str,
+    minimum_valid_items: int | None = None,
 ) -> dict[str, Any]:
     items = []
     for row in selected:
@@ -249,10 +253,15 @@ def execution_manifest(
         if row["reusable_cache"]:
             item.update(row["reusable_cache"])
         items.append(item)
+    minimum = len(items) if minimum_valid_items is None else int(minimum_valid_items)
+    if minimum < 1 or minimum > len(items):
+        raise ValueError(
+            f"minimum_valid_items must be between 1 and {len(items)}, got {minimum}"
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "name": "research_practice_final_unique_scene_batch",
-        "minimum_valid_items": len(items),
+        "minimum_valid_items": minimum,
         "min_views": 5,
         "check_image_files": True,
         "pattern": pattern,
@@ -371,6 +380,12 @@ def main() -> int:
     parser.add_argument("--reuse_batch_execution_json")
     parser.add_argument("--selected_groups_tsv")
     parser.add_argument("--target_scenes", type=int, default=8)
+    parser.add_argument(
+        "--minimum_valid_items",
+        type=int,
+        default=0,
+        help="minimum usable groups; zero requires every selected group",
+    )
     parser.add_argument("--min_pairs", type=int, default=10)
     parser.add_argument("--split", choices=("train", "val"), default="val")
     parser.add_argument("--train_ratio", type=float, default=0.9)
@@ -408,12 +423,19 @@ def main() -> int:
         target_scenes=args.target_scenes,
         expansion_root=Path(args.expansion_root),
     )
-    manifest = execution_manifest(selected, pattern=args.pattern)
+    manifest = execution_manifest(
+        selected,
+        pattern=args.pattern,
+        minimum_valid_items=(
+            args.minimum_valid_items if args.minimum_valid_items > 0 else None
+        ),
+    )
     configuration = {
         "root_dir": args.root_dir,
         "existing_root": args.existing_root,
         "expansion_root": args.expansion_root,
         "target_scenes": args.target_scenes,
+        "minimum_valid_items": manifest["minimum_valid_items"],
         "min_pairs": args.min_pairs,
         "split": args.split,
         "train_ratio": args.train_ratio,

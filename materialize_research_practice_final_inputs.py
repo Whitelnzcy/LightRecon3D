@@ -382,9 +382,10 @@ def materialize_plan(
     feature_cache_path: Path,
     stage2_checkpoint: Path,
     git_sha: str,
+    resume: bool = False,
     runner: Runner = run_logged_stage,
 ) -> dict[str, Any]:
-    if output_dir.exists():
+    if output_dir.exists() and not resume:
         raise FileExistsError(f"refusing to overwrite existing output: {output_dir}")
     plan = load_selection_plan(selection_plan_path)
     required_files = {
@@ -396,26 +397,54 @@ def materialize_plan(
     for name, path in required_files.items():
         if not path.is_file():
             raise FileNotFoundError(f"missing {name}: {path}")
-    output_dir.mkdir(parents=True, exist_ok=False)
-    result: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
-        "kind": "research_practice_final_input_materialization",
-        "created_utc": datetime.now(timezone.utc).isoformat(),
-        "selection_plan": str(selection_plan_path),
-        "selection_plan_sha256": file_sha256(selection_plan_path),
-        "git_sha": git_sha,
-        "python_bin": python_bin,
-        "project_dir": str(project_dir),
-        "root_dir": str(root_dir),
-        "hardware": hardware_record(),
-        "frozen_inputs": {
-            name: file_record(path) for name, path in required_files.items()
-        },
-        "items": [],
-        "summary": {},
+    selection_sha256 = file_sha256(selection_plan_path)
+    frozen_inputs = {
+        name: file_record(path) for name, path in required_files.items()
     }
-    write_outputs(result, output_dir)
+    ledger_path = output_dir / "materialization.json"
+    if output_dir.exists():
+        if not resume:
+            raise FileExistsError(f"refusing to overwrite existing output: {output_dir}")
+        if not ledger_path.is_file():
+            raise FileNotFoundError(f"resume ledger is missing: {ledger_path}")
+        result = json.loads(ledger_path.read_text(encoding="utf-8"))
+        if result.get("kind") != "research_practice_final_input_materialization":
+            raise ValueError("resume ledger has the wrong kind")
+        if result.get("selection_plan_sha256") != selection_sha256:
+            raise ValueError("resume selection plan checksum mismatch")
+        for name, record in frozen_inputs.items():
+            previous = result.get("frozen_inputs", {}).get(name, {})
+            if previous.get("sha256") != record.get("sha256"):
+                raise ValueError(f"resume frozen-input checksum mismatch: {name}")
+    else:
+        output_dir.mkdir(parents=True, exist_ok=False)
+        result: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "kind": "research_practice_final_input_materialization",
+            "created_utc": datetime.now(timezone.utc).isoformat(),
+            "selection_plan": str(selection_plan_path),
+            "selection_plan_sha256": selection_sha256,
+            "git_sha": git_sha,
+            "python_bin": python_bin,
+            "project_dir": str(project_dir),
+            "root_dir": str(root_dir),
+            "hardware": hardware_record(),
+            "frozen_inputs": frozen_inputs,
+            "items": [],
+            "summary": {},
+        }
+        write_outputs(result, output_dir)
+    planned_ids = {str(item["id"]) for item in plan["items"]}
+    recorded_ids = [str(item.get("id", "")) for item in result["items"]]
+    if len(recorded_ids) != len(set(recorded_ids)):
+        raise ValueError("resume ledger contains duplicate item IDs")
+    if not set(recorded_ids).issubset(planned_ids):
+        raise ValueError("resume ledger contains items absent from the selection plan")
+    completed = set(recorded_ids)
     for item in plan["items"]:
+        if str(item["id"]) in completed:
+            print(f"[resume] materialization already recorded: {item['id']}", flush=True)
+            continue
         row = materialize_item(
             item,
             project_dir=project_dir,
@@ -441,6 +470,7 @@ def materialize_plan(
             ),
             flush=True,
         )
+    write_outputs(result, output_dir)
     return result
 
 
@@ -458,6 +488,7 @@ def main() -> int:
     parser.add_argument("--feature_cache_path", required=True)
     parser.add_argument("--stage2_checkpoint", required=True)
     parser.add_argument("--git_sha", default="")
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     result = materialize_plan(
         Path(args.selection_plan),
@@ -470,6 +501,7 @@ def main() -> int:
         feature_cache_path=Path(args.feature_cache_path),
         stage2_checkpoint=Path(args.stage2_checkpoint),
         git_sha=str(args.git_sha),
+        resume=bool(args.resume),
     )
     print(json.dumps(result["summary"], indent=2, ensure_ascii=False))
     return 0 if result["summary"]["failed_items"] == 0 else 2

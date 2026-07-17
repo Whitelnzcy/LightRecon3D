@@ -151,6 +151,22 @@ class FinalAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "failed items"):
             paired_rows(rows(), batch(failed=True))
 
+    def test_failed_items_can_be_retained_for_large_batch_audit(self):
+        metric_rows = rows()
+        source_batch = batch()
+        source_batch["items"].append(
+            {
+                "id": "failed_item",
+                "scene_name": "failed_scene",
+                "status": "fail",
+                "failure_stage": "input_preflight",
+            }
+        )
+        paired = paired_rows(
+            metric_rows, source_batch, allow_failed_items=True
+        )
+        self.assertEqual(len(paired), 8)
+
     def test_bootstrap_and_sign_test_are_deterministic(self):
         first = bootstrap_mean_ci([0.01, 0.02, 0.03], samples=1000, seed=7)
         second = bootstrap_mean_ci([0.01, 0.02, 0.03], samples=1000, seed=7)

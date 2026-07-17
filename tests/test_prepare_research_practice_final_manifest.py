@@ -101,6 +101,25 @@ class FinalManifestPreparationTests(unittest.TestCase):
         self.assertEqual(selected[1]["materialization"], "needs_stage1_stage2")
         self.assertIsNotNone(selected[0]["reusable_cache"])
 
+    def test_zero_target_selects_all_eligible_scenes(self):
+        eligible = [
+            group("scene_1", "/room/a"),
+            group("scene_2", "/room/b", 10),
+            group("scene_3", "/room/c", 20),
+        ]
+        selected = select_unique_scene_groups(
+            eligible,
+            {},
+            {},
+            target_scenes=0,
+            expansion_root=Path("/new"),
+        )
+        self.assertEqual([row["scene_name"] for row in selected], ["scene_1", "scene_2", "scene_3"])
+        manifest = execution_manifest(
+            selected, pattern=DEFAULT_PATTERN, minimum_valid_items=2
+        )
+        self.assertEqual(manifest["minimum_valid_items"], 2)
+
     def test_reusable_cache_is_keyed_by_exact_pair_group(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "batch.json"

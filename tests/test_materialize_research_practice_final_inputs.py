@@ -12,6 +12,7 @@ from materialize_research_practice_final_inputs import (
     stage2_command,
     summary,
 )
+from research_practice_batch import file_record, file_sha256
 
 
 def plan_item(root, item_id="final_000_scene_1", scene="scene_1", group="/room/a"):
@@ -163,6 +164,68 @@ class FinalInputMaterializationTests(unittest.TestCase):
                     stage2_checkpoint=root / "stage2",
                     git_sha="abc",
                 )
+
+    def test_materialize_plan_resume_skips_recorded_items(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            item = plan_item(root)
+            plan = root / "plan.json"
+            write_plan(plan, [item])
+            required = {}
+            for name in ("weights", "stage1", "features", "stage2"):
+                path = root / name
+                path.write_bytes(name.encode())
+                required[name] = path
+            output = root / "ledger"
+            output.mkdir()
+            frozen = {
+                "weights": file_record(required["weights"]),
+                "stage1_checkpoint": file_record(required["stage1"]),
+                "feature_cache": file_record(required["features"]),
+                "stage2_checkpoint": file_record(required["stage2"]),
+            }
+            recorded = {
+                "id": item["id"],
+                "scene_name": item["scene_name"],
+                "pair_group": item["pair_group"],
+                "materialization": item["materialization"],
+                "input_dir": item["input_dir"],
+                "status": "pass",
+                "failure_stage": "",
+                "error": "",
+                "runtime_seconds": 1.0,
+            }
+            (output / "materialization.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "kind": "research_practice_final_input_materialization",
+                        "selection_plan_sha256": file_sha256(plan),
+                        "frozen_inputs": frozen,
+                        "git_sha": "abc",
+                        "items": [recorded],
+                        "summary": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            calls = []
+            result = materialize_plan(
+                plan,
+                output,
+                project_dir=root,
+                python_bin="python",
+                root_dir=root,
+                weights_path=required["weights"],
+                stage1_checkpoint=required["stage1"],
+                feature_cache_path=required["features"],
+                stage2_checkpoint=required["stage2"],
+                git_sha="abc",
+                resume=True,
+                runner=lambda *args: calls.append(args),
+            )
+            self.assertEqual(result["summary"]["passed_items"], 1)
+            self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

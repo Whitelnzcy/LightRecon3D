@@ -654,7 +654,7 @@ def compose_batch_contact_sheet(
     draw = ImageDraw.Draw(sheet)
     draw.text(
         (18, 12),
-        "Final eight-scene 3D comparison: ordinary vs learning-guided RANSAC",
+        "Validation-scene 3D comparison: ordinary vs learning-guided RANSAC",
         fill=(22, 51, 82),
         font=load_font(26, True),
     )

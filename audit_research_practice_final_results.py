@@ -138,13 +138,19 @@ def index_rows(
 
 
 def paired_rows(
-    rows: list[dict[str, Any]], batch: dict[str, Any]
+    rows: list[dict[str, Any]],
+    batch: dict[str, Any],
+    *,
+    allow_failed_items: bool = False,
 ) -> list[dict[str, Any]]:
     indexed = index_rows(rows, FULL_CACHE)
     items = batch.get("items", [])
     failed = [str(item.get("id", "")) for item in items if item.get("status") != "pass"]
-    if failed:
+    if failed and not allow_failed_items:
         raise ValueError(f"batch contains failed items: {failed}")
+    items = [item for item in items if item.get("status") == "pass"]
+    if not items:
+        raise ValueError("batch contains no passed items")
     output: list[dict[str, Any]] = []
     seen_scenes: set[str] = set()
     seen_items: set[str] = set()
@@ -407,7 +413,7 @@ def markdown_report(result: dict[str, Any]) -> str:
     gate = result["gate"]
     diagnostics = gate["diagnostics"]
     lines = [
-        "# Final eight-scene learning-guided RANSAC audit",
+        "# Learning-guided RANSAC batch audit",
         "",
         f"Decision: `{gate['decision']}`",
         "",
@@ -428,6 +434,13 @@ def markdown_report(result: dict[str, Any]) -> str:
             f"{row['guided_pairwise_f1']:.6f} | {row['delta_pairwise_f1']:+.6f} | "
             f"{row['ransac_runtime_seconds']:.3f} | "
             f"{row['guided_runtime_seconds']:.3f} | {row['runtime_ratio']:.3f} |"
+        )
+    if result.get("failed_items"):
+        lines.extend(
+            [
+                "",
+                f"The source batch also retained {len(result['failed_items'])} failed items. They are excluded from paired metrics and remain recorded in final_method_audit.json.",
+            ]
         )
     for title, checks in (
         ("Quality path", gate["quality_checks"]),
@@ -512,6 +525,8 @@ def audit_final_results(
     aggregate_metrics_json: Path,
     batch_execution_json: Path,
     output_dir: Path,
+    *,
+    allow_failed_items: bool = False,
 ) -> dict[str, Any]:
     if output_dir.exists():
         raise FileExistsError(f"Refusing to overwrite existing output: {output_dir}")
@@ -519,7 +534,19 @@ def audit_final_results(
     batch = json.loads(batch_execution_json.read_text(encoding="utf-8"))
     if not isinstance(rows, list) or not isinstance(batch, dict):
         raise ValueError("unexpected final-batch JSON schema")
-    per_scene = paired_rows(rows, batch)
+    per_scene = paired_rows(
+        rows, batch, allow_failed_items=allow_failed_items
+    )
+    failed_items = [
+        {
+            "id": str(item.get("id", "")),
+            "scene_name": str(item.get("scene_name", "")),
+            "failure_stage": str(item.get("failure_stage", "")),
+            "error": str(item.get("error", "")),
+        }
+        for item in batch.get("items", [])
+        if item.get("status") != "pass"
+    ]
     result = {
         "schema_version": SCHEMA_VERSION,
         "kind": "research_practice_final_guided_ransac_audit",
@@ -528,6 +555,8 @@ def audit_final_results(
         "source_batch_execution_json": str(batch_execution_json),
         "source_batch_execution_sha256": file_sha256(batch_execution_json),
         "source_git_sha": str(batch.get("git_sha", "")),
+        "allow_failed_items": bool(allow_failed_items),
+        "failed_items": failed_items,
         "frozen_thresholds": {
             "minimum_independent_scenes": MINIMUM_INDEPENDENT_SCENES,
             "minimum_median_f1_gain": MINIMUM_MEDIAN_F1_GAIN,
@@ -561,11 +590,17 @@ def main() -> int:
     parser.add_argument("--aggregate_metrics_json", required=True)
     parser.add_argument("--batch_execution_json", required=True)
     parser.add_argument("--output_dir", required=True)
+    parser.add_argument(
+        "--allow_failed_items",
+        action="store_true",
+        help="audit every passed scene while retaining failed-scene records",
+    )
     args = parser.parse_args()
     result = audit_final_results(
         Path(args.aggregate_metrics_json),
         Path(args.batch_execution_json),
         Path(args.output_dir),
+        allow_failed_items=bool(args.allow_failed_items),
     )
     print(
         json.dumps(

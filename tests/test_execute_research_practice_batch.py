@@ -11,6 +11,7 @@ from execute_research_practice_batch import (
     aggregate_method_rows,
     batch_summary,
     execute_item,
+    execute_batch,
     exporter_command,
     metric_rows,
     single_fusion_row,
@@ -179,6 +180,72 @@ class ResearchPracticeBatchExecutionTests(unittest.TestCase):
         self.assertAlmostEqual(
             summary[0]["support_partition_pairwise_f1_median"], 0.7
         )
+
+    def test_execute_batch_resume_skips_recorded_items(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            weights = root / "weights.pth"
+            weights.write_bytes(b"weights")
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "resume_test",
+                        "minimum_valid_items": 1,
+                        "items": [
+                            {
+                                "id": "scene_a",
+                                "input_dir": str(root / "input"),
+                                "expected_scene_name": "scene_a",
+                                "expected_pair_group": "/room/a",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = root / "output"
+            output.mkdir()
+            recorded = {
+                "id": "scene_a",
+                "scene_name": "scene_a",
+                "pair_group": "/room/a",
+                "status": "fail",
+                "failure_stage": "test",
+                "error": "recorded",
+                "runtime_seconds": 1.0,
+                "stages": [],
+                "artifacts": {},
+            }
+            (output / "batch_execution.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "kind": "research_practice_identical_cache_batch",
+                        "batch_name": "resume_test",
+                        "git_sha": "abc",
+                        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                        "weights_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+                        "items": [recorded],
+                        "summary": {"failed_items": 1},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            calls = []
+            result = execute_batch(
+                manifest,
+                output,
+                project_dir=root,
+                python_bin=sys.executable,
+                weights_path=weights,
+                git_sha="abc",
+                resume=True,
+                runner=lambda *args: calls.append(args),
+            )
+            self.assertEqual(result["summary"]["failed_items"], 1)
+            self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

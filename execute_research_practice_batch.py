@@ -862,41 +862,92 @@ def execute_batch(
     python_bin: str,
     weights_path: Path,
     git_sha: str,
+    resume: bool = False,
     runner: Runner = run_logged_stage,
 ) -> dict[str, Any]:
-    if output_dir.exists():
+    if output_dir.exists() and not resume:
         raise FileExistsError(f"Refusing to overwrite existing output: {output_dir}")
     manifest = load_manifest(manifest_path)
     if not weights_path.is_file():
         raise FileNotFoundError(f"missing DUSt3R weights: {weights_path}")
-    output_dir.mkdir(parents=True, exist_ok=False)
-    result: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
-        "kind": "research_practice_identical_cache_batch",
-        "batch_name": str(manifest.get("name", manifest_path.stem)),
-        "created_utc": datetime.now(timezone.utc).isoformat(),
-        "manifest_path": str(manifest_path),
-        "manifest_sha256": file_sha256(manifest_path),
-        "git_sha": git_sha,
-        "project_dir": str(project_dir),
-        "python_bin": python_bin,
-        "weights_path": str(weights_path),
-        "weights_sha256": file_sha256(weights_path),
-        "hardware": hardware_record(),
-        "coordinate_contract": {
-            "pixel_order": "xy",
-            "global_space": "dust3r_aligned_pointmap",
-            "join_key": "(alignment_view_index,x,y)",
-            "nearest_neighbor_join": False,
-            "raw_support_conflicts_preserved": True,
-            "conflict_drop_is_ablation_only": True,
-        },
-        "frozen_config": FROZEN_CONFIG,
-        "items": [],
-        "summary": {},
-    }
-    write_batch_outputs(result, output_dir)
+    manifest_sha256 = file_sha256(manifest_path)
+    weights_sha256 = file_sha256(weights_path)
+    ledger_path = output_dir / "batch_execution.json"
+    if output_dir.exists():
+        if not ledger_path.is_file():
+            raise FileNotFoundError(f"resume ledger is missing: {ledger_path}")
+        result = json.loads(ledger_path.read_text(encoding="utf-8"))
+        if result.get("kind") != "research_practice_identical_cache_batch":
+            raise ValueError("resume ledger has the wrong kind")
+        if result.get("manifest_sha256") != manifest_sha256:
+            raise ValueError("resume manifest checksum mismatch")
+        if result.get("weights_sha256") != weights_sha256:
+            raise ValueError("resume DUSt3R weights checksum mismatch")
+    else:
+        output_dir.mkdir(parents=True, exist_ok=False)
+        result: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "kind": "research_practice_identical_cache_batch",
+            "batch_name": str(manifest.get("name", manifest_path.stem)),
+            "created_utc": datetime.now(timezone.utc).isoformat(),
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": manifest_sha256,
+            "git_sha": git_sha,
+            "project_dir": str(project_dir),
+            "python_bin": python_bin,
+            "weights_path": str(weights_path),
+            "weights_sha256": weights_sha256,
+            "hardware": hardware_record(),
+            "coordinate_contract": {
+                "pixel_order": "xy",
+                "global_space": "dust3r_aligned_pointmap",
+                "join_key": "(alignment_view_index,x,y)",
+                "nearest_neighbor_join": False,
+                "raw_support_conflicts_preserved": True,
+                "conflict_drop_is_ablation_only": True,
+            },
+            "frozen_config": FROZEN_CONFIG,
+            "items": [],
+            "summary": {},
+        }
+        write_batch_outputs(result, output_dir)
+    planned_ids = {str(item["id"]) for item in manifest["items"]}
+    recorded_ids = [str(item.get("id", "")) for item in result["items"]]
+    if len(recorded_ids) != len(set(recorded_ids)):
+        raise ValueError("resume batch ledger contains duplicate item IDs")
+    if not set(recorded_ids).issubset(planned_ids):
+        raise ValueError("resume batch ledger contains items absent from the manifest")
+    completed = set(recorded_ids)
     for item in manifest["items"]:
+        item_id = str(item["id"])
+        if item_id in completed:
+            print(f"[resume] batch item already recorded: {item_id}", flush=True)
+            continue
+        item_dir = output_dir / "items" / item_id
+        if item_dir.exists():
+            item_ledger = item_dir / "item_execution.json"
+            if item_ledger.is_file():
+                row = json.loads(item_ledger.read_text(encoding="utf-8"))
+                if str(row.get("id", "")) != item_id:
+                    raise ValueError(f"resume item ledger ID mismatch: {item_ledger}")
+                row["resume_recovered"] = True
+            else:
+                row = {
+                    "id": item_id,
+                    "scene_name": str(item.get("expected_scene_name", "")),
+                    "pair_group": str(item.get("expected_pair_group", "")),
+                    "status": "fail",
+                    "failure_stage": "interrupted_partial_output",
+                    "error": f"unrecorded partial item directory preserved: {item_dir}",
+                    "stages": [],
+                    "artifacts": {},
+                    "runtime_seconds": 0.0,
+                    "resume_recovered": True,
+                }
+            result["items"].append(row)
+            write_batch_outputs(result, output_dir)
+            print(f"[resume] preserved existing item directory: {item_id}", flush=True)
+            continue
         print(f"\n=== {item['id']} ===", flush=True)
         row = execute_item(
             item,
@@ -920,6 +971,7 @@ def execute_batch(
             ),
             flush=True,
         )
+    write_batch_outputs(result, output_dir)
     return result
 
 
@@ -933,6 +985,7 @@ def main() -> int:
     parser.add_argument("--python_bin", default=sys.executable)
     parser.add_argument("--weights_path", required=True)
     parser.add_argument("--git_sha", default=os.environ.get("GIT_SHA", ""))
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     result = execute_batch(
         Path(args.manifest),
@@ -941,6 +994,7 @@ def main() -> int:
         python_bin=str(args.python_bin),
         weights_path=Path(args.weights_path),
         git_sha=str(args.git_sha),
+        resume=bool(args.resume),
     )
     print(json.dumps(result["summary"], indent=2, ensure_ascii=False), flush=True)
     return 0 if result["summary"]["failed_items"] == 0 else 2
