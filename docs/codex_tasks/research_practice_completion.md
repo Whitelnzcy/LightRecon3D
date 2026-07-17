@@ -20,7 +20,8 @@ final combined ledger passes 17/17 scenes; guided RANSAC wins pairwise F1 in
 universal acceleration claim is permitted. W3 is complete: the frozen server
 benchmark measured Stage1 accuracy over 80 pair records, model footprint, GPU
 latency/memory and archived per-stage runtime. W4 report, figures,
-reproducibility index and defense materials are now the active work package.
+reproducibility index and optional paper-style draft are now the active work
+package.
 
 ## Objective
 
@@ -82,7 +83,8 @@ Final artifacts:
 * at least 30 human-readable references;
 * method diagram, result tables, ablation table and failure gallery;
 * reproducibility README and final experiment index;
-* defense slides and a precomputed demonstration.
+* mentor-facing progress report with embedded result figures;
+* optional paper-style draft based on the same frozen experiments.
 
 Completion does not depend on beating every published method. If a method does
 not win, the report must identify the controlled comparison, failure mode and
@@ -138,11 +140,13 @@ A5  A4 + retained provenance/conflict diagnostics and structural line output
 NEG PlaneGraph-BA / live feedback on the archived scene only
 ```
 
-### W4. Report and defense
+### W4. Report and optional paper draft
 
 Write the report in parallel with implementation. Numbers enter the report
-only through archived JSON/CSV artifacts. Produce a static demo that does not
-depend on live GPU execution during the defense.
+only through archived JSON/CSV artifacts. Embed the archived result figures in
+the mentor-facing and final reports. After the practice report is complete,
+reuse the same methods, numbers and limitations in an optional paper-style
+draft without selecting new scenes post hoc.
 
 ## Calendar and gates
 
@@ -161,7 +165,7 @@ Jul 25  figures and failure gallery
 Jul 26  complete 8,000-character report draft
 Jul 27  30-reference and claim audit
 Jul 28  reproducibility package and report render
-Jul 29  defense slides and demo
+Jul 29  optional paper-style draft
 Jul 30  full consistency and fresh-directory verification
 Jul 31  feedback, formatting and submission buffer
 ```
