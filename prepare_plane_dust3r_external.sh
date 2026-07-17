@@ -9,6 +9,11 @@ CHECKPOINT_DIR="${CHECKPOINT_DIR:-/gemini/pretrain/Plane-DUSt3R}"
 PLANE_CHECKPOINT="${PLANE_CHECKPOINT:-${CHECKPOINT_DIR}/checkpoint-best-onlyencoder.pth}"
 NONCUBOID_CHECKPOINT="${NONCUBOID_CHECKPOINT:-${CHECKPOINT_DIR}/Structured3D_pretrained.pt}"
 OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v1}"
+DOWNLOAD_BACKEND="${DOWNLOAD_BACKEND:-aria2}"
+HF_ENDPOINT="${HF_ENDPOINT:-https://huggingface.co}"
+ARIA2_CONNECTIONS="${ARIA2_CONNECTIONS:-16}"
+PLANE_URL="${PLANE_URL:-${HF_ENDPOINT%/}/yxuan/Plane-DUSt3R/resolve/main/checkpoint-best-onlyencoder.pth}"
+NONCUBOID_URL="${NONCUBOID_URL:-https://drive.google.com/uc?id=1DZnnOUMh6llVwhBvb-yo9ENVmN4o42x8}"
 
 if [[ -e "${OUT_DIR}" ]]; then
   echo "Refusing to overwrite existing output: ${OUT_DIR}" >&2
@@ -47,28 +52,74 @@ if [[ ! -f "${repo_marker}" ]]; then
   touch "${repo_marker}"
 fi
 
-plane_min_bytes=1000000000
-if [[ ! -f "${PLANE_CHECKPOINT}" ]] || \
-   [[ "$(stat -c%s "${PLANE_CHECKPOINT}" 2>/dev/null || echo 0)" -lt "${plane_min_bytes}" ]]; then
-  if ! command -v wget >/dev/null 2>&1; then
-    echo "wget is required for resumable Hugging Face download" >&2
-    exit 2
-  fi
-  wget --continue --tries=3 --timeout=30 \
-    "https://huggingface.co/yxuan/Plane-DUSt3R/resolve/main/checkpoint-best-onlyencoder.pth" \
-    -O "${PLANE_CHECKPOINT}"
+checkpoint_loadable() {
+  local checkpoint="$1"
+  [[ -f "${checkpoint}" ]] && \
+    "${ENV_DIR}/bin/python" -c \
+      'import sys,torch; value=torch.load(sys.argv[1], map_location="cpu"); assert isinstance(value, dict)' \
+      "${checkpoint}" >/dev/null 2>&1
+}
+
+download_plane_checkpoint() {
+  case "${DOWNLOAD_BACKEND}" in
+    aria2)
+      if [[ ! -x "${ENV_DIR}/bin/aria2c" ]]; then
+        "${CONDA_BIN}" install -y --prefix "${ENV_DIR}" -c conda-forge aria2
+      fi
+      "${ENV_DIR}/bin/aria2c" \
+        --continue=true \
+        --max-connection-per-server="${ARIA2_CONNECTIONS}" \
+        --split="${ARIA2_CONNECTIONS}" \
+        --min-split-size=4M \
+        --file-allocation=none \
+        --max-tries=5 \
+        --retry-wait=3 \
+        --timeout=30 \
+        --dir="${CHECKPOINT_DIR}" \
+        --out="$(basename "${PLANE_CHECKPOINT}")" \
+        "${PLANE_URL}"
+      ;;
+    hf_xet)
+      "${ENV_DIR}/bin/python" -m pip install --upgrade "huggingface_hub>=0.32.0"
+      HF_ENDPOINT="${HF_ENDPOINT}" HF_XET_HIGH_PERFORMANCE=1 \
+        "${ENV_DIR}/bin/python" -c \
+        'import sys; from huggingface_hub import hf_hub_download; print(hf_hub_download(repo_id="yxuan/Plane-DUSt3R", filename="checkpoint-best-onlyencoder.pth", local_dir=sys.argv[1]))' \
+        "${CHECKPOINT_DIR}"
+      ;;
+    wget)
+      command -v wget >/dev/null 2>&1 || {
+        echo "wget is unavailable" >&2
+        exit 2
+      }
+      wget --continue --tries=3 --timeout=30 \
+        "${PLANE_URL}" -O "${PLANE_CHECKPOINT}"
+      ;;
+    *)
+      echo "Unknown DOWNLOAD_BACKEND=${DOWNLOAD_BACKEND}; use aria2, hf_xet or wget" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if ! checkpoint_loadable "${PLANE_CHECKPOINT}"; then
+  existing_bytes="$(stat -c%s "${PLANE_CHECKPOINT}" 2>/dev/null || echo 0)"
+  echo "Plane checkpoint is missing or incomplete (${existing_bytes} bytes); downloading with ${DOWNLOAD_BACKEND}."
+  download_plane_checkpoint
+fi
+if ! checkpoint_loadable "${PLANE_CHECKPOINT}"; then
+  echo "Plane-DUSt3R checkpoint is still incomplete or invalid: ${PLANE_CHECKPOINT}" >&2
+  exit 2
 fi
 
-noncuboid_min_bytes=1000000
-if [[ ! -f "${NONCUBOID_CHECKPOINT}" ]] || \
-   [[ "$(stat -c%s "${NONCUBOID_CHECKPOINT}" 2>/dev/null || echo 0)" -lt "${noncuboid_min_bytes}" ]]; then
+if ! checkpoint_loadable "${NONCUBOID_CHECKPOINT}"; then
   "${ENV_DIR}/bin/python" -m gdown --continue \
-    "https://drive.google.com/uc?id=1DZnnOUMh6llVwhBvb-yo9ENVmN4o42x8" \
+    "${NONCUBOID_URL}" \
     -O "${NONCUBOID_CHECKPOINT}"
 fi
-
-test "$(stat -c%s "${PLANE_CHECKPOINT}")" -ge "${plane_min_bytes}"
-test "$(stat -c%s "${NONCUBOID_CHECKPOINT}")" -ge "${noncuboid_min_bytes}"
+if ! checkpoint_loadable "${NONCUBOID_CHECKPOINT}"; then
+  echo "NonCuboidRoom checkpoint is incomplete or invalid: ${NONCUBOID_CHECKPOINT}" >&2
+  exit 2
+fi
 
 "${ENV_DIR}/bin/python" - <<'PY' > "${OUT_DIR}/environment.txt"
 from importlib.metadata import version
@@ -86,7 +137,17 @@ sha256sum "${PLANE_CHECKPOINT}" "${NONCUBOID_CHECKPOINT}" \
   > "${OUT_DIR}/checkpoints.sha256"
 git -C "${OFFICIAL_REPO}" rev-parse HEAD > "${OUT_DIR}/official_commit.txt"
 git -C "${OFFICIAL_REPO}" status --short > "${OUT_DIR}/working_tree_status.txt"
+{
+  echo "download_backend=${DOWNLOAD_BACKEND}"
+  echo "hf_endpoint=${HF_ENDPOINT}"
+  echo "aria2_connections=${ARIA2_CONNECTIONS}"
+  echo "plane_url=${PLANE_URL}"
+  echo "noncuboid_url=${NONCUBOID_URL}"
+  echo "plane_bytes=$(stat -c%s "${PLANE_CHECKPOINT}")"
+  echo "noncuboid_bytes=$(stat -c%s "${NONCUBOID_CHECKPOINT}")"
+} > "${OUT_DIR}/download_provenance.txt"
 
 cat "${OUT_DIR}/environment.txt"
 cat "${OUT_DIR}/checkpoints.sha256"
+cat "${OUT_DIR}/download_provenance.txt"
 echo "Plane-DUSt3R external environment and checkpoints are ready."

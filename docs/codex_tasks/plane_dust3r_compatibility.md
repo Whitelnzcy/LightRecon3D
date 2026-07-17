@@ -85,3 +85,5 @@ bash run_plane_dust3r_same_input_smoke.sh
 ```
 
 环境和checkpoint写入`/gemini/data-1/lightrecon_envs`与`/gemini/pretrain/Plane-DUSt3R`，不改变现有`lightrecon`环境。准备脚本保存conda列表、pip freeze、GPU可用性、官方commit和两个checkpoint的SHA256。若大文件下载中断，换一个新的`OUT_DIR`重跑即可从相同checkpoint路径续传。
+
+大文件下载默认使用隔离conda环境中的`aria2c`进行16路断点续传。已有单连接`wget`部分文件会原地续传，不要删除。脚本不再使用最低文件大小判断完整性，而是调用PyTorch实际加载两个checkpoint；截断文件即使超过1 GB也不能通过。可选后端为`aria2`、`hf_xet`和`wget`。Hugging Face官方线路缓慢时，可以显式设置`HF_ENDPOINT`，但最终仍必须通过PyTorch加载和SHA256记录。
