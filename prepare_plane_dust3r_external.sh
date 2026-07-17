@@ -3,12 +3,13 @@ set -euo pipefail
 
 OFFICIAL_REPO="${OFFICIAL_REPO:-/gemini/code/Plane-DUSt3R}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:-9a1ae50650ec6d706bf329352aaaf49efded90a0}"
+PROJECT_DIR="${PROJECT_DIR:-/gemini/code/LightRecon3D}"
 CONDA_BIN="${CONDA_BIN:-/root/miniconda3/bin/conda}"
-ENV_DIR="${ENV_DIR:-/gemini/data-1/lightrecon_envs/planedust3r-py311-torch220-cu118}"
+ENV_DIR="${ENV_DIR:-/gemini/data-1/lightrecon_envs/planedust3r-py311-torch220-cu118-v2}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/gemini/pretrain/Plane-DUSt3R}"
 PLANE_CHECKPOINT="${PLANE_CHECKPOINT:-${CHECKPOINT_DIR}/checkpoint-best-onlyencoder.pth}"
 NONCUBOID_CHECKPOINT="${NONCUBOID_CHECKPOINT:-${CHECKPOINT_DIR}/Structured3D_pretrained.pt}"
-OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v1}"
+OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v2}"
 DOWNLOAD_BACKEND="${DOWNLOAD_BACKEND:-aria2}"
 HF_ENDPOINT="${HF_ENDPOINT:-https://huggingface.co}"
 ARIA2_CONNECTIONS="${ARIA2_CONNECTIONS:-16}"
@@ -22,6 +23,7 @@ fi
 mkdir -p "${OUT_DIR}" "${CHECKPOINT_DIR}" "$(dirname "${ENV_DIR}")"
 
 test -x "${CONDA_BIN}"
+test -f "${PROJECT_DIR}/prepare_plane_dust3r_requirements.py"
 test -d "${OFFICIAL_REPO}/.git"
 actual_commit="$(git -C "${OFFICIAL_REPO}" rev-parse HEAD)"
 if [[ "${actual_commit}" != "${EXPECTED_COMMIT}" ]]; then
@@ -35,22 +37,82 @@ fi
 
 if [[ ! -x "${ENV_DIR}/bin/python" ]]; then
   "${CONDA_BIN}" create -y --prefix "${ENV_DIR}" python=3.11 cmake=3.14.0
+elif "${ENV_DIR}/bin/python" -c 'import torch' >/dev/null 2>&1 && \
+    ! "${ENV_DIR}/bin/python" -c \
+      'import torch; assert torch.__version__.split("+")[0] == "2.2.0"; assert torch.version.cuda == "11.8"' \
+      >/dev/null 2>&1; then
+  echo "Refusing to repair an existing environment with incompatible PyTorch: ${ENV_DIR}" >&2
+  echo "Use the new default v2 environment or choose a fresh ENV_DIR." >&2
+  exit 2
 fi
 
-if ! "${ENV_DIR}/bin/python" -c 'import torch; assert torch.__version__.startswith("2.2.0")' >/dev/null 2>&1; then
+if ! "${ENV_DIR}/bin/python" -c \
+  'import torch; assert torch.__version__.split("+")[0] == "2.2.0"; assert torch.version.cuda == "11.8"' \
+  >/dev/null 2>&1; then
   "${CONDA_BIN}" install -y --prefix "${ENV_DIR}" \
     pytorch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 pytorch-cuda=11.8 \
     -c pytorch -c nvidia
 fi
 
-repo_marker="${ENV_DIR}/.plane_dust3r_requirements_${EXPECTED_COMMIT}"
+requirements_dir="${OUT_DIR}/sanitized_requirements"
+"${ENV_DIR}/bin/python" "${PROJECT_DIR}/prepare_plane_dust3r_requirements.py" \
+  --official_repo "${OFFICIAL_REPO}" \
+  --output_dir "${requirements_dir}"
+constraints="${requirements_dir}/constraints.txt"
+
+verify_environment() {
+  "${ENV_DIR}/bin/python" - <<'PY'
+from importlib.metadata import version
+import cv2
+import numpy
+import scipy
+import torch
+import torchvision
+
+expected = {
+    "torch": "2.2.0",
+    "torchvision": "0.17.0",
+    "torchaudio": "2.2.0",
+    "numpy": "1.26.4",
+    "scipy": "1.11.4",
+    "opencv-python": "4.10.0.84",
+    "mmcv": "1.7.2",
+    "numba": "0.59.1",
+    "pillow": "9.5.0",
+    "roma": "1.5.6",
+}
+for package, required in expected.items():
+    actual = version(package).split("+")[0]
+    assert actual == required, f"{package}={actual}, expected {required}"
+assert torch.version.cuda == "11.8", torch.version.cuda
+assert numpy.__version__ == "1.26.4", numpy.__version__
+assert scipy.__version__ == "1.11.4", scipy.__version__
+assert cv2.__version__ == "4.10.0", cv2.__version__
+print("Plane-DUSt3R Python environment pins verified")
+PY
+  "${ENV_DIR}/bin/python" -m pip check
+}
+
+repo_marker="${ENV_DIR}/.plane_dust3r_requirements_${EXPECTED_COMMIT}_py311v2"
 if [[ ! -f "${repo_marker}" ]]; then
-  "${ENV_DIR}/bin/python" -m pip install -r "${OFFICIAL_REPO}/MASt3R/requirements.txt"
-  "${ENV_DIR}/bin/python" -m pip install -r "${OFFICIAL_REPO}/MASt3R/dust3r/requirements.txt"
-  "${ENV_DIR}/bin/python" -m pip install -r "${OFFICIAL_REPO}/NonCuboidRoom/requirements.txt"
-  "${ENV_DIR}/bin/python" -m pip install roma==1.5.6 gdown
+  "${ENV_DIR}/bin/python" -m pip install \
+    --constraint "${constraints}" \
+    --requirement "${requirements_dir}/python311_compatibility.txt"
+  "${ENV_DIR}/bin/python" -m pip install \
+    --constraint "${constraints}" \
+    --requirement "${requirements_dir}/MASt3R__requirements.txt"
+  "${ENV_DIR}/bin/python" -m pip install \
+    --constraint "${constraints}" \
+    --requirement "${requirements_dir}/MASt3R__dust3r__requirements.txt"
+  "${ENV_DIR}/bin/python" -m pip install \
+    --constraint "${constraints}" \
+    --requirement "${requirements_dir}/NonCuboidRoom__requirements.txt"
+  "${ENV_DIR}/bin/python" -m pip install \
+    --constraint "${constraints}" gdown
+  verify_environment
   touch "${repo_marker}"
 fi
+verify_environment
 
 checkpoint_loadable() {
   local checkpoint="$1"
@@ -64,7 +126,8 @@ download_plane_checkpoint() {
   case "${DOWNLOAD_BACKEND}" in
     aria2)
       if [[ ! -x "${ENV_DIR}/bin/aria2c" ]]; then
-        "${CONDA_BIN}" install -y --prefix "${ENV_DIR}" -c conda-forge aria2
+        "${CONDA_BIN}" install -y --freeze-installed \
+          --prefix "${ENV_DIR}" -c conda-forge aria2
       fi
       "${ENV_DIR}/bin/aria2c" \
         --continue=true \
@@ -80,7 +143,9 @@ download_plane_checkpoint() {
         "${PLANE_URL}"
       ;;
     hf_xet)
-      "${ENV_DIR}/bin/python" -m pip install --upgrade "huggingface_hub>=0.32.0"
+      "${ENV_DIR}/bin/python" -m pip install \
+        --constraint "${constraints}" --upgrade-strategy only-if-needed \
+        "huggingface_hub>=0.32.0"
       HF_ENDPOINT="${HF_ENDPOINT}" HF_XET_HIGH_PERFORMANCE=1 \
         "${ENV_DIR}/bin/python" -c \
         'import sys; from huggingface_hub import hf_hub_download; print(hf_hub_download(repo_id="yxuan/Plane-DUSt3R", filename="checkpoint-best-onlyencoder.pth", local_dir=sys.argv[1]))' \
@@ -121,12 +186,20 @@ if ! checkpoint_loadable "${NONCUBOID_CHECKPOINT}"; then
   exit 2
 fi
 
+verify_environment
+
 "${ENV_DIR}/bin/python" - <<'PY' > "${OUT_DIR}/environment.txt"
 from importlib.metadata import version
+import cv2
+import numpy
+import scipy
 import torch
 print(f"python_torch={torch.__version__}")
 print(f"torch_cuda={torch.version.cuda}")
 print(f"cuda_available={torch.cuda.is_available()}")
+print(f"numpy={numpy.__version__}")
+print(f"scipy={scipy.__version__}")
+print(f"cv2={cv2.__version__}")
 print(f"roma={version('roma')}")
 if torch.cuda.is_available():
     print(f"gpu={torch.cuda.get_device_name(0)}")

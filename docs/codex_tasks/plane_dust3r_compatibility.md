@@ -65,7 +65,7 @@ NonCuboidRoom checkpoint=false
 1. **完成：**预检17个冻结scene的`empty/full`图像和外部资源。
 2. **完成：**生成17场景、85张图的same-input兼容目录；源数据保持只读。
 3. **完成：**克隆官方仓库并固定commit `9a1ae506`。
-4. 根据官方README建立隔离Python 3.11、PyTorch 2.2.0、CUDA 11.8环境并下载两个checkpoint，不升级`lightrecon`环境中的NumPy、PyTorch或CUDA。
+4. 根据官方README建立隔离Python 3.11、PyTorch 2.2.0、CUDA 11.8环境并下载两个checkpoint，不升级`lightrecon`环境中的NumPy、PyTorch或CUDA。第一次安装暴露出官方依赖文件之间的版本冲突，修复后的v2安装仍待服务器执行。
 5. 在`scene_00180`运行same-input GPU smoke。包装器在独立runtime中把官方硬编码`save=False`改为使用命令行保存开关，并把异常后的静默`continue`改为打印堆栈并失败；官方仓库本身不修改。
 6. smoke通过后，冻结scene ID、视图数、权重SHA256、环境和配置，运行17场景。
 7. 审核官方输出是否能在不补造物体平面标签的条件下映射到共同point cache；通过后再实现VOI/RI/SC adapter。若不能，则报告同输入下各方法各自任务指标，并明确不构成同任务排名。
@@ -77,13 +77,31 @@ cd /gemini/code/LightRecon3D
 git switch codex/bounded-support-head
 git -c http.version=HTTP/1.1 pull --ff-only origin codex/bounded-support-head
 
-OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v1 \
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v2 \
 bash prepare_plane_dust3r_external.sh
 
-OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_smoke_scene00180_20260717_v1 \
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_smoke_scene00180_20260717_v2 \
 bash run_plane_dust3r_same_input_smoke.sh
 ```
 
 环境和checkpoint写入`/gemini/data-1/lightrecon_envs`与`/gemini/pretrain/Plane-DUSt3R`，不改变现有`lightrecon`环境。准备脚本保存conda列表、pip freeze、GPU可用性、官方commit和两个checkpoint的SHA256。若大文件下载中断，换一个新的`OUT_DIR`重跑即可从相同checkpoint路径续传。
 
 大文件下载默认使用隔离conda环境中的`aria2c`进行16路断点续传。已有单连接`wget`部分文件会原地续传，不要删除。脚本不再使用最低文件大小判断完整性，而是调用PyTorch实际加载两个checkpoint；截断文件即使超过1 GB也不能通过。可选后端为`aria2`、`hf_xet`和`wget`。Hugging Face官方线路缓慢时，可以显式设置`HF_ENDPOINT`，但最终仍必须通过PyTorch加载和SHA256记录。
+
+## 2026-07-17依赖安装失败与v2修复
+
+第一次隔离环境安装没有进入checkpoint下载。`MASt3R/dust3r/requirements.txt`中的未固定`torch`和`torchvision`让pip卸载了conda安装的PyTorch 2.2.0，并安装PyTorch 2.13.0、CUDA 13依赖和NumPy 2.4.6。随后`NonCuboidRoom/requirements.txt`要求`scipy==1.3.1`；该版本不支持Python 3.11，pip尝试构建NumPy 1.14.5并失败。旧环境`planedust3r-py311-torch220-cu118`只属于外部基线，已污染但没有影响`lightrecon`。
+
+修复后的安装器默认使用全新的`planedust3r-py311-torch220-cu118-v2`，不删除或修补旧环境。它先固定conda PyTorch 2.2.0、torchvision 0.17.0、torchaudio 2.2.0和CUDA 11.8，再生成三份可审计的清理后依赖文件。清理只控制PyTorch核心包以及NonCuboidRoom的旧版本依赖，其余官方依赖原样保留。NumPy固定为1.26.4，SciPy固定为1.11.4；OpenCV、MMCV、Numba、Pillow等也固定为仍支持Python 3.11且接近原API的版本。每次pip安装都使用约束文件，安装完成后核对包版本、`torch.version.cuda`并执行`pip check`。只有全部检查通过才写入完成标记并开始下载checkpoint。
+
+服务器重跑时不要指定旧`ENV_DIR`，也不要先运行smoke：
+
+```bash
+cd /gemini/code/LightRecon3D
+git -c http.version=HTTP/1.1 pull --ff-only origin codex/bounded-support-head
+
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v2 \
+bash prepare_plane_dust3r_external.sh
+```
+
+该命令通过并输出两个checkpoint的SHA256后，才运行`run_plane_dust3r_same_input_smoke.sh`。
