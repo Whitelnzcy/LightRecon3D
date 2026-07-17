@@ -13,11 +13,14 @@ the final eight-independent-scene GPU batch and paired audit have now passed
 completely. Guided RANSAC won pairwise F1 on all `8/8` scenes, achieved mean
 and median paired gains of `+0.039248` and `+0.035580`, and passed the frozen
 quality path. It is the final method; global RANSAC is the primary baseline.
-The efficiency path failed and no acceleration claim is permitted. W3 is now
-complete: the frozen server benchmark measured Stage1 accuracy over 80 pair
-records, model footprint, GPU latency/memory and archived per-stage runtime.
-W4 report, figures, reproducibility index and defense materials are now the
-active work package.
+The all-eligible validation run selected 17 independent scenes. The first pass
+completed 14, and the immutable recovery completed the remaining three. The
+final combined ledger passes 17/17 scenes; guided RANSAC wins pairwise F1 in
+16/17, with mean F1 `0.632406 -> 0.706348`. The efficiency path failed and no
+universal acceleration claim is permitted. W3 is complete: the frozen server
+benchmark measured Stage1 accuracy over 80 pair records, model footprint, GPU
+latency/memory and archived per-stage runtime. W4 report, figures,
+reproducibility index and defense materials are now the active work package.
 
 ## Objective
 
@@ -187,7 +190,9 @@ committed.
 
 ## Immediate next step
 
-Freeze report Tables 2, 3 and 5 from the archived final audit and W3 JSON/CSV
-artifacts. Complete the Chinese report draft, claim ledger, figure index and
-failure-gallery selection. Do not rerun the final batch or W3 benchmark unless
-an artifact-integrity check fails.
+Freeze report Tables 2, 3 and 5 from the recovered 17-scene bundle and W3
+JSON/CSV artifacts. Use the 17/17 combined ledger as the final main result and
+retain the original 14/17 run only as recovery provenance. Complete the figure
+index, failure-gallery selection, reference formatting and Word rendering. Do
+not rerun the final batch or W3 benchmark unless an artifact-integrity check
+fails.

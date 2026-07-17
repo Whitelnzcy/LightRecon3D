@@ -4,10 +4,10 @@ Target: at least 8,000 Chinese characters and 30 references. First complete
 draft due 2026-07-26.
 
 Current state on 2026-07-17: `REPORT_DRAFT.md` has been revised around the
-17-scene selection and 14 valid large-scale comparisons. Its body before the
-evidence index contains 9,446 Chinese characters under a strict CJK count, and
-`REFERENCES.md` contains 30 primary-source entries. The remaining work is recovery-result
-insertion if available, final figure selection, GB/T 7714 metadata cleanup and
+completed 17-scene recovered batch. Its body before the
+evidence index contains 9,519 Chinese characters under a strict CJK count, and
+`REFERENCES.md` contains 30 primary-source entries. The remaining work is final
+figure selection, GB/T 7714 metadata cleanup and
 Word/template rendering.
 
 ## 1. Introduction and problem definition (about 1,000 characters)
@@ -65,22 +65,23 @@ Current large-scale result for Table 3:
 
 ```text
 17 eligible independent Structured3D validation scenes
-14 valid identical-cache paired comparisons, 3 infrastructure failures
-global RANSAC pairwise F1 mean: 0.644675
-learning-guided RANSAC pairwise F1 mean: 0.721296
-paired mean / median gain: +0.076621 / +0.069861
-scene wins: 14/14
-exact two-sided sign test: p=0.000122
-matched IoU mean: 0.500448 -> 0.688247
-overmerge excess mean: 2.928571 -> 1.500000
-method-stage runtime mean: 19.945028 s -> 18.356680 s
+17 valid identical-cache paired comparisons after immutable recovery
+global RANSAC pairwise F1 mean: 0.632406
+learning-guided RANSAC pairwise F1 mean: 0.706348
+paired mean / median gain: +0.073942 / +0.064718
+scene wins: 16/17
+exact two-sided sign test: p=0.000275
+matched IoU mean: 0.489136 -> 0.678036
+overmerge excess mean: 2.882353 -> 1.470588
+method-stage runtime mean: 19.826422 s -> 17.892183 s
 quality gate: passed; no universal acceleration claim
 ```
 
 Write this as an improvement under the frozen project protocol, not as a
-published-dataset state-of-the-art claim. Always report the 14/17 completion
-rate and the three infrastructure failures. The earlier eight-scene audit is
-the frozen confirmation experiment. Raw manual identity remains a negative
+published-dataset state-of-the-art claim. Report that the first run passed
+14/17 and the immutable recovery completed the remaining three, producing a
+17/17 final ledger. State that `scene_00194` decreased by about 0.002. The
+earlier eight-scene audit is the frozen confirmation experiment. Raw manual identity remains a negative
 ablation (`3/8` wins; median F1 delta `-0.106110`). Conflict-drop scores must
 always be printed together with their collapsed coverage.
 
