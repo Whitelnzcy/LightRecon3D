@@ -9,7 +9,7 @@ ENV_DIR="${ENV_DIR:-/gemini/data-1/lightrecon_envs/planedust3r-py311-torch220-cu
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/gemini/pretrain/Plane-DUSt3R}"
 PLANE_CHECKPOINT="${PLANE_CHECKPOINT:-${CHECKPOINT_DIR}/checkpoint-best-onlyencoder.pth}"
 NONCUBOID_CHECKPOINT="${NONCUBOID_CHECKPOINT:-${CHECKPOINT_DIR}/Structured3D_pretrained.pt}"
-OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v3}"
+OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v4}"
 DOWNLOAD_BACKEND="${DOWNLOAD_BACKEND:-aria2}"
 HF_ENDPOINT="${HF_ENDPOINT:-https://huggingface.co}"
 ARIA2_CONNECTIONS="${ARIA2_CONNECTIONS:-16}"
@@ -35,6 +35,20 @@ if [[ -n "$(git -C "${OFFICIAL_REPO}" status --short)" ]]; then
   exit 2
 fi
 
+verify_torch_runtime() {
+  "${ENV_DIR}/bin/python" - <<'PY'
+import torch
+
+assert torch.__version__.split("+")[0] == "2.2.0", torch.__version__
+assert torch.version.cuda == "11.8", torch.version.cuda
+matrix = torch.arange(9, dtype=torch.float32).reshape(3, 3)
+result = matrix @ matrix.T
+assert result.shape == (3, 3)
+assert float(result[0, 0]) == 5.0
+print(f"PyTorch runtime verified: torch={torch.__version__} cuda={torch.version.cuda}")
+PY
+}
+
 if [[ ! -x "${ENV_DIR}/bin/python" ]]; then
   "${CONDA_BIN}" create -y --prefix "${ENV_DIR}" python=3.11 cmake=3.14.0
 elif "${ENV_DIR}/bin/python" -c 'import torch' >/dev/null 2>&1 && \
@@ -51,8 +65,10 @@ if ! "${ENV_DIR}/bin/python" -c \
   >/dev/null 2>&1; then
   "${CONDA_BIN}" install -y --prefix "${ENV_DIR}" \
     pytorch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 pytorch-cuda=11.8 \
-    -c pytorch -c nvidia
+    mkl=2024.0 intel-openmp=2024.0 \
+    -c pytorch -c nvidia -c defaults
 fi
+verify_torch_runtime
 
 requirements_dir="${OUT_DIR}/sanitized_requirements"
 "${ENV_DIR}/bin/python" "${PROJECT_DIR}/prepare_plane_dust3r_requirements.py" \
@@ -90,12 +106,14 @@ assert torch.version.cuda == "11.8", torch.version.cuda
 assert numpy.__version__ == "1.26.4", numpy.__version__
 assert scipy.__version__ == "1.11.4", scipy.__version__
 assert cv2.__version__ == "4.10.0", cv2.__version__
+matrix = torch.arange(9, dtype=torch.float32).reshape(3, 3)
+assert float((matrix @ matrix.T)[0, 0]) == 5.0
 print("Plane-DUSt3R Python environment pins verified")
 PY
   "${ENV_DIR}/bin/python" -m pip check
 }
 
-repo_marker="${ENV_DIR}/.plane_dust3r_requirements_${EXPECTED_COMMIT}_py311v3"
+repo_marker="${ENV_DIR}/.plane_dust3r_requirements_${EXPECTED_COMMIT}_py311v4"
 if [[ ! -f "${repo_marker}" ]]; then
   "${ENV_DIR}/bin/python" -m pip install \
     --constraint "${constraints}" \

@@ -91,6 +91,12 @@ class PlaneDust3RRequirementsTest(unittest.TestCase):
         self.assertIn("prepare_plane_dust3r_requirements.py", launcher)
         self.assertIn("--no-build-isolation", launcher)
         self.assertIn("python311_source_compatibility.txt", launcher)
+        self.assertIn("mkl=2024.0 intel-openmp=2024.0", launcher)
+        self.assertIn("verify_torch_runtime", launcher)
+        self.assertLess(
+            launcher.index("verify_torch_runtime\n"),
+            launcher.index('requirements_dir="${OUT_DIR}/sanitized_requirements"'),
+        )
         self.assertNotIn(
             'pip install -r "${OFFICIAL_REPO}/NonCuboidRoom/requirements.txt"',
             launcher,
