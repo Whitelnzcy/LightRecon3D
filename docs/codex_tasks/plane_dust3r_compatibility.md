@@ -2,7 +2,7 @@
 
 日期：2026-07-17
 
-状态：服务器预检已完成。17个冻结场景均有5张`perspective/empty`图像，但没有任何`perspective/full`图像；官方仓库和两个checkpoint尚未安装，也尚未报告Plane-DUSt3R推理结果。
+状态：17场景same-input兼容目录和官方仓库已经准备完成。Plane-DUSt3R固定在commit `9a1ae50650ec6d706bf329352aaaf49efded90a0`。隔离环境和两个checkpoint尚未安装，也尚未报告Plane-DUSt3R推理结果。
 
 ## 目标
 
@@ -52,28 +52,36 @@ NonCuboidRoom checkpoint=false
 
 后续采用同输入复现：建立独立兼容数据根目录，让官方程序预期的`full/<position>`只读链接到当前冻结的`empty/<position>`。链接不会修改或复制源图像，manifest明确记录实际输入仍为`empty`。Plane-DUSt3R和LightRecon3D由此读取相同scene、room、position和RGB文件。该实验只能称为same-input reproduction，不能称为Plane-DUSt3R论文原生协议。
 
+同输入物化已在服务器完成：17个独立scene、17个room、85张RGB全部通过，每组位置均为`0,1,2,3,4`。数据根为：
+
+```text
+/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_20260717_v1/dataset
+```
+
+官方仓库安装也已完成，主commit为`9a1ae50650ec6d706bf329352aaaf49efded90a0`。`git submodule status --recursive`没有条目，当前`MASt3R`和`NonCuboidRoom`内容由主仓库直接保存。README指定Python 3.11、PyTorch 2.2.0、torchvision 0.17.0和CUDA 11.8；两个checkpoint分别来自Hugging Face和NonCuboidRoom公开Google Drive文件。
+
 ## 执行顺序
 
 1. **完成：**预检17个冻结scene的`empty/full`图像和外部资源。
-2. 生成17场景same-input兼容目录；源数据保持只读。
-3. 克隆官方仓库及子模块，记录主仓库和所有子模块commit。
-4. 根据官方仓库实际README建立隔离Python环境并下载两个checkpoint，不升级`lightrecon`环境中的NumPy、PyTorch或CUDA。
-5. 先在`scene_00180`运行same-input GPU smoke。外部包装器必须取消静默异常并输出逐scene账本。
+2. **完成：**生成17场景、85张图的same-input兼容目录；源数据保持只读。
+3. **完成：**克隆官方仓库并固定commit `9a1ae506`。
+4. 根据官方README建立隔离Python 3.11、PyTorch 2.2.0、CUDA 11.8环境并下载两个checkpoint，不升级`lightrecon`环境中的NumPy、PyTorch或CUDA。
+5. 在`scene_00180`运行same-input GPU smoke。包装器在独立runtime中把官方硬编码`save=False`改为使用命令行保存开关，并把异常后的静默`continue`改为打印堆栈并失败；官方仓库本身不修改。
 6. smoke通过后，冻结scene ID、视图数、权重SHA256、环境和配置，运行17场景。
 7. 审核官方输出是否能在不补造物体平面标签的条件下映射到共同point cache；通过后再实现VOI/RI/SC adapter。若不能，则报告同输入下各方法各自任务指标，并明确不构成同任务排名。
 
-下一次服务器执行：
+下一次服务器执行会下载约4.41 GB Plane-DUSt3R权重，并安装隔离conda环境：
 
 ```bash
 cd /gemini/code/LightRecon3D
 git switch codex/bounded-support-head
 git -c http.version=HTTP/1.1 pull --ff-only origin codex/bounded-support-head
 
-OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_20260717_v1 \
-bash run_plane_dust3r_same_input_materialization.sh
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v1 \
+bash prepare_plane_dust3r_external.sh
 
-OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_repository_setup_20260717_v1 \
-bash setup_plane_dust3r_repository.sh
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_smoke_scene00180_20260717_v1 \
+bash run_plane_dust3r_same_input_smoke.sh
 ```
 
-第一条命令是CPU只读任务，默认使用绝对软链接。第二条命令只克隆官方代码和子模块，不下载checkpoint、不安装依赖、不启动训练或GPU推理。外部仓库与现有LightRecon3D仓库分开保存。
+环境和checkpoint写入`/gemini/data-1/lightrecon_envs`与`/gemini/pretrain/Plane-DUSt3R`，不改变现有`lightrecon`环境。准备脚本保存conda列表、pip freeze、GPU可用性、官方commit和两个checkpoint的SHA256。若大文件下载中断，换一个新的`OUT_DIR`重跑即可从相同checkpoint路径续传。

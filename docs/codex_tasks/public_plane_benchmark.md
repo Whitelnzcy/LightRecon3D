@@ -182,3 +182,10 @@ active external comparison is a same-input reproduction: an auditable dataset
 view exposes the exact empty-render positions under the external evaluator's
 expected directory name. It must be labelled as a protocol adaptation, not as
 the paper's native Structured3D result.
+
+The same-input view is complete for 17 scenes and 85 images. The official
+repository is pinned to `9a1ae50650ec6d706bf329352aaaf49efded90a0`. The next
+gate is a one-scene GPU smoke in an isolated Python 3.11 / PyTorch 2.2.0 /
+CUDA 11.8 environment. The audited evaluator changes only the disabled save
+flag and silent exception handling in a runtime copy; it leaves the external
+repository clean and records both evaluator hashes.
