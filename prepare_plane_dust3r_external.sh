@@ -9,7 +9,7 @@ ENV_DIR="${ENV_DIR:-/gemini/data-1/lightrecon_envs/planedust3r-py311-torch220-cu
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/gemini/pretrain/Plane-DUSt3R}"
 PLANE_CHECKPOINT="${PLANE_CHECKPOINT:-${CHECKPOINT_DIR}/checkpoint-best-onlyencoder.pth}"
 NONCUBOID_CHECKPOINT="${NONCUBOID_CHECKPOINT:-${CHECKPOINT_DIR}/Structured3D_pretrained.pt}"
-OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v2}"
+OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v3}"
 DOWNLOAD_BACKEND="${DOWNLOAD_BACKEND:-aria2}"
 HF_ENDPOINT="${HF_ENDPOINT:-https://huggingface.co}"
 ARIA2_CONNECTIONS="${ARIA2_CONNECTIONS:-16}"
@@ -80,6 +80,8 @@ expected = {
     "numba": "0.59.1",
     "pillow": "9.5.0",
     "roma": "1.5.6",
+    "setuptools": "80.9.0",
+    "wheel": "0.45.1",
 }
 for package, required in expected.items():
     actual = version(package).split("+")[0]
@@ -93,11 +95,19 @@ PY
   "${ENV_DIR}/bin/python" -m pip check
 }
 
-repo_marker="${ENV_DIR}/.plane_dust3r_requirements_${EXPECTED_COMMIT}_py311v2"
+repo_marker="${ENV_DIR}/.plane_dust3r_requirements_${EXPECTED_COMMIT}_py311v3"
 if [[ ! -f "${repo_marker}" ]]; then
   "${ENV_DIR}/bin/python" -m pip install \
     --constraint "${constraints}" \
-    --requirement "${requirements_dir}/python311_compatibility.txt"
+    setuptools==80.9.0 wheel==0.45.1
+  "${ENV_DIR}/bin/python" -c 'import pkg_resources; print("pkg_resources bootstrap verified")'
+  "${ENV_DIR}/bin/python" -m pip install \
+    --constraint "${constraints}" \
+    --requirement "${requirements_dir}/python311_binary_compatibility.txt"
+  "${ENV_DIR}/bin/python" -m pip install \
+    --no-build-isolation \
+    --constraint "${constraints}" \
+    --requirement "${requirements_dir}/python311_source_compatibility.txt"
   "${ENV_DIR}/bin/python" -m pip install \
     --constraint "${constraints}" \
     --requirement "${requirements_dir}/MASt3R__requirements.txt"

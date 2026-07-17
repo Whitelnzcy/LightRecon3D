@@ -2,7 +2,7 @@
 
 日期：2026-07-17
 
-状态：17场景same-input兼容目录和官方仓库已经准备完成。Plane-DUSt3R固定在commit `9a1ae50650ec6d706bf329352aaaf49efded90a0`。隔离环境和两个checkpoint尚未安装，也尚未报告Plane-DUSt3R推理结果。
+状态：17场景same-input兼容目录和官方仓库已经准备完成。Plane-DUSt3R固定在commit `9a1ae50650ec6d706bf329352aaaf49efded90a0`。v2隔离环境已创建但完整依赖和两个checkpoint尚未准备完成，也尚未报告Plane-DUSt3R推理结果。
 
 ## 目标
 
@@ -65,7 +65,7 @@ NonCuboidRoom checkpoint=false
 1. **完成：**预检17个冻结scene的`empty/full`图像和外部资源。
 2. **完成：**生成17场景、85张图的same-input兼容目录；源数据保持只读。
 3. **完成：**克隆官方仓库并固定commit `9a1ae506`。
-4. 根据官方README建立隔离Python 3.11、PyTorch 2.2.0、CUDA 11.8环境并下载两个checkpoint，不升级`lightrecon`环境中的NumPy、PyTorch或CUDA。第一次安装暴露出官方依赖文件之间的版本冲突，修复后的v2安装仍待服务器执行。
+4. 根据官方README建立隔离Python 3.11、PyTorch 2.2.0、CUDA 11.8环境并下载两个checkpoint，不升级`lightrecon`环境中的NumPy、PyTorch或CUDA。v2已经证明核心约束生效，但MMCV源码构建仍失败；v3安装修复待服务器执行。
 5. 在`scene_00180`运行same-input GPU smoke。包装器在独立runtime中把官方硬编码`save=False`改为使用命令行保存开关，并把异常后的静默`continue`改为打印堆栈并失败；官方仓库本身不修改。
 6. smoke通过后，冻结scene ID、视图数、权重SHA256、环境和配置，运行17场景。
 7. 审核官方输出是否能在不补造物体平面标签的条件下映射到共同point cache；通过后再实现VOI/RI/SC adapter。若不能，则报告同输入下各方法各自任务指标，并明确不构成同任务排名。
@@ -77,10 +77,10 @@ cd /gemini/code/LightRecon3D
 git switch codex/bounded-support-head
 git -c http.version=HTTP/1.1 pull --ff-only origin codex/bounded-support-head
 
-OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v2 \
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v3 \
 bash prepare_plane_dust3r_external.sh
 
-OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_smoke_scene00180_20260717_v2 \
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_smoke_scene00180_20260717_v3 \
 bash run_plane_dust3r_same_input_smoke.sh
 ```
 
@@ -100,8 +100,26 @@ bash run_plane_dust3r_same_input_smoke.sh
 cd /gemini/code/LightRecon3D
 git -c http.version=HTTP/1.1 pull --ff-only origin codex/bounded-support-head
 
-OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v2 \
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v3 \
 bash prepare_plane_dust3r_external.sh
 ```
 
 该命令通过并输出两个checkpoint的SHA256后，才运行`run_plane_dust3r_same_input_smoke.sh`。
+
+## 2026-07-17 v2运行结果与MMCV构建修复
+
+v2在服务器上正确创建了Python 3.11环境，并保持PyTorch 2.2.0、torchvision 0.17.0和CUDA 11.8，没有再次安装PyTorch 2.13或CUDA 13。清理器从三份官方依赖文件中识别出17条受控依赖，说明第一层约束已经生效。
+
+本次失败发生在安装`mmcv==1.7.2`时。MMCV 1.7.2没有Python 3.11预编译wheel，pip进入源码构建；默认隔离构建环境使用新版setuptools，MMCV的`setup.py`导入`pkg_resources`时失败。该错误发生在pip最终安装事务之前，v2环境中的conda PyTorch仍然正确，可以继续复用，不需要重建或删除。
+
+v3将`setuptools==80.9.0`和`wheel==0.45.1`纳入约束。安装器先完成这两个构建工具的引导并验证`pkg_resources`，然后安装有wheel的兼容依赖，最后只对MMCV使用`--no-build-isolation`。这样MMCV在已验证的构建工具和NumPy 1.26.4环境中构建，不再使用pip临时创建的新版setuptools环境。完成标记升级为`py311v3`，旧失败不会被误认为安装完成。
+
+服务器使用新的输出目录继续运行，环境路径仍为v2且不要手工删除：
+
+```bash
+cd /gemini/code/LightRecon3D
+git -c http.version=HTTP/1.1 pull --ff-only origin codex/bounded-support-head
+
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_external_setup_20260717_v3 \
+bash prepare_plane_dust3r_external.sh
+```

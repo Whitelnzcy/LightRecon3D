@@ -44,9 +44,12 @@ COMPATIBILITY_PINS = {
     "pyyaml": "PyYAML==6.0.2",
     "tensorboardx": "tensorboardX==2.6.2.2",
     "roma": "roma==1.5.6",
+    "setuptools": "setuptools==80.9.0",
+    "wheel": "wheel==0.45.1",
 }
 
 CONDA_MANAGED = frozenset({"torch", "torchvision", "torchaudio"})
+SOURCE_BUILD = frozenset({"mmcv"})
 UNSAFE_PREFIXES = (
     "-r",
     "--requirement",
@@ -154,6 +157,26 @@ def write_outputs(official_repo: Path, output_dir: Path) -> dict:
         encoding="utf-8",
         newline="\n",
     )
+    binary_pins = output_dir / "python311_binary_compatibility.txt"
+    binary_pins.write_text(
+        "\n".join(
+            pin
+            for package, pin in COMPATIBILITY_PINS.items()
+            if package not in CONDA_MANAGED and package not in SOURCE_BUILD
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    source_pins = output_dir / "python311_source_compatibility.txt"
+    source_pins.write_text(
+        "\n".join(
+            pin for package, pin in COMPATIBILITY_PINS.items() if package in SOURCE_BUILD
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
     audit = {
         "schema_version": 1,
@@ -162,9 +185,12 @@ def write_outputs(official_repo: Path, output_dir: Path) -> dict:
         "files": files,
         "compatibility_pins": COMPATIBILITY_PINS,
         "conda_managed": sorted(CONDA_MANAGED),
+        "source_build": sorted(SOURCE_BUILD),
         "replacements": all_replacements,
         "constraints": str(constraints),
         "python311_compatibility": str(pip_pins),
+        "python311_binary_compatibility": str(binary_pins),
+        "python311_source_compatibility": str(source_pins),
     }
     audit_json = output_dir / "requirements_audit.json"
     audit_json.write_text(

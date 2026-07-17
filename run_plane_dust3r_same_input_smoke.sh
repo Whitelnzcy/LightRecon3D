@@ -9,7 +9,7 @@ PLANE_CHECKPOINT="${PLANE_CHECKPOINT:-/gemini/pretrain/Plane-DUSt3R/checkpoint-b
 NONCUBOID_CHECKPOINT="${NONCUBOID_CHECKPOINT:-/gemini/pretrain/Plane-DUSt3R/Structured3D_pretrained.pt}"
 SAME_INPUT_MANIFEST="${SAME_INPUT_MANIFEST:-/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_20260717_v1/same_input_manifest.json}"
 SCENE_NAME="${SCENE_NAME:-scene_00180}"
-OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_smoke_scene00180_20260717_v2}"
+OUT_DIR="${OUT_DIR:-/gemini/data-1/lightrecon_runs/plane_dust3r_same_input_smoke_scene00180_20260717_v3}"
 
 if [[ -e "${OUT_DIR}" ]]; then
   echo "Refusing to overwrite existing output: ${OUT_DIR}" >&2

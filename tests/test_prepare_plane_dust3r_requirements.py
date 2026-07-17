@@ -58,6 +58,12 @@ class PlaneDust3RRequirementsTest(unittest.TestCase):
             noncuboid = (output / "NonCuboidRoom__requirements.txt").read_text()
             constraints = (output / "constraints.txt").read_text()
             pip_pins = (output / "python311_compatibility.txt").read_text()
+            binary_pins = (
+                output / "python311_binary_compatibility.txt"
+            ).read_text()
+            source_pins = (
+                output / "python311_source_compatibility.txt"
+            ).read_text()
 
             self.assertEqual(dust3r, "gradio\n")
             self.assertEqual(noncuboid, "")
@@ -65,6 +71,9 @@ class PlaneDust3RRequirementsTest(unittest.TestCase):
             self.assertIn("scipy==1.11.4", constraints)
             self.assertNotIn("torch==2.2.0", pip_pins)
             self.assertIn("mmcv==1.7.2", pip_pins)
+            self.assertIn("setuptools==80.9.0", binary_pins)
+            self.assertNotIn("mmcv==1.7.2", binary_pins)
+            self.assertEqual(source_pins, "mmcv==1.7.2\n")
             self.assertEqual(len(audit["files"]), 3)
             self.assertEqual(len(audit["replacements"]), 17)
 
@@ -80,6 +89,8 @@ class PlaneDust3RRequirementsTest(unittest.TestCase):
         self.assertIn("planedust3r-py311-torch220-cu118-v2", launcher)
         self.assertIn("--constraint \"${constraints}\"", launcher)
         self.assertIn("prepare_plane_dust3r_requirements.py", launcher)
+        self.assertIn("--no-build-isolation", launcher)
+        self.assertIn("python311_source_compatibility.txt", launcher)
         self.assertNotIn(
             'pip install -r "${OFFICIAL_REPO}/NonCuboidRoom/requirements.txt"',
             launcher,
