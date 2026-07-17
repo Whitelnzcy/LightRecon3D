@@ -160,6 +160,50 @@ def run_required(
         )
 
 
+def require_stage1_outputs(stage1_dir: Path) -> Path:
+    manifest_path = stage1_dir / "stage1_pred_support_teacher_manifest.json"
+    if not manifest_path.is_file():
+        raise MaterializationFailure(
+            "stage1_support_artifacts",
+            f"Stage1 returned success without its manifest: {manifest_path}",
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise MaterializationFailure(
+            "stage1_support_artifacts",
+            f"invalid Stage1 manifest {manifest_path}: {error}",
+        ) from error
+    if not isinstance(manifest, list) or not manifest:
+        raise MaterializationFailure(
+            "stage1_support_artifacts",
+            f"Stage1 manifest contains no exported records: {manifest_path}",
+        )
+    outputs = sorted(stage1_dir.glob("*_full_pointcloud_editable_planes_data.npz"))
+    if not outputs:
+        raise MaterializationFailure(
+            "stage1_support_artifacts",
+            f"Stage1 returned success without any support NPZ: {stage1_dir}",
+        )
+    missing: list[str] = []
+    for row in manifest:
+        if not isinstance(row, dict):
+            missing.append(f"<invalid manifest row: {row!r}>")
+            continue
+        output_value = str(row.get("output", ""))
+        output_path = Path(output_value)
+        if output_value and not output_path.is_absolute():
+            output_path = stage1_dir / output_path
+        if not output_value or not output_path.is_file():
+            missing.append(output_value or "<empty output path>")
+    if missing:
+        raise MaterializationFailure(
+            "stage1_support_artifacts",
+            f"Stage1 manifest references missing outputs: {missing}",
+        )
+    return manifest_path
+
+
 def validate_final_input(item: dict[str, Any]) -> dict[str, Any]:
     return preflight_item(
         {
@@ -231,6 +275,7 @@ def materialize_item(
                 logs_dir / "stage1_support.log",
                 runner,
             )
+            stage1_manifest = require_stage1_outputs(stage1_dir)
             run_required(
                 row,
                 "stage2_region_merge",
@@ -259,7 +304,7 @@ def materialize_item(
                 runner,
             )
             row["artifacts"]["stage1_manifest"] = file_record(
-                stage1_dir / "stage1_pred_support_teacher_manifest.json"
+                stage1_manifest
             )
             row["artifacts"]["stage2_manifest"] = file_record(
                 stage2_dir / "learned_region_merge_manifest.json"

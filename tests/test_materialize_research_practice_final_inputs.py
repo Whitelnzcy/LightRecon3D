@@ -4,9 +4,11 @@ import unittest
 from pathlib import Path
 
 from materialize_research_practice_final_inputs import (
+    MaterializationFailure,
     load_selection_plan,
     materialize_item,
     materialize_plan,
+    require_stage1_outputs,
     registry_command,
     stage1_command,
     stage2_command,
@@ -44,6 +46,20 @@ def write_plan(path, items):
 
 
 class FinalInputMaterializationTests(unittest.TestCase):
+    def test_stage1_success_requires_manifest_and_npz(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(MaterializationFailure, "without its manifest"):
+                require_stage1_outputs(root)
+            manifest = root / "stage1_pred_support_teacher_manifest.json"
+            manifest.write_text("[]", encoding="utf-8")
+            with self.assertRaisesRegex(MaterializationFailure, "no exported records"):
+                require_stage1_outputs(root)
+            output = root / "sample_full_pointcloud_editable_planes_data.npz"
+            output.write_bytes(b"npz")
+            manifest.write_text(json.dumps([{"output": str(output)}]), encoding="utf-8")
+            self.assertEqual(require_stage1_outputs(root), manifest)
+
     def test_plan_rejects_duplicate_independent_scene(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
