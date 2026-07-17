@@ -73,6 +73,9 @@ scene wins: 16/17
 exact two-sided sign test: p=0.000275
 matched IoU mean: 0.489136 -> 0.678036
 overmerge excess mean: 2.882353 -> 1.470588
+VOI mean (nats, lower): 1.493965 -> 1.172062
+Rand Index mean: 0.789837 -> 0.834620
+Segmentation Covering symmetric mean: 0.561563 -> 0.658550
 method-stage runtime mean: 19.826422 s -> 17.892183 s
 quality gate: passed; no universal acceleration claim
 ```

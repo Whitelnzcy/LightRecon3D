@@ -13,6 +13,9 @@ learning-support-guided RANSAC read identical ordered DUSt3R global point
 caches. Guided RANSAC improves mean point-partition F1 from `0.632406` to
 `0.706348`, matched IoU from `0.489136` to `0.678036`, and reduces mean
 overmerge excess from `2.882353` to `1.470588`. It wins F1 on 16/17 scenes.
+The read-only public-metric pass is now complete: mean VOI decreases from
+`1.493965` to `1.172062`, Rand Index increases from `0.789837` to `0.834620`,
+and symmetric Segmentation Covering increases from `0.561563` to `0.658550`.
 
 This is an internal paired comparison. It is not a public leaderboard result
 because the dataset subset, point-aligned GT domain, output representation and
@@ -123,7 +126,9 @@ Speed is diagnostic, not the main claim.
 The next experiment is large-scale **testing**, not immediate large-scale
 training.
 
-1. Recompute VOI/RI/SC for all 17 frozen scenes without rerunning inference.
+1. **Complete:** recompute VOI/RI/SC for all 17 frozen scenes without rerunning
+   inference. The server output is
+   `/gemini/data-1/lightrecon_runs/research_practice_public_metrics_20260717_v1`.
 2. Inventory every eligible held-out Structured3D scene and freeze a manifest
    before looking at results.
 3. Run the frozen ordinary/guided methods on all eligible held-out scenes. A
@@ -146,24 +151,26 @@ keep all benchmark test scenes isolated from training and threshold selection.
 
 ## 5. Immediate execution
 
-First run the read-only 17-scene public-metric recomputation:
+The read-only 17-scene public-metric recomputation has completed at commit
+`b08da2b`. The next command audits Plane-DUSt3R compatibility before its 4.41 GB
+checkpoint is downloaded:
 
 ```bash
 cd /gemini/code/LightRecon3D
 git switch codex/bounded-support-head
 git -c http.version=HTTP/1.1 pull --ff-only origin codex/bounded-support-head
 
-OUT_DIR=/gemini/data-1/lightrecon_runs/research_practice_public_metrics_20260717_v1 \
-bash run_research_practice_public_metrics.sh
+OUT_DIR=/gemini/data-1/lightrecon_runs/plane_dust3r_compatibility_20260717_v1 \
+bash run_plane_dust3r_compatibility_preflight.sh
 ```
 
 Expected outputs:
 
 ```text
-public_plane_metrics.json
-public_plane_metrics.csv
-public_plane_metrics.md
+plane_dust3r_compatibility.json
+plane_dust3r_scene_inventory.csv
+plane_dust3r_compatibility.md
 ```
 
-This job is CPU-only and reads the archived NPZ files. It does not rerun
-DUSt3R, Stage1, RANSAC, or training.
+This job is CPU-only and reads the frozen batch ledger and Structured3D path
+inventory. It does not clone or download Plane-DUSt3R, rerun DUSt3R, or train.
