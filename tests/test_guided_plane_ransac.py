@@ -3,14 +3,41 @@ import unittest
 import numpy as np
 
 from guided_plane_ransac import (
+    MECHANISM_MODES,
+    METHOD_BY_MODE,
+    best_support_group_for_plane,
+    build_support_groups,
     build_guided_hypotheses,
     fit_weighted_plane,
     guided_sequential_plane_ransac,
     map_support_records_to_cache,
+    pack_support_groups,
+    refit_global_inliers,
 )
 
 
 class GuidedPlaneRansacTests(unittest.TestCase):
+    def test_mechanism_modes_are_orthogonal_and_preserve_historical_b4(self):
+        self.assertEqual(
+            MECHANISM_MODES["proposal_consensus"],
+            {
+                "proposal_guidance": True,
+                "consensus_guidance": True,
+                "refit_guidance": False,
+            },
+        )
+        self.assertEqual(
+            MECHANISM_MODES["all"],
+            {
+                "proposal_guidance": True,
+                "consensus_guidance": True,
+                "refit_guidance": True,
+            },
+        )
+        self.assertEqual(
+            METHOD_BY_MODE["proposal_consensus"], "learning_guided_ransac_cc"
+        )
+
     def test_exact_mapping_preserves_competing_conflict_records(self):
         cache_indices, labels, diagnostics = map_support_records_to_cache(
             np.asarray([0, 0], np.int32),
@@ -26,6 +53,85 @@ class GuidedPlaneRansacTests(unittest.TestCase):
         self.assertEqual(diagnostics["duplicate_positive_support_records"], 2)
         self.assertTrue(
             diagnostics["duplicate_conflicts_preserved_as_competing_hypotheses"]
+        )
+
+    def test_support_groups_collapse_repeats_but_preserve_conflicts(self):
+        cache = {
+            "points": np.zeros((2, 3), np.float32),
+            "confidence": np.ones(2, np.float32),
+            "view_indices": np.asarray([0, 0], np.int32),
+            "pixel_xy": np.asarray([[0, 0], [1, 0]], np.int32),
+        }
+        support = {
+            "view_indices": np.asarray([0, 0, 0, 0], np.int32),
+            "pixel_xy": np.asarray([[0, 0], [0, 0], [0, 0], [1, 0]], np.int32),
+            "labels": np.asarray([4, 4, 9, 9], np.int32),
+        }
+        groups, diagnostics = build_support_groups(cache, support)
+        self.assertEqual([group["source_plane_id"] for group in groups], [4, 9])
+        self.assertEqual(groups[0]["support_indices"].tolist(), [0])
+        self.assertEqual(groups[1]["support_indices"].tolist(), [0, 1])
+        self.assertEqual(diagnostics["unique_label_cache_memberships"], 3)
+
+    def test_best_support_group_uses_one_coherent_label(self):
+        horizontal = np.asarray(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], np.float32
+        )
+        vertical = np.asarray(
+            [[2, 0, 0], [2, 1, 0], [2, 0, 1], [2, 1, 1]], np.float32
+        )
+        points = np.vstack((horizontal, vertical))
+        groups = [
+            {"source_plane_id": 4, "support_indices": np.arange(4)},
+            {"source_plane_id": 9, "support_indices": np.arange(4, 8)},
+        ]
+        cache_indices, group_indices, source_ids = pack_support_groups(groups)
+        group_index, source_id, count = best_support_group_for_plane(
+            points,
+            cache_indices,
+            group_indices,
+            source_ids,
+            np.ones(len(points), dtype=bool),
+            np.asarray([0, 0, 1], np.float32),
+            0.0,
+            0.01,
+        )
+        self.assertEqual((group_index, source_id, count), (0, 4, 4))
+
+    def test_support_guided_refit_reduces_selected_support_residual(self):
+        yy, xx = np.mgrid[:4, :4]
+        support_plane = np.column_stack(
+            (xx.ravel(), yy.ravel(), np.zeros(xx.size))
+        ).astype(np.float32)
+        yy2, xx2 = np.mgrid[:6, :6]
+        competing = np.column_stack(
+            (xx2.ravel(), yy2.ravel(), 0.18 * xx2.ravel() + 0.1)
+        ).astype(np.float32)
+        points = np.vstack((support_plane, competing))
+        cache = {
+            "points": points,
+            "confidence": np.ones(len(points), np.float32),
+        }
+        indices = np.arange(len(points), dtype=np.int64)
+        base_normal, base_offset, base_diagnostics = refit_global_inliers(
+            cache, indices
+        )
+        guided_normal, guided_offset, guided_diagnostics = refit_global_inliers(
+            cache,
+            indices,
+            support_indices=np.arange(len(support_plane), dtype=np.int64),
+            support_refit_weight=20.0,
+        )
+        base_residual = np.abs(
+            np.sum(support_plane * base_normal[None], axis=1) + base_offset
+        ).mean()
+        guided_residual = np.abs(
+            np.sum(support_plane * guided_normal[None], axis=1) + guided_offset
+        ).mean()
+        self.assertLess(float(guided_residual), float(base_residual))
+        self.assertEqual(base_diagnostics["support_guided_inliers"], 0)
+        self.assertEqual(
+            guided_diagnostics["support_guided_inliers"], len(support_plane)
         )
 
     def test_confidence_weighted_refit_downweights_bad_point(self):

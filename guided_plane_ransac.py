@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 
 from global_plane_baselines import (
@@ -31,7 +32,51 @@ from lift_support_prediction_to_global_cache import (
 
 
 METHOD = "learning_guided_ransac_cc"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+MECHANISM_MODES = {
+    "none": {
+        "proposal_guidance": False,
+        "consensus_guidance": False,
+        "refit_guidance": False,
+    },
+    "proposal_only": {
+        "proposal_guidance": True,
+        "consensus_guidance": False,
+        "refit_guidance": False,
+    },
+    "consensus_only": {
+        "proposal_guidance": False,
+        "consensus_guidance": True,
+        "refit_guidance": False,
+    },
+    "refit_only": {
+        "proposal_guidance": False,
+        "consensus_guidance": False,
+        "refit_guidance": True,
+    },
+    "proposal_consensus": {
+        "proposal_guidance": True,
+        "consensus_guidance": True,
+        "refit_guidance": False,
+    },
+    "all": {
+        "proposal_guidance": True,
+        "consensus_guidance": True,
+        "refit_guidance": True,
+    },
+}
+
+METHOD_BY_MODE = {
+    "none": "support_mechanism_none_cc",
+    "proposal_only": "support_mechanism_proposal_only_cc",
+    "consensus_only": "support_mechanism_consensus_only_cc",
+    "refit_only": "support_mechanism_refit_only_cc",
+    # This is the historical B4 implementation. Keep its method identifier so
+    # a default invocation remains backward compatible with archived outputs.
+    "proposal_consensus": METHOD,
+    "all": "support_mechanism_proposal_consensus_refit_cc",
+}
 
 
 def canonicalize_plane(normal: np.ndarray, offset: float) -> tuple[np.ndarray, float]:
@@ -60,13 +105,20 @@ def fit_weighted_plane(
     weights /= float(weights.sum())
     center = np.sum(points.astype(np.float64) * weights[:, None], axis=0)
     centered = points.astype(np.float64) - center
-    covariance = (centered * weights[:, None]).T @ centered
-    _, eigenvectors = np.linalg.eigh(covariance)
-    normal = eigenvectors[:, 0].astype(np.float32)
-    normal /= max(float(np.linalg.norm(normal)), 1e-12)
-    offset = -float(normal @ center)
+    covariance = np.sum(
+        centered[:, :, None]
+        * centered[:, None, :]
+        * weights[:, None, None],
+        axis=0,
+    )
+    ok, _, eigenvectors = cv2.eigen(covariance)
+    if not ok:
+        raise RuntimeError("OpenCV failed to solve the plane covariance eigensystem")
+    normal = eigenvectors[-1].astype(np.float32)
+    normal /= max(float(np.sqrt(np.sum(normal * normal))), 1e-12)
+    offset = -float(np.sum(normal * center))
     normal, offset = canonicalize_plane(normal, offset)
-    residual = np.abs(points @ normal + offset).astype(np.float32)
+    residual = np.abs(np.sum(points * normal[None], axis=1) + offset).astype(np.float32)
     return normal, offset, residual
 
 
@@ -138,6 +190,145 @@ def map_support_records_to_cache(
     return cache_indices.astype(np.int64), matched_labels.astype(np.int32), diagnostics
 
 
+def build_support_groups(
+    cache: dict[str, np.ndarray], support: dict[str, np.ndarray]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Build deterministic label-to-cache memberships for mechanism controls.
+
+    Duplicate records with the same ``(label, cache index)`` are collapsed so
+    repeated observations cannot inflate a score. A conflicting cache point is
+    retained once in every competing label group, matching the historical B4
+    competing-hypothesis contract.
+    """
+
+    mapped_indices, mapped_labels, mapping = map_support_records_to_cache(
+        cache["view_indices"],
+        cache["pixel_xy"],
+        support["view_indices"],
+        support["pixel_xy"],
+        support["labels"],
+    )
+    groups: list[dict[str, Any]] = []
+    for source_plane_id in sorted(int(value) for value in np.unique(mapped_labels)):
+        groups.append(
+            {
+                "source_plane_id": source_plane_id,
+                "support_indices": np.unique(
+                    mapped_indices[mapped_labels == source_plane_id]
+                ).astype(np.int64),
+            }
+        )
+    diagnostics = {
+        "mapping": mapping,
+        "source_plane_labels": int(len(groups)),
+        "unique_label_cache_memberships": int(
+            sum(len(group["support_indices"]) for group in groups)
+        ),
+    }
+    return groups, diagnostics
+
+
+def pack_support_groups(
+    groups: list[dict[str, Any]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Pack group memberships for vectorized consensus scoring."""
+
+    if not groups:
+        return (
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.int32),
+            np.empty(0, dtype=np.int32),
+        )
+    cache_indices = np.concatenate(
+        [np.asarray(group["support_indices"], dtype=np.int64) for group in groups]
+    )
+    group_indices = np.concatenate(
+        [
+            np.full(len(group["support_indices"]), index, dtype=np.int32)
+            for index, group in enumerate(groups)
+        ]
+    )
+    source_plane_ids = np.asarray(
+        [int(group["source_plane_id"]) for group in groups], dtype=np.int32
+    )
+    return cache_indices, group_indices, source_plane_ids
+
+
+def best_support_group_for_plane(
+    points: np.ndarray,
+    membership_cache_indices: np.ndarray,
+    membership_group_indices: np.ndarray,
+    source_plane_ids: np.ndarray,
+    remaining_mask: np.ndarray,
+    normal: np.ndarray,
+    offset: float,
+    distance_threshold: float,
+) -> tuple[int, int, int]:
+    """Return ``(group index, source plane id, active inlier memberships)``."""
+
+    if not len(source_plane_ids) or not len(membership_cache_indices):
+        return -1, -1, 0
+    active = remaining_mask[membership_cache_indices]
+    if not active.any():
+        return -1, -1, 0
+    active_cache_indices = membership_cache_indices[active]
+    residual = np.abs(
+        np.sum(points[active_cache_indices] * normal[None], axis=1) + offset
+    )
+    inlier_groups = membership_group_indices[active][
+        residual <= float(distance_threshold)
+    ]
+    if not len(inlier_groups):
+        return -1, -1, 0
+    counts = np.bincount(inlier_groups, minlength=len(source_plane_ids))
+    best_count = int(counts.max())
+    # np.argmax gives the lowest deterministic group index on a tie. Groups
+    # are ordered by source_plane_id, so this matches the historical tie rule.
+    best_group_index = int(np.argmax(counts))
+    return (
+        best_group_index,
+        int(source_plane_ids[best_group_index]),
+        best_count,
+    )
+
+
+def refit_global_inliers(
+    cache: dict[str, np.ndarray],
+    global_indices: np.ndarray,
+    *,
+    support_indices: np.ndarray | None = None,
+    support_refit_weight: float = 0.0,
+) -> tuple[np.ndarray, float, dict[str, Any]]:
+    """Confidence-refit a plane, optionally boosting one coherent support.
+
+    DUSt3R confidence weighting is shared by every mechanism row and is not a
+    learned-support intervention. With a positive ``support_refit_weight``, a
+    point in the selected predicted-support group receives multiplier
+    ``1 + support_refit_weight``. All global inliers remain in the fit.
+    """
+
+    global_indices = np.asarray(global_indices, dtype=np.int64).reshape(-1)
+    weights = np.asarray(cache["confidence"][global_indices], dtype=np.float64)
+    supported = np.zeros(len(global_indices), dtype=bool)
+    if support_indices is not None and float(support_refit_weight) > 0:
+        support_indices = np.asarray(support_indices, dtype=np.int64).reshape(-1)
+        # A direct cache-index mask is substantially faster than np.isin for
+        # 700k-point caches on Windows and has identical set-membership
+        # semantics. Allocate it only for the few selected refit hypotheses.
+        support_mask = np.zeros(len(cache["points"]), dtype=bool)
+        support_mask[support_indices] = True
+        supported = support_mask[global_indices]
+        weights *= 1.0 + float(support_refit_weight) * supported.astype(np.float64)
+    normal, offset, _ = fit_weighted_plane(cache["points"][global_indices], weights)
+    diagnostics = {
+        "global_inliers": int(len(global_indices)),
+        "support_guided_inliers": int(supported.sum()),
+        "support_refit_weight": float(support_refit_weight),
+        "support_weight_multiplier": float(1.0 + support_refit_weight),
+    }
+    return normal, offset, diagnostics
+
+
 def robust_support_plane(
     points: np.ndarray,
     confidence: np.ndarray,
@@ -164,16 +355,16 @@ def robust_support_plane(
     for _ in range(max(0, int(iterations))):
         sample = score_points[rng.choice(len(score_points), 3, replace=False)]
         candidate_normal = np.cross(sample[1] - sample[0], sample[2] - sample[0])
-        norm = float(np.linalg.norm(candidate_normal))
+        norm = float(np.sqrt(np.sum(candidate_normal * candidate_normal)))
         if norm < 1e-8:
             continue
         candidate_normal = (candidate_normal / norm).astype(np.float32)
-        candidate_offset = -float(candidate_normal @ sample[0])
+        candidate_offset = -float(np.sum(candidate_normal * sample[0]))
         candidate_normal, candidate_offset = canonicalize_plane(
             candidate_normal, candidate_offset
         )
         candidate_residual = np.abs(
-            score_points @ candidate_normal + candidate_offset
+            np.sum(score_points * candidate_normal[None], axis=1) + candidate_offset
         )
         score = (
             int((candidate_residual <= distance_threshold).sum()),
@@ -185,11 +376,11 @@ def robust_support_plane(
             best = score
 
     normal, offset = best[2], best[3]
-    all_residual = np.abs(points @ normal + offset)
+    all_residual = np.abs(np.sum(points * normal[None], axis=1) + offset)
     inliers = all_residual <= distance_threshold
     if int(inliers.sum()) >= 3:
         normal, offset, _ = fit_weighted_plane(points[inliers], confidence[inliers])
-        all_residual = np.abs(points @ normal + offset)
+        all_residual = np.abs(np.sum(points * normal[None], axis=1) + offset)
         inliers = all_residual <= distance_threshold
     return normal, offset, inliers
 
@@ -205,19 +396,14 @@ def build_guided_hypotheses(
     proposal_max_points: int,
     seed: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    mapped_indices, mapped_labels, mapping = map_support_records_to_cache(
-        cache["view_indices"],
-        cache["pixel_xy"],
-        support["view_indices"],
-        support["pixel_xy"],
-        support["labels"],
-    )
+    groups, group_diagnostics = build_support_groups(cache, support)
     rng = np.random.default_rng(seed)
     candidates: list[dict[str, Any]] = []
     rejected_small = 0
     rejected_nonplanar = 0
-    for source_plane_id in sorted(int(value) for value in np.unique(mapped_labels)):
-        support_indices = np.unique(mapped_indices[mapped_labels == source_plane_id])
+    for group in groups:
+        source_plane_id = int(group["source_plane_id"])
+        support_indices = group["support_indices"]
         if len(support_indices) < int(proposal_min_points):
             rejected_small += 1
             continue
@@ -250,8 +436,7 @@ def build_guided_hypotheses(
             }
         )
     diagnostics = {
-        "mapping": mapping,
-        "source_plane_labels": int(len(np.unique(mapped_labels))),
+        **group_diagnostics,
         "accepted_hypotheses": int(len(candidates)),
         "rejected_small_hypotheses": int(rejected_small),
         "rejected_nonplanar_hypotheses": int(rejected_nonplanar),
@@ -292,6 +477,7 @@ def guided_sequential_plane_ransac(
     component_exact_max_points: int,
     support_score_weight: float,
     fallback_iterations: int,
+    support_refit_weight: float = 0.0,
 ) -> tuple[list[np.ndarray], dict[str, Any]]:
     points = cache["points"]
     confidence = cache["confidence"]
@@ -316,7 +502,10 @@ def guided_sequential_plane_ransac(
             candidate = candidates[candidate_index]
             normal, offset = candidate["normal"], candidate["offset"]
             global_sample_count = int(
-                (np.abs(score_xyz @ normal + offset) <= distance_threshold).sum()
+                (
+                    np.abs(np.sum(score_xyz * normal[None], axis=1) + offset)
+                    <= distance_threshold
+                ).sum()
             )
             estimated_global_count = float(
                 global_sample_count * len(xyz) / max(1, len(score_xyz))
@@ -325,7 +514,10 @@ def guided_sequential_plane_ransac(
             active_support = active_support[remaining_mask[active_support]]
             active_support_count = int(
                 (
-                    np.abs(points[active_support] @ normal + offset)
+                    np.abs(
+                        np.sum(points[active_support] * normal[None], axis=1)
+                        + offset
+                    )
                     <= distance_threshold
                 ).sum()
             )
@@ -347,14 +539,23 @@ def guided_sequential_plane_ransac(
         unused.remove(best_index)
         candidate = candidates[best_index]
         normal, offset = candidate["normal"], candidate["offset"]
-        inliers = np.abs(points[remaining] @ normal + offset) <= distance_threshold
+        inliers = (
+            np.abs(np.sum(points[remaining] * normal[None], axis=1) + offset)
+            <= distance_threshold
+        )
         if int(inliers.sum()) < int(min_inliers):
             continue
         global_indices = remaining[inliers]
-        normal, offset, _ = fit_weighted_plane(
-            points[global_indices], confidence[global_indices]
+        normal, offset, refit_diagnostics = refit_global_inliers(
+            cache,
+            global_indices,
+            support_indices=candidate["support_indices"],
+            support_refit_weight=support_refit_weight,
         )
-        refined = np.abs(points[remaining] @ normal + offset) <= distance_threshold
+        refined = (
+            np.abs(np.sum(points[remaining] * normal[None], axis=1) + offset)
+            <= distance_threshold
+        )
         global_indices = remaining[refined]
         if len(global_indices) < int(min_inliers):
             continue
@@ -375,6 +576,7 @@ def guided_sequential_plane_ransac(
                 "full_global_inliers": int(len(global_indices)),
                 "accepted_components": int(len(accepted)),
                 "accepted_component_points": [int(len(value)) for value in accepted],
+                "refit": refit_diagnostics,
             }
         )
         # Match the baseline contract: remove all infinite-plane inliers so a
@@ -408,6 +610,186 @@ def guided_sequential_plane_ransac(
         "fallback_components": int(len(supports) - guided_components),
         "output_components": int(len(supports)),
         "remaining_points_before_fallback": int(len(remaining)),
+        "support_score_weight": float(support_score_weight),
+        "support_refit_weight": float(support_refit_weight),
+        "selections": selections,
+    }
+    return supports, diagnostics
+
+
+def global_mechanism_plane_ransac(
+    cache: dict[str, np.ndarray],
+    support_groups: list[dict[str, Any]],
+    *,
+    distance_threshold: float,
+    global_proposal_iterations: int,
+    min_inliers: int,
+    cluster_radius: float,
+    min_component_points: int,
+    max_planes: int,
+    seed: int,
+    hypothesis_max_points: int,
+    component_exact_max_points: int,
+    consensus_guidance: bool,
+    refit_guidance: bool,
+    support_score_weight: float,
+    support_refit_weight: float,
+) -> tuple[list[np.ndarray], dict[str, Any]]:
+    """Global-proposal matched control with optional support interventions.
+
+    Random proposal generation and DUSt3R-confidence refit are shared across
+    ``none``, ``consensus_only``, and ``refit_only``. Consensus guidance adds
+    the largest coherent predicted-label inlier count to candidate selection.
+    Refit guidance boosts only that same coherent label during the otherwise
+    global confidence-weighted fit.
+    """
+
+    points = cache["points"]
+    rng = np.random.default_rng(seed)
+    remaining = np.arange(len(points), dtype=np.int64)
+    remaining_mask = np.ones(len(points), dtype=bool)
+    supports: list[np.ndarray] = []
+    selections: list[dict[str, Any]] = []
+    membership_cache_indices, membership_group_indices, source_plane_ids = (
+        pack_support_groups(support_groups)
+    )
+    evaluate_support = bool(consensus_guidance or refit_guidance)
+
+    while len(remaining) >= int(min_inliers) and len(supports) < int(max_planes):
+        xyz = points[remaining]
+        if len(xyz) > int(hypothesis_max_points):
+            score_local_indices = rng.choice(
+                len(xyz), int(hypothesis_max_points), replace=False
+            )
+            score_xyz = xyz[score_local_indices]
+        else:
+            score_xyz = xyz
+
+        best_model: tuple[np.ndarray, float] | None = None
+        best_key: tuple[float, float, int, int, int] | None = None
+        best_group_index = -1
+        best_source_plane_id = -1
+        best_support_count = 0
+        for hypothesis_index in range(int(global_proposal_iterations)):
+            sample = score_xyz[rng.choice(len(score_xyz), 3, replace=False)]
+            normal = np.cross(sample[1] - sample[0], sample[2] - sample[0])
+            norm = float(np.sqrt(np.sum(normal * normal)))
+            if norm < 1e-8:
+                continue
+            normal = (normal / norm).astype(np.float32)
+            offset = -float(np.sum(normal * sample[0]))
+            normal, offset = canonicalize_plane(normal, offset)
+            global_sample_count = int(
+                (
+                    np.abs(np.sum(score_xyz * normal[None], axis=1) + offset)
+                    <= distance_threshold
+                ).sum()
+            )
+            estimated_global_count = float(
+                global_sample_count * len(xyz) / max(1, len(score_xyz))
+            )
+            group_index, source_plane_id, support_count = -1, -1, 0
+            if evaluate_support:
+                group_index, source_plane_id, support_count = (
+                    best_support_group_for_plane(
+                        points,
+                        membership_cache_indices,
+                        membership_group_indices,
+                        source_plane_ids,
+                        remaining_mask,
+                        normal,
+                        offset,
+                        distance_threshold,
+                    )
+                )
+            combined_score = estimated_global_count
+            if consensus_guidance:
+                combined_score += float(support_score_weight) * support_count
+            key = (
+                float(combined_score),
+                estimated_global_count,
+                int(support_count if consensus_guidance else 0),
+                -int(source_plane_id),
+                -int(hypothesis_index),
+            )
+            if best_key is None or key > best_key:
+                best_key = key
+                best_model = (normal, offset)
+                best_group_index = int(group_index)
+                best_source_plane_id = int(source_plane_id)
+                best_support_count = int(support_count)
+
+        if best_model is None or best_key is None:
+            break
+        normal, offset = best_model
+        inliers = (
+            np.abs(np.sum(points[remaining] * normal[None], axis=1) + offset)
+            <= distance_threshold
+        )
+        if int(inliers.sum()) < int(min_inliers):
+            break
+        global_indices = remaining[inliers]
+        selected_support_indices = None
+        active_refit_weight = 0.0
+        if refit_guidance and best_group_index >= 0:
+            selected_support_indices = support_groups[best_group_index][
+                "support_indices"
+            ]
+            active_refit_weight = float(support_refit_weight)
+        normal, offset, refit_diagnostics = refit_global_inliers(
+            cache,
+            global_indices,
+            support_indices=selected_support_indices,
+            support_refit_weight=active_refit_weight,
+        )
+        refined = (
+            np.abs(np.sum(points[remaining] * normal[None], axis=1) + offset)
+            <= distance_threshold
+        )
+        global_indices = remaining[refined]
+        if len(global_indices) < int(min_inliers):
+            break
+        components = split_bounded_components(
+            points,
+            global_indices,
+            cluster_radius=cluster_radius,
+            min_component_points=min_component_points,
+            component_exact_max_points=component_exact_max_points,
+        )
+        accepted = components[: max(0, int(max_planes) - len(supports))]
+        supports.extend(accepted)
+        selections.append(
+            {
+                "proposal_source": "global_random",
+                "source_plane_id": int(best_source_plane_id),
+                "estimated_global_inliers": float(best_key[1]),
+                "active_learned_support_inliers": int(best_support_count),
+                "combined_score": float(best_key[0]),
+                "full_global_inliers": int(len(global_indices)),
+                "accepted_components": int(len(accepted)),
+                "accepted_component_points": [int(len(value)) for value in accepted],
+                "refit": refit_diagnostics,
+            }
+        )
+        removed = remaining[refined]
+        remaining_mask[removed] = False
+        remaining = remaining[~refined]
+
+    diagnostics = {
+        "proposal_source": "global_random",
+        "global_proposal_iterations": int(global_proposal_iterations),
+        "consensus_guidance": bool(consensus_guidance),
+        "refit_guidance": bool(refit_guidance),
+        "support_score_weight": float(
+            support_score_weight if consensus_guidance else 0.0
+        ),
+        "support_refit_weight": float(
+            support_refit_weight if refit_guidance else 0.0
+        ),
+        "support_groups": int(len(support_groups)),
+        "support_label_cache_memberships": int(len(membership_cache_indices)),
+        "output_components": int(len(supports)),
+        "remaining_points": int(len(remaining)),
         "selections": selections,
     }
     return supports, diagnostics
@@ -439,7 +821,19 @@ def main() -> int:
     parser.add_argument("--proposal_min_points", type=int, default=64)
     parser.add_argument("--proposal_min_inlier_ratio", type=float, default=0.60)
     parser.add_argument("--proposal_max_points", type=int, default=4000)
+    parser.add_argument(
+        "--mechanism_mode",
+        choices=sorted(MECHANISM_MODES),
+        default="proposal_consensus",
+        help=(
+            "Frozen support intervention. The default reproduces historical B4: "
+            "support proposals plus support-aware candidate scoring, followed by "
+            "a global DUSt3R-confidence refit."
+        ),
+    )
+    parser.add_argument("--global_proposal_iterations", type=int, default=300)
     parser.add_argument("--support_score_weight", type=float, default=1.0)
+    parser.add_argument("--support_refit_weight", type=float, default=1.0)
     parser.add_argument("--fallback_iterations", type=int, default=96)
     parser.add_argument("--min_inliers", type=int, default=2000)
     parser.add_argument("--cluster_radius", type=float, default=0.08)
@@ -451,6 +845,12 @@ def main() -> int:
     args = parser.parse_args()
     if not 0.0 <= args.proposal_min_inlier_ratio <= 1.0:
         parser.error("--proposal_min_inlier_ratio must be in [0,1]")
+    if args.global_proposal_iterations <= 0:
+        parser.error("--global_proposal_iterations must be positive")
+    if args.support_score_weight < 0:
+        parser.error("--support_score_weight must be non-negative")
+    if args.support_refit_weight < 0:
+        parser.error("--support_refit_weight must be non-negative")
     output_dir = Path(args.output_dir)
     if output_dir.exists():
         parser.error(f"refusing to overwrite existing output: {output_dir}")
@@ -458,44 +858,92 @@ def main() -> int:
     cache = load_global_cache(args.global_cloud_npz, args.min_conf)
     support = load_support_prediction(args.support_npz)
     started = time.perf_counter()
-    candidates, proposal_diagnostics = build_guided_hypotheses(
-        cache,
-        support,
-        distance_threshold=args.distance_threshold,
-        proposal_iterations=args.proposal_iterations,
-        proposal_min_points=args.proposal_min_points,
-        proposal_min_inlier_ratio=args.proposal_min_inlier_ratio,
-        proposal_max_points=args.proposal_max_points,
-        seed=args.seed,
-    )
-    supports, extraction_diagnostics = guided_sequential_plane_ransac(
-        cache,
-        candidates,
-        distance_threshold=args.distance_threshold,
-        min_inliers=args.min_inliers,
-        cluster_radius=args.cluster_radius,
-        min_component_points=args.min_component_points,
-        max_planes=args.max_planes,
-        seed=args.seed,
-        hypothesis_max_points=args.hypothesis_max_points,
-        component_exact_max_points=args.component_exact_max_points,
-        support_score_weight=args.support_score_weight,
-        fallback_iterations=args.fallback_iterations,
-    )
+    mechanism = MECHANISM_MODES[args.mechanism_mode]
+    if mechanism["proposal_guidance"]:
+        candidates, proposal_diagnostics = build_guided_hypotheses(
+            cache,
+            support,
+            distance_threshold=args.distance_threshold,
+            proposal_iterations=args.proposal_iterations,
+            proposal_min_points=args.proposal_min_points,
+            proposal_min_inlier_ratio=args.proposal_min_inlier_ratio,
+            proposal_max_points=args.proposal_max_points,
+            seed=args.seed,
+        )
+        supports, extraction_diagnostics = guided_sequential_plane_ransac(
+            cache,
+            candidates,
+            distance_threshold=args.distance_threshold,
+            min_inliers=args.min_inliers,
+            cluster_radius=args.cluster_radius,
+            min_component_points=args.min_component_points,
+            max_planes=args.max_planes,
+            seed=args.seed,
+            hypothesis_max_points=args.hypothesis_max_points,
+            component_exact_max_points=args.component_exact_max_points,
+            support_score_weight=(
+                args.support_score_weight
+                if mechanism["consensus_guidance"]
+                else 0.0
+            ),
+            fallback_iterations=args.fallback_iterations,
+            support_refit_weight=(
+                args.support_refit_weight if mechanism["refit_guidance"] else 0.0
+            ),
+        )
+    else:
+        support_groups, group_diagnostics = build_support_groups(cache, support)
+        candidates = []
+        proposal_diagnostics = {
+            **group_diagnostics,
+            "proposal_source": "global_random",
+            "accepted_hypotheses": None,
+        }
+        supports, extraction_diagnostics = global_mechanism_plane_ransac(
+            cache,
+            support_groups,
+            distance_threshold=args.distance_threshold,
+            global_proposal_iterations=args.global_proposal_iterations,
+            min_inliers=args.min_inliers,
+            cluster_radius=args.cluster_radius,
+            min_component_points=args.min_component_points,
+            max_planes=args.max_planes,
+            seed=args.seed,
+            hypothesis_max_points=args.hypothesis_max_points,
+            component_exact_max_points=args.component_exact_max_points,
+            consensus_guidance=mechanism["consensus_guidance"],
+            refit_guidance=mechanism["refit_guidance"],
+            support_score_weight=args.support_score_weight,
+            support_refit_weight=args.support_refit_weight,
+        )
     runtime = time.perf_counter() - started
     diagnostics = {
+        "mechanism": {
+            "schema_version": 1,
+            "mode": args.mechanism_mode,
+            **mechanism,
+            "shared_refit_weighting": "dust3r_confidence",
+            "support_refit_rule": (
+                "selected_label_inliers_receive_multiplier_1_plus_weight"
+                if mechanism["refit_guidance"]
+                else "disabled"
+            ),
+            "historical_b4_equivalent": args.mechanism_mode
+            == "proposal_consensus",
+        },
         "proposal": proposal_diagnostics,
         "extraction": extraction_diagnostics,
         "candidates": serializable_candidates(candidates),
     }
     config = vars(args).copy()
     config["diagnostics"] = diagnostics
+    method = METHOD_BY_MODE[args.mechanism_mode]
     row = save_result(
         output_dir,
         args.scene_key,
         cache,
         supports,
-        METHOD,
+        method,
         runtime,
         config,
     )
@@ -506,6 +954,7 @@ def main() -> int:
         "global_cloud_sha256": file_sha256(args.global_cloud_npz),
         "support_npz": str(Path(args.support_npz)),
         "support_npz_sha256": file_sha256(args.support_npz),
+        "mechanism": diagnostics["mechanism"],
         "diagnostics": diagnostics,
     }
     manifest_path = output_dir / "guided_plane_ransac_manifest.json"
