@@ -3855,10 +3855,12 @@ Cache-only O1 was CPU/runtime bound (538.12-second mean) with roughly
 100--175 MB child working sets. No OOM occurred; the RTX 4060 Ti 8 GB remains
 adequate for these experiments.
 
-Current HEAD before publishing this package is
-`06e155a67b502370f3badfa71f30c4dbfd302f6e`. The worktree has extensive
-unrelated user changes and outputs; preserve them. Only the files listed
-above plus this handoff and the experiment plan belong to this package.
+Published implementation commits on `codex/bounded-support-head` are
+`a464d1f` (`Complete main component ablation table`) and `63eb782` (`Fix
+Windows final result rendering`). The branch was pushed through `63eb782` on
+2026-07-22. The worktree has extensive unrelated user changes and outputs;
+preserve them. Only the files listed above plus this handoff, the experiment
+plan, and the separately tested visualization fix belong to these commits.
 
 Next exact package: run the remaining provenance/conflict controls and build
 the failure gallery centred on `scene_00187` plus the largest positive and
