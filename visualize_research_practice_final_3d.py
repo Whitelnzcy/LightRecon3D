@@ -175,7 +175,8 @@ def resolve_artifact(record: Any, execution_dir: Path, label: str) -> Path:
         raise ValueError(f"artifact {label} must contain a path")
     path = Path(raw_path)
     if not path.is_absolute():
-        path = execution_dir / path
+        repository_relative = Path.cwd() / path
+        path = repository_relative if repository_relative.is_file() else execution_dir / path
     return path
 
 
@@ -251,15 +252,17 @@ def canonical_frame(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     sample = points[stable_sample_indices(len(points), min(100_000, len(points)))]
     center = np.median(sample.astype(np.float64), axis=0)
     centered = sample.astype(np.float64) - center
-    covariance = centered.T @ centered / max(len(centered) - 1, 1)
-    values, vectors = np.linalg.eigh(covariance)
-    basis = vectors[:, np.argsort(values)[::-1]]
-    for axis in range(3):
-        column = basis[:, axis]
-        pivot = int(np.argmax(np.abs(column)))
-        if column[pivot] < 0:
-            basis[:, axis] *= -1
-    if np.linalg.det(basis) < 0:
+    # A variance-ranked global-axis frame avoids platform-specific LAPACK
+    # failures while keeping every method on the exact same auditable camera.
+    variances = np.mean(centered * centered, axis=0)
+    order = np.argsort(variances)[::-1]
+    basis = np.eye(3, dtype=np.float64)[:, order]
+    determinant = (
+        basis[0, 0] * (basis[1, 1] * basis[2, 2] - basis[1, 2] * basis[2, 1])
+        - basis[0, 1] * (basis[1, 0] * basis[2, 2] - basis[1, 2] * basis[2, 0])
+        + basis[0, 2] * (basis[1, 0] * basis[2, 1] - basis[1, 1] * basis[2, 0])
+    )
+    if determinant < 0:
         basis[:, 2] *= -1
     return center.astype(np.float64), basis.astype(np.float64)
 
@@ -288,9 +291,24 @@ def project_values(
     basis: np.ndarray,
     view: CameraView,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    canonical = (points.astype(np.float64) - center) @ basis
+    centered = points.astype(np.float64) - center
+    canonical = np.column_stack(
+        tuple(
+            centered[:, 0] * basis[0, axis]
+            + centered[:, 1] * basis[1, axis]
+            + centered[:, 2] * basis[2, axis]
+            for axis in range(3)
+        )
+    )
     right, up, forward = view_axes(view)
-    return canonical @ right, canonical @ up, canonical @ forward
+    def dot(vector: np.ndarray) -> np.ndarray:
+        return (
+            canonical[:, 0] * vector[0]
+            + canonical[:, 1] * vector[1]
+            + canonical[:, 2] * vector[2]
+        )
+
+    return dot(right), dot(up), dot(forward)
 
 
 def robust_extent(values: np.ndarray) -> tuple[float, float]:
@@ -769,7 +787,7 @@ def run_visualization(
             "panel_height": height,
             "max_points": max_points,
             "point_radius": point_radius,
-            "projection": "orthographic_pca_canonical",
+            "projection": "orthographic_variance_ranked_global_axes",
             "occlusion": "nearest_depth_z_buffer",
         },
         "contact_sheet_png": str(contact_sheet),
