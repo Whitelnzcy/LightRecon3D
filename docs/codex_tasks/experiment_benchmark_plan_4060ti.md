@@ -815,3 +815,71 @@ seed 1: local_outputs/guided_ransac_mechanism_17scene_seed1_20260719_v1/
 seed 2: local_outputs/guided_ransac_mechanism_17scene_seed2_20260719_v3/
 statistics: local_outputs/guided_ransac_mechanism_statistics_17scene_seeds012_20260719_v1/
 ```
+
+## 17. Main B0--B5/O1/O2 component table: 2026-07-22
+
+The remaining seed-0 Phase-2 component rows were completed on the same 17
+immutable local caches. The canonical recovery verifies every reused artifact
+checksum, passed 17/17 scenes with zero failed items, and produced 119 metric
+rows (17 scenes x 7 evaluated quality rows). B5 shares B4's quality row and
+adds separately verified exact-registry, bounded-component, provenance, and
+structural-line contracts; all four checks passed on 17/17 scenes. Structural
+line exports contain 3,100 lines in total, with 73--289 per scene.
+
+| Row | Mean Pairwise F1 | Median | Mean runtime, s |
+|---|---:|---:|---:|
+| B0 global RANSAC | 0.636273 | 0.568900 | 101.43 |
+| B1 Stage1 direct SVD | 0.127858 | 0.123777 | not isolated |
+| B2 Stage2 local refit | 0.133097 | 0.131549 | not isolated |
+| B3 frozen manual merge | 0.721490 | 0.727245 | not isolated |
+| B4 guided RANSAC | 0.706568 | 0.658663 | 126.51 |
+| O1 GT support, frozen geometry, seed 0 | 0.719581 | 0.710929 | 538.12 |
+| O2 GT identity | 1.000000 | 1.000000 | evaluator identity row |
+
+The six predeclared paired Pairwise-F1 contrasts use 10,000 scene bootstrap
+resamples with seed 20260722. Holm correction covers this six-contrast family.
+
+| Contrast | Mean delta | Bootstrap 95% CI | W/T/L | Holm sign-test p |
+|---|---:|---:|---:|---:|
+| B2 - B1 | +0.005239 | [+0.002843, +0.008174] | 15/2/0 | 0.000244 |
+| B3 - B2 | +0.588393 | [+0.516961, +0.660280] | 17/0/0 | 0.000092 |
+| B4 - B0 | +0.070295 | [+0.038396, +0.106903] | 16/0/1 | 0.000824 |
+| B4 - B3 | -0.014922 | [-0.091005, +0.058917] | 8/0/9 | 1.000000 |
+| O1 - B4 | +0.013013 | [+0.006234, +0.021602] | 16/0/1 | 0.000824 |
+| O2 - O1 | +0.280419 | [+0.221886, +0.338514] | 17/0/0 | 0.000092 |
+
+Interpretation is deliberately bounded. B4 robustly improves over geometry-
+only B0. O1 is only +0.0130 above B4 under frozen geometry, so predicted
+support is already close to the gain obtainable from perfect support labels;
+the much larger O2-O1 gap shows that stable identity/association remains the
+larger unsolved factor. B4 does not beat B3 on mean Pairwise F1. Instead, B4
+trades some recall/IoU for a cleaner instance set: mean plane precision rises
+from 0.2882 to 0.5582 and fragmentation excess falls from 4.7059 to 1.2941.
+Do not claim universal superiority over manual merging from this internal
+table.
+
+The direct B1/B2 rows are intentionally fragmented support baselines. Local
+refit gives a small consistent gain, but association in B3 accounts for the
+large recovery. This supports keeping cross-view identity/association, not
+pair-local threshold tuning, as the next architectural target.
+
+Canonical evidence:
+
+```text
+execution, aggregate JSON/CSV, and B5 checks:
+  local_outputs/mca17_s0_final_20260722_v1/
+paired statistical audit:
+  local_outputs/mca17_s0_statistics_20260722_v1/
+```
+
+The run used `E:\anaconda\envs\ai\python.exe`. It was cache-only and primarily
+CPU-bound; each O1 child used roughly 100--175 MB working memory. The RTX 4060
+Ti 8 GB remains adequate for this package. O1 is slow (538.12 seconds mean)
+because perfect support still executes the frozen RANSAC geometry rather than
+substituting GT identity.
+
+Next exact package: complete provenance/conflict controls and the qualitative
+failure gallery centred on `scene_00187`, then freeze the internal decision
+table. The official-split canary remains blocked on obtaining the official
+validation/test scenes; do not treat these 17 training-range scenes as a
+public benchmark.

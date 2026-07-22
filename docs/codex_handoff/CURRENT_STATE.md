@@ -3770,3 +3770,99 @@ compatibility and do not promote `all`.
 Next exact package: complete the remaining B0-B5/O1/O2 rows, provenance and
 conflict controls, and the `scene_00187` failure gallery. Then freeze the
 internal decision table before the official-split canary.
+
+## 2026-07-22 completed 17-scene B0--B5/O1/O2 component table
+
+The remaining Phase-2 seed-0 component rows are complete on the canonical
+immutable local 17-scene caches. New executors adapt point-aligned GT into an
+exact support-guidance registry, generate the missing B1 Stage1-direct row,
+run the O1 GT-support/frozen-geometry row, verify the B5 contract, checkpoint
+every stage, and refuse output overwrite. Internal output paths use compact
+numeric directories because descriptive Stage3 filenames otherwise exceed
+the legacy Windows 260-character path limit. The initial long-path run is
+retained; it failed before expensive computation on 16 scenes and did not
+overwrite any artifact.
+
+Canonical recovery:
+
+```text
+local_outputs/mca17_s0_final_20260722_v1/
+17/17 passed scenes
+0 failed scenes
+119 metric rows (17 x 7 evaluated quality rows)
+31.178-second checksum-validated final consolidation
+
+local_outputs/mca17_s0_statistics_20260722_v1/
+10,000 scene bootstrap resamples, seed 20260722
+six planned Pairwise-F1 contrasts with Holm correction
+```
+
+Mean/median Pairwise F1:
+
+| Row | Mean | Median |
+|---|---:|---:|
+| B0 global RANSAC | 0.636273 | 0.568900 |
+| B1 Stage1 direct SVD | 0.127858 | 0.123777 |
+| B2 Stage2 local refit | 0.133097 | 0.131549 |
+| B3 frozen manual merge | 0.721490 | 0.727245 |
+| B4 guided RANSAC | 0.706568 | 0.658663 |
+| O1 GT support, frozen geometry, seed 0 | 0.719581 | 0.710929 |
+| O2 GT identity | 1.000000 | 1.000000 |
+
+B4-B0 is +0.070295 mean F1, wins 16/17 scenes, and has bootstrap
+95% interval [+0.038396, +0.106903] with Holm-adjusted sign p=0.000824.
+O1-B4 is only +0.013013 with interval [+0.006234, +0.021602], so learned
+support is close to perfect-support performance under frozen geometry. The
+O2-O1 gap is +0.280419, identifying identity/association as the larger
+remaining ceiling.
+
+B4 does not dominate B3: B4-B3 is -0.014922 mean F1, interval
+[-0.091005, +0.058917], and W/T/L 8/0/9. B4 instead produces cleaner, less
+fragmented instances: mean precision 0.5582 versus 0.2882 and fragmentation
+excess 1.2941 versus 4.7059. Report this trade-off and do not claim universal
+superiority over manual merging. B2-B1 is a small +0.005239, whereas B3-B2 is
++0.588393; association, not local refit alone, is decisive.
+
+B5 aliases B4 for quality metrics and adds system-output contracts. For all
+17 scenes, prediction checksums, exact registry, bounded-component
+assignments, and structural lines were present. The structural-line total is
+3,100, ranging from 73 to 289 per scene.
+
+Added files:
+
+```text
+build_gt_support_guidance.py
+execute_main_component_ablation.py
+analyze_main_component_ablation.py
+tests/test_build_gt_support_guidance.py
+tests/test_execute_main_component_ablation.py
+tests/test_analyze_main_component_ablation.py
+```
+
+Validation in `E:\anaconda\envs\ai\python.exe`:
+
+```text
+py_compile for the three new scripts: passed
+GT-support adapter tests: 2 passed
+component executor tests: 2 passed
+paired-statistics tests: 2 passed
+total new focused tests: 6 passed
+```
+
+The `ai` environment has no pytest; tests were run with `unittest discover -s
+tests` to avoid the environment's unrelated Ultralytics `tests` package.
+Cache-only O1 was CPU/runtime bound (538.12-second mean) with roughly
+100--175 MB child working sets. No OOM occurred; the RTX 4060 Ti 8 GB remains
+adequate for these experiments.
+
+Current HEAD before publishing this package is
+`06e155a67b502370f3badfa71f30c4dbfd302f6e`. The worktree has extensive
+unrelated user changes and outputs; preserve them. Only the files listed
+above plus this handoff and the experiment plan belong to this package.
+
+Next exact package: run the remaining provenance/conflict controls and build
+the failure gallery centred on `scene_00187` plus the largest positive and
+slowest scenes. Then freeze the internal decision table before an official-
+split canary. Official validation/test data are not present locally, and the
+17 current scenes remain an internal development set rather than a public
+benchmark.
