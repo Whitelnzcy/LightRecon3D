@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "name": "research_practice_three_group_identical_cache_smoke",
+  "minimum_valid_items": 3,
+  "min_views": 5,
+  "check_image_files": true,
+  "pattern": "*_learned_region_merge_full_pointcloud_editable_planes_data.npz",
+  "items": [
+    {
+      "id": "group_000_pairs_10",
+      "input_dir": "/gemini/data-1/lightrecon_runs/stage3_val_showcase_v1/group_000_pairs_10/stage2_merge",
+      "expected_scene_name": "scene_00180",
+      "expected_pair_group": "/gemini/data-1/Structured3D/scene_00180/2D_rendering/445895/perspective/empty",
+      "global_cloud_cache": "/gemini/data-1/lightrecon_runs/plane_feedback_p0_scene00180_20260714_v3/scene_00180__gemini_data-1_Structured3D_scene_00180_2D_rendering_445895_perspective_empty_dust3r_global_cloud_cache.npz",
+      "global_cloud_sha256": "77b745a52bf28d170977f9ffd14da79c11df5e7940c886b4f36e69f0daf32101"
+    },
+    {
+      "id": "group_001_pairs_10",
+      "input_dir": "/gemini/data-1/lightrecon_runs/stage3_val_showcase_v1/group_001_pairs_10/stage2_merge",
+      "expected_scene_name": "scene_00180",
+      "expected_pair_group": "/gemini/data-1/Structured3D/scene_00180/2D_rendering/447071/perspective/empty"
+    },
+    {
+      "id": "group_002_pairs_10",
+      "input_dir": "/gemini/data-1/lightrecon_runs/stage3_val_showcase_v1/group_002_pairs_10/stage2_merge",
+      "expected_scene_name": "scene_00181",
+      "expected_pair_group": "/gemini/data-1/Structured3D/scene_00181/2D_rendering/69758/perspective/empty"
+    }
+  ]
+}

@@ -4,19 +4,59 @@ import gc
 import glob
 import json
 import random
+import time
 from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
 from models.multiscale_plane_mask_head import MultiScalePlaneMaskHead
+from stage1_fast_assignment import solve_rectangular_assignment
+import train_stage1_clean_baseline as clean_stage1_baseline
 from train_stage1_clean_baseline import sample_loss_and_metrics, set_seed
 from train_stage1_clean_pair_baseline import combine_view_rows, slice_output
 from train_stage1_plane_masks import select_plane_ids
 
 
 STAGE_NAMES = ("encoder", "shallow", "middle", "deep")
+
+
+def fast_match_queries(mask_logits, targets, args, existence_logits=None):
+    """Exact polynomial-time replacement for the exhaustive subset matcher."""
+
+    if targets.shape[0] == 0:
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+    pred_prob = mask_logits.sigmoid()
+    query_count = mask_logits.shape[0]
+    target_count = targets.shape[0]
+    logits_flat = mask_logits.flatten(1)[:, None].expand(query_count, target_count, -1)
+    targets_flat = targets.flatten(1)[None].expand(query_count, target_count, -1)
+    bce = F.binary_cross_entropy_with_logits(
+        logits_flat,
+        targets_flat,
+        reduction="none",
+    ).mean(dim=-1)
+    intersection = torch.einsum("qhw,thw->qt", pred_prob, targets)
+    denominator = pred_prob.sum(dim=(1, 2))[:, None] + targets.sum(dim=(1, 2))[None]
+    dice = 1.0 - (2.0 * intersection + 1e-6) / (denominator + 1e-6)
+    cost = args.match_bce_weight * bce + args.match_dice_weight * dice
+    existence_weight = float(getattr(args, "match_existence_weight", 0.0))
+    if existence_logits is not None and existence_weight > 0.0:
+        existence_cost = F.binary_cross_entropy_with_logits(
+            existence_logits,
+            torch.ones_like(existence_logits),
+            reduction="none",
+        )
+        cost = cost + existence_weight * existence_cost[:, None]
+    return solve_rectangular_assignment(cost.detach().float().cpu().numpy())
+
+
+# sample_loss_and_metrics resolves match_queries from its defining module at
+# runtime.  Patch only this training entry point so other user experiments keep
+# their existing behavior until they opt in explicitly.
+clean_stage1_baseline.match_queries = fast_match_queries
 
 
 def parse_args():
@@ -495,6 +535,9 @@ def run_epoch(head, samples, optimizer, device, args, train, epoch, sample_weigh
         )
     )
     auxiliary_args = aux_args(args)
+    epoch_started = time.perf_counter()
+    interval_started = epoch_started
+    interval_start_step = 0
 
     for step, items in enumerate(batches, start=1):
         features1 = cat_feature_batch(items, "features1", device)
@@ -588,6 +631,12 @@ def run_epoch(head, samples, optimizer, device, args, train, epoch, sample_weigh
 
         rows.append(row)
         if step == 1 or step % args.log_every == 0 or step == len(batches):
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            now = time.perf_counter()
+            interval_steps = step - interval_start_step
+            step_seconds = (now - interval_started) / max(interval_steps, 1)
+            eta_minutes = step_seconds * (len(batches) - step) / 60.0
             print(
                 f"[{'Train' if train else 'Val'}] {step}/{len(batches)} "
                 f"loss={row['loss']:.4f} "
@@ -597,14 +646,24 @@ def run_epoch(head, samples, optimizer, device, args, train, epoch, sample_weigh
                 f"v2={row['view2_mean_iou']:.3f} "
                 f"leak={row['leakage_rate']:.3f} "
                 f"dup={row.get('ownership_duplicate_gt_rate', 0.0):.3f} "
-                f"merge={row.get('ownership_merge_query_rate', 0.0):.3f}",
+                f"merge={row.get('ownership_merge_query_rate', 0.0):.3f} "
+                f"step_s={step_seconds:.2f} eta_min={eta_minutes:.1f}",
                 flush=True,
             )
+            interval_started = now
+            interval_start_step = step
 
     totals = defaultdict(float)
     for row in rows:
         for key, value in row.items():
             totals[key] += float(value)
+    elapsed = time.perf_counter() - epoch_started
+    print(
+        f"[{'Train' if train else 'Val'} timing] steps={len(batches)} "
+        f"elapsed_min={elapsed / 60.0:.1f} "
+        f"mean_step_s={elapsed / max(len(batches), 1):.2f}",
+        flush=True,
+    )
     return {key: value / max(len(rows), 1) for key, value in totals.items()}
 
 
