@@ -23,6 +23,7 @@ from typing import Any
 import requests
 from PIL import Image
 
+import execute_stable_official_archive_acquisition_e9 as e9_executor
 from execute_stable_official_archive_acquisition_e9 import (
     canonical_members,
     hard_identity,
@@ -399,12 +400,82 @@ def source_mapping_and_manifest(
     return selected, mapping
 
 
+def robust_probe_range(
+    _session: requests.Session, identity: dict, start: int, end: int
+) -> bytes:
+    """Same-source Range reader used only by the E9 ZIP identity parser.
+
+    The official endpoint intermittently closes keep-alive connections before
+    returning a small tail range.  A fresh short-lived connection, identity
+    encoding, and bounded retries do not alter any frozen identity rule.
+    """
+    expected_content_range = (
+        f"bytes {start}-{end}/{identity['content_length']}"
+    )
+    last_error: Exception | None = None
+    for attempt in range(1, 11):
+        response = None
+        transient = requests.Session()
+        transient.headers.update(
+            {
+                "User-Agent": "LightRecon3D-E11-range-probe/1.0",
+                "Accept-Encoding": "identity",
+                "Connection": "close",
+            }
+        )
+        try:
+            response = transient.get(
+                identity["requested_url"],
+                headers={"Range": f"bytes={start}-{end}"},
+                stream=True,
+                allow_redirects=True,
+                timeout=(30, 180),
+            )
+            data = response.content
+            actual = response.headers.get("Content-Range", "")
+            if response.status_code != 206 or actual != expected_content_range:
+                raise requests.RequestException(
+                    f"unexpected Range response HTTP={response.status_code} "
+                    f"Content-Range={actual!r}"
+                )
+            if len(data) != end - start + 1:
+                raise requests.RequestException(
+                    f"range response length {len(data)} != {end-start+1}"
+                )
+            return data
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < 10:
+                time.sleep(min(30, 2**attempt))
+        finally:
+            if response is not None:
+                response.close()
+            transient.close()
+    raise E11Stop(
+        "Paused_Resumable",
+        f"same-source robust Range read interrupted after retries: {last_error}",
+    )
+
+
 def fresh_remote_verification(
     selected: list[dict], frozen: dict[str, dict]
 ) -> dict[str, dict]:
     names = sorted({row["archive_name"] for row in selected}) + [A_NAME]
-    receipts: dict[str, dict] = {}
+    checkpoint_path = OUT / "remote_identity_verification.json"
+    checkpoint = load_json(checkpoint_path) if checkpoint_path.exists() else {}
+    receipts: dict[str, dict] = {
+        name: row
+        for name, row in checkpoint.get("objects", {}).items()
+        if name in names and hard_identity(row) == hard_identity(frozen[name])
+    }
+    e9_executor.get_range = robust_probe_range
     for index, name in enumerate(names, 1):
+        if name in receipts:
+            log(
+                f"remote_recheck_reuse {index}/{len(names)} archive={name} "
+                "hard_identity=matched"
+            )
+            continue
         log(f"remote_recheck_start {index}/{len(names)} archive={name}")
         try:
             receipt, _members = probe_archive(name, frozen[name]["requested_url"])
@@ -1053,4 +1124,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
