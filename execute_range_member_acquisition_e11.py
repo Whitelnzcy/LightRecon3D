@@ -460,11 +460,73 @@ def robust_probe_range(
                     response.close()
                 transient.close()
         else:
-            raise E11Stop(
-                "Paused_Resumable",
-                "same-source chunked Range read interrupted after retries: "
-                f"{cursor}-{chunk_end}: {last_error}",
-            )
+            if chunk_end == identity["content_length"] - 1:
+                suffix_size = min(identity["content_length"], 1024 * 1024)
+                suffix_start = identity["content_length"] - suffix_size
+                suffix_expected = (
+                    f"bytes {suffix_start}-{chunk_end}/"
+                    f"{identity['content_length']}"
+                )
+                suffix_error: Exception | None = None
+                for suffix_attempt in range(1, 7):
+                    response = None
+                    transient = requests.Session()
+                    transient.headers.update(
+                        {
+                            "User-Agent": "LightRecon3D-E11-range-probe/1.0",
+                            "Accept-Encoding": "identity",
+                            "Connection": "close",
+                        }
+                    )
+                    try:
+                        response = transient.get(
+                            identity["requested_url"],
+                            headers={"Range": f"bytes=-{suffix_size}"},
+                            stream=True,
+                            allow_redirects=True,
+                            timeout=(30, 120),
+                        )
+                        suffix = response.content
+                        actual = response.headers.get("Content-Range", "")
+                        if (
+                            response.status_code != 206
+                            or actual != suffix_expected
+                            or len(suffix) != suffix_size
+                        ):
+                            raise requests.RequestException(
+                                "unexpected suffix Range response "
+                                f"HTTP={response.status_code} "
+                                f"Content-Range={actual!r} bytes={len(suffix)}"
+                            )
+                        relative = cursor - suffix_start
+                        data = suffix[relative : relative + chunk_end - cursor + 1]
+                        if len(data) != chunk_end - cursor + 1:
+                            raise requests.RequestException(
+                                "suffix slice length mismatch"
+                            )
+                        chunks.append(data)
+                        break
+                    except requests.RequestException as exc:
+                        suffix_error = exc
+                        if suffix_attempt < 6:
+                            time.sleep(min(16, 2**suffix_attempt))
+                    finally:
+                        if response is not None:
+                            response.close()
+                        transient.close()
+                else:
+                    raise E11Stop(
+                        "Paused_Resumable",
+                        "same-source explicit and suffix EOF Range reads "
+                        f"interrupted: {cursor}-{chunk_end}: "
+                        f"explicit={last_error}; suffix={suffix_error}",
+                    )
+            else:
+                raise E11Stop(
+                    "Paused_Resumable",
+                    "same-source chunked Range read interrupted after retries: "
+                    f"{cursor}-{chunk_end}: {last_error}",
+                )
         cursor = chunk_end + 1
     result = b"".join(chunks)
     if len(result) != total_requested:
