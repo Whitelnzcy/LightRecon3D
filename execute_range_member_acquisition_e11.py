@@ -876,7 +876,11 @@ def download_annotation_archive(frozen: dict) -> tuple[Path, dict]:
                 for info in infos
             ],
         )
-    central_hash = sha256_bytes(canonical_json(canonical))
+    # The frozen E9 identity hashes the canonical member rows with E9's
+    # byte-level JSON serialization (field insertion order preserved).
+    # E11's generic canonical_json sorts object keys and is intentionally not
+    # interchangeable with that already-frozen identity representation.
+    central_hash = sha256_bytes(e9_executor.canonical_json(canonical))
     if central_hash != frozen["central_directory_canonical_sha256"]:
         raise E11Stop(
             "Blocked_Remote_Object_Changed",

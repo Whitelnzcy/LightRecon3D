@@ -3,8 +3,10 @@ import unittest
 import zlib
 from pathlib import Path
 
+import execute_stable_official_archive_acquisition_e9 as e9_executor
 from execute_range_member_acquisition_e11 import (
     ALLOWED_VERDICTS,
+    canonical_members,
     decode_local_name,
     scene_from_path,
     sha256_bytes,
@@ -37,7 +39,23 @@ class E11ExecutionTests(unittest.TestCase):
         self.assertIn("Paused_Resumable", ALLOWED_VERDICTS)
         self.assertIn("Blocked_Source_Mapping", ALLOWED_VERDICTS)
 
+    def test_frozen_central_directory_uses_e9_serialization(self):
+        rows = canonical_members(
+            "a.zip",
+            [{
+                "path": "Structured3D/scene_00001/a.png",
+                "compressed_size": 1,
+                "uncompressed_size": 2,
+                "crc32": "12345678",
+                "compression_method": 8,
+                "local_header_offset": 3,
+            }],
+        )
+        self.assertEqual(
+            sha256_bytes(e9_executor.canonical_json(rows)),
+            "3cd8464b5e303c16ae4a85af1063192ebe64a1fa8c1e780c263aad86a692bcc8",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
