@@ -409,52 +409,67 @@ def robust_probe_range(
     returning a small tail range.  A fresh short-lived connection, identity
     encoding, and bounded retries do not alter any frozen identity rule.
     """
-    expected_content_range = (
-        f"bytes {start}-{end}/{identity['content_length']}"
-    )
-    last_error: Exception | None = None
-    for attempt in range(1, 11):
-        response = None
-        transient = requests.Session()
-        transient.headers.update(
-            {
-                "User-Agent": "LightRecon3D-E11-range-probe/1.0",
-                "Accept-Encoding": "identity",
-                "Connection": "close",
-            }
+    total_requested = end - start + 1
+    chunk_size = 8192 if total_requested <= 65577 else 1024 * 1024
+    chunks: list[bytes] = []
+    cursor = start
+    while cursor <= end:
+        chunk_end = min(end, cursor + chunk_size - 1)
+        expected_content_range = (
+            f"bytes {cursor}-{chunk_end}/{identity['content_length']}"
         )
-        try:
-            response = transient.get(
-                identity["requested_url"],
-                headers={"Range": f"bytes={start}-{end}"},
-                stream=True,
-                allow_redirects=True,
-                timeout=(30, 180),
+        last_error: Exception | None = None
+        for attempt in range(1, 7):
+            response = None
+            transient = requests.Session()
+            transient.headers.update(
+                {
+                    "User-Agent": "LightRecon3D-E11-range-probe/1.0",
+                    "Accept-Encoding": "identity",
+                    "Connection": "close",
+                }
             )
-            data = response.content
-            actual = response.headers.get("Content-Range", "")
-            if response.status_code != 206 or actual != expected_content_range:
-                raise requests.RequestException(
-                    f"unexpected Range response HTTP={response.status_code} "
-                    f"Content-Range={actual!r}"
+            try:
+                response = transient.get(
+                    identity["requested_url"],
+                    headers={"Range": f"bytes={cursor}-{chunk_end}"},
+                    stream=True,
+                    allow_redirects=True,
+                    timeout=(30, 90),
                 )
-            if len(data) != end - start + 1:
-                raise requests.RequestException(
-                    f"range response length {len(data)} != {end-start+1}"
-                )
-            return data
-        except requests.RequestException as exc:
-            last_error = exc
-            if attempt < 10:
-                time.sleep(min(30, 2**attempt))
-        finally:
-            if response is not None:
-                response.close()
-            transient.close()
-    raise E11Stop(
-        "Paused_Resumable",
-        f"same-source robust Range read interrupted after retries: {last_error}",
-    )
+                data = response.content
+                actual = response.headers.get("Content-Range", "")
+                if response.status_code != 206 or actual != expected_content_range:
+                    raise requests.RequestException(
+                        f"unexpected Range response HTTP={response.status_code} "
+                        f"Content-Range={actual!r}"
+                    )
+                if len(data) != chunk_end - cursor + 1:
+                    raise requests.RequestException(
+                        f"range response length {len(data)} "
+                        f"!= {chunk_end-cursor+1}"
+                    )
+                chunks.append(data)
+                break
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < 6:
+                    time.sleep(min(16, 2**attempt))
+            finally:
+                if response is not None:
+                    response.close()
+                transient.close()
+        else:
+            raise E11Stop(
+                "Paused_Resumable",
+                "same-source chunked Range read interrupted after retries: "
+                f"{cursor}-{chunk_end}: {last_error}",
+            )
+        cursor = chunk_end + 1
+    result = b"".join(chunks)
+    if len(result) != total_requested:
+        raise E11Stop("Invalid", "chunked Range assembly length mismatch")
+    return result
 
 
 def fresh_remote_verification(
