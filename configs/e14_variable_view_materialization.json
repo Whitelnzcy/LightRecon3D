@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "registration_id": "E14_PREREG_variable_view_clean_input_materialization_20260729_v1",
+  "view_selection": {
+    "file_name": "rgb_rawlight.png",
+    "minimum_views": 4,
+    "maximum_views": 5,
+    "room_tie_break": "normalized_relative_path_ascending",
+    "image_order": "normalized_relative_path_ascending",
+    "cross_room_fill": false
+  },
+  "dust3r": {
+    "image_size": 512,
+    "scene_graph": "complete",
+    "symmetrize": true,
+    "batch_size": 1,
+    "alignment_init": "mst",
+    "alignment_niter": 300,
+    "alignment_schedule": "cosine",
+    "alignment_lr": 0.01,
+    "precision": "float32"
+  },
+  "stage1": {
+    "image_size": 512,
+    "mask_height": 128,
+    "mask_width": 128,
+    "pair_strategy": "all_unordered_symmetrized_outputs",
+    "precision": "float32",
+    "stored_probability_precision": "float16"
+  },
+  "determinism": {
+    "seed": 20260729,
+    "torch_deterministic_algorithms": false,
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": true
+  },
+  "schemas": {
+    "global_cache": "lightrecon3d_e14_global_cache_v1",
+    "direct_support": "lightrecon3d_e14_direct_support_v1"
+  }
+}
