@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "scene_count": 128,
+  "five_view_scene_count": 124,
+  "four_view_scene_count": 4,
+  "selected_view_count": 636,
+  "rgb_hashes_verified": 636,
+  "global_cache_hashes_verified": 128,
+  "direct_support_hashes_verified": 128,
+  "view_manifest_sha256": "e853b5d058a37f0e34ae684af6c2538d8b93d6240e9cb1d8d5e6f9bb89e558bc",
+  "execution_state_sha256": "3addb7fae63fc9d120ba81788dfe101df361318ab082e297ba4a6fe31d3f1921",
+  "verified_utc": "2026-07-30T03:40:05.219517+00:00"
+}

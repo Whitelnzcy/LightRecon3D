@@ -9,6 +9,8 @@
 
 # 2. 忽略 Python 运行缓存 (保持仓库干净)
 __pycache__/
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/development_smoke_predictions/
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/development_gt_smoke/*.npz
 *.pyc
 *.pyo
 .pytest_cache/

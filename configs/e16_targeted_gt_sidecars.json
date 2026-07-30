@@ -1,0 +1,25 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "upstream_repository": "E:\\Study\\code\\LightRecon3D",
+  "e14_view_manifest": "results\\variable_view_clean_input_materialization_e14_20260729_v1\\view_selection_manifest_e14.json",
+  "e14_execution_state": "results\\variable_view_clean_input_materialization_e14_20260729_v1\\execution_state_e14.json",
+  "e11_source_mapping": "results\\range_member_acquisition_e11_20260729_v1\\source_domain_mapping.json",
+  "e9_result_directory": "results\\stable_official_archive_acquisition_e9_20260729_v1",
+  "global_cache_root": "F:\\Structured3D_clean_e11\\global_cache_e14",
+  "direct_support_root": "F:\\Structured3D_clean_e11\\direct_support_e14",
+  "raw_rgb_root": "F:\\Structured3D_clean_e11\\raw_rgb",
+  "sealed_sidecar_root": "F:\\Structured3D_clean_e11\\sealed_view_gt_e16",
+  "expected_scene_count": 128,
+  "expected_five_view_scenes": 124,
+  "expected_four_view_scenes": 4,
+  "expected_selected_views": 636,
+  "expected_sidecar_members": 1272,
+  "sidecar_names": [
+    "layout.json",
+    "camera_pose.txt"
+  ],
+  "range_retry_count": 5,
+  "download_workers": 8,
+  "range_connect_timeout_seconds": 30,
+  "range_read_timeout_seconds": 180
+}

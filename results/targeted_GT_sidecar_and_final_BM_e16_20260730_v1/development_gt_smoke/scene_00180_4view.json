@@ -1,0 +1,26 @@
+{
+  "output_npz": "results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\development_gt_smoke\\scene_00180_4view.npz",
+  "output_ply": "",
+  "output_metric_ply": "",
+  "source_global_cloud_npz": "E:\\Study\\code\\LightRecon3D\\results\\variable_view_clean_input_materialization_e14_20260729_v1\\historical_smoke\\global\\scene_00180_smoke_4view\\global_cache_e14.npz",
+  "source_global_cloud_sha256": "92157c560a339d29056c0ddf35a6dcc2449ec7224b9127a4b3cd51cc35a49266",
+  "points": 589824,
+  "labeled_points": 572811,
+  "metric_points": 572811,
+  "planes": 7,
+  "source_gt_plane_ids": [
+    0,
+    1,
+    19,
+    27,
+    29,
+    35,
+    45
+  ],
+  "views": 4,
+  "min_conf": 0.0,
+  "boundary_ignore_radius": 1,
+  "source_annotation_3d_path": "E:\\Study\\code\\LightRecon3D\\data\\Structured3D\\scene_00180\\annotation_3d.json",
+  "max_plane_normal_consistency_error_deg": 0.0,
+  "max_plane_offset_consistency_error_mm": 2.0373812276375247e-05
+}

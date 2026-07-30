@@ -1,0 +1,10 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "status": "Ready_Sealed_GT_Sidecars",
+  "phase": "targeted_range_acquisition",
+  "completed_member_count": 1272,
+  "final_layout_json_parse_count": 0,
+  "final_camera_pose_numeric_parse_count": 0,
+  "final_annotation_semantic_parse_count": 0,
+  "updated_utc": "2026-07-30T03:48:23.869657+00:00"
+}

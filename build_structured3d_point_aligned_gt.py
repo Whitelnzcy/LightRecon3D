@@ -242,6 +242,27 @@ def find_scene_annotation(image_path):
     return None
 
 
+def structured3d_scene_and_relative(image_path):
+    """Return ``(scene_xxxxx, path below scene)`` without reading GT."""
+
+    path = Path(image_path)
+    parts = list(path.parts)
+    scene_positions = [
+        index
+        for index, value in enumerate(parts)
+        if value.startswith("scene_") and len(value) == len("scene_00000")
+    ]
+    if len(scene_positions) != 1:
+        raise ValueError(f"Cannot identify one Structured3D scene in {path}")
+    position = scene_positions[0]
+    return parts[position], Path(*parts[position + 1 :])
+
+
+def sealed_sidecar_path(image_path, sidecar_root, filename):
+    scene, relative = structured3d_scene_and_relative(image_path)
+    return Path(sidecar_root) / scene / relative.parent / filename
+
+
 def plane_consistency_row(layout_plane, world_plane, camera_pose):
     normal, offset = camera_plane_to_world(
         layout_plane["normal"], layout_plane["offset"], camera_pose
@@ -313,6 +334,8 @@ def build_point_aligned_gt(
     square_ok=False,
     boundary_ignore_radius=1,
     path_prefix_maps=(),
+    sidecar_root=None,
+    annotation_root=None,
     output_ply=None,
     output_metric_ply=None,
     max_display_points=100000,
@@ -359,8 +382,14 @@ def build_point_aligned_gt(
         if view_index not in records:
             raise ValueError(f"View {view_index} is missing from the cache registry")
         image_path = Path(remap_path(records[view_index]["image_path"], path_prefix_maps))
-        layout_path = image_path.with_name("layout.json")
-        camera_pose_path = image_path.with_name("camera_pose.txt")
+        if sidecar_root is None:
+            layout_path = image_path.with_name("layout.json")
+            camera_pose_path = image_path.with_name("camera_pose.txt")
+        else:
+            layout_path = sealed_sidecar_path(image_path, sidecar_root, "layout.json")
+            camera_pose_path = sealed_sidecar_path(
+                image_path, sidecar_root, "camera_pose.txt"
+            )
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if image is None:
             raise FileNotFoundError(f"Cannot read registry RGB image: {image_path}")
@@ -371,7 +400,13 @@ def build_point_aligned_gt(
         layout = json.loads(layout_path.read_text(encoding="utf-8"))
         camera_pose = parse_camera_pose(camera_pose_path)
         if annotation_path is None:
-            annotation_path = find_scene_annotation(image_path)
+            if annotation_root is None:
+                annotation_path = find_scene_annotation(image_path)
+            else:
+                scene, _ = structured3d_scene_and_relative(image_path)
+                annotation_path = Path(annotation_root) / scene / "annotation_3d.json"
+                if not annotation_path.is_file():
+                    annotation_path = None
             if annotation_path is not None:
                 annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
                 annotation_planes = {
@@ -586,6 +621,8 @@ def main():
     parser.add_argument("--boundary_ignore_radius", type=int, default=1)
     parser.add_argument("--max_display_points", type=int, default=100000)
     parser.add_argument("--path_prefix_map", action="append", default=[])
+    parser.add_argument("--sidecar_root", default="")
+    parser.add_argument("--annotation_root", default="")
     args = parser.parse_args()
     try:
         mappings = parse_path_prefix_maps(args.path_prefix_map)
@@ -601,6 +638,8 @@ def main():
         square_ok=args.square_ok,
         boundary_ignore_radius=args.boundary_ignore_radius,
         path_prefix_maps=mappings,
+        sidecar_root=args.sidecar_root or None,
+        annotation_root=args.annotation_root or None,
         output_ply=args.output_ply or None,
         output_metric_ply=args.output_metric_ply or None,
         max_display_points=args.max_display_points,

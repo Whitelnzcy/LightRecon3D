@@ -1,0 +1,89 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "status": "passed",
+  "development_only": true,
+  "case_count": 4,
+  "view_counts": [
+    4,
+    5
+  ],
+  "methods": [
+    "B16",
+    "M16"
+  ],
+  "receipts": [
+    {
+      "scene_id": "scene_00180_smoke_4view",
+      "method_id": "B16",
+      "view_count": 4,
+      "prediction_path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\development_smoke_predictions\\B16\\scene_00180_smoke_4view\\prediction_e16.npz",
+      "observation_count": 65435,
+      "initial_fragment_count": 12,
+      "post_split_fragment_count": 12,
+      "final_plane_count": 4,
+      "identity_edge_count": 66,
+      "whole_file_sha256": "048649a8de43790cb5ec81b3132cf7837a1713645c829cf204205cd4d1175ccf",
+      "support_sha256": "8550aac09031145ded02370bb4b5e3a16245748a2b35e603bfeff4425a4999fb",
+      "plane_id_sha256": "885d83e3e9d5c63517a72db104e51d67496e59cd54e79c4967360b1bd65197df",
+      "plane_parameter_sha256": "75ee8b028d9790cbb29f572ab59390bc8c2f6b623e156ca55cc18baa96e1eb7b",
+      "provenance_sha256": "a43726d7f5f5ea7dd74d03fb0e7868e732267ca292046fac9bc474c69bf96660",
+      "completed_utc": "2026-07-30T04:14:56.502625+00:00"
+    },
+    {
+      "scene_id": "scene_00180_smoke_5view",
+      "method_id": "B16",
+      "view_count": 5,
+      "prediction_path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\development_smoke_predictions\\B16\\scene_00180_smoke_5view\\prediction_e16.npz",
+      "observation_count": 81819,
+      "initial_fragment_count": 16,
+      "post_split_fragment_count": 16,
+      "final_plane_count": 4,
+      "identity_edge_count": 120,
+      "whole_file_sha256": "8604a92447d7a099ecb73f81fae2b95c5da0eafc1de59cd4ddeab6d762aef18a",
+      "support_sha256": "b0488b14b94849aff73ae2528760f278a2c864e9cb1b874c8b76ab283f9a843e",
+      "plane_id_sha256": "2358ff7874cf350f5fbfb1c89e29f174d7d3c7ce3e77ad362697f2642ec3578f",
+      "plane_parameter_sha256": "a28af24865f060d21f214f7fda5cf67e6631a2144076af9bd18db278c45ad901",
+      "provenance_sha256": "fe63586447ae7a1b774c96e943c6fdbd77935fe16808a7f5b7e80cd4919c2208",
+      "completed_utc": "2026-07-30T04:14:56.822642+00:00"
+    },
+    {
+      "scene_id": "scene_00180_smoke_4view",
+      "method_id": "M16",
+      "view_count": 4,
+      "prediction_path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\development_smoke_predictions\\M16\\scene_00180_smoke_4view\\prediction_e16.npz",
+      "observation_count": 65435,
+      "initial_fragment_count": 12,
+      "post_split_fragment_count": 24,
+      "final_plane_count": 6,
+      "identity_edge_count": 276,
+      "whole_file_sha256": "1bbee81a603ea277beba84b7298dfab0473883bbda0c580b27922e2fe4873b18",
+      "support_sha256": "8550aac09031145ded02370bb4b5e3a16245748a2b35e603bfeff4425a4999fb",
+      "plane_id_sha256": "84b8ea6c08702d1dc670ca9290403d49b78b6c50eff78ad9b149aaa02edb4197",
+      "plane_parameter_sha256": "c1c331bf2dfcd2f1e36e1940289cf8a4581800d786531bec959929417049c1d5",
+      "provenance_sha256": "bd7816b0f8baf883a2c305c3f50df6a95fa7735b454b0e5704ef5eb7dc77e79d",
+      "completed_utc": "2026-07-30T04:14:58.095954+00:00"
+    },
+    {
+      "scene_id": "scene_00180_smoke_5view",
+      "method_id": "M16",
+      "view_count": 5,
+      "prediction_path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\development_smoke_predictions\\M16\\scene_00180_smoke_5view\\prediction_e16.npz",
+      "observation_count": 81819,
+      "initial_fragment_count": 16,
+      "post_split_fragment_count": 32,
+      "final_plane_count": 6,
+      "identity_edge_count": 496,
+      "whole_file_sha256": "e4d0f54039c55b8f12545b1fad2de0ac7344b9fe827464a7c5cbe7e23a7b4abb",
+      "support_sha256": "b0488b14b94849aff73ae2528760f278a2c864e9cb1b874c8b76ab283f9a843e",
+      "plane_id_sha256": "652b1b812bf106e168a372b86351c0b8310a4eefc85361890ec221e3e70ffdd7",
+      "plane_parameter_sha256": "3b5196ff346bfd94219dc2f5803662c2d6f5527c341dd9c850cb7189c0df62ac",
+      "provenance_sha256": "1d9316d7a887d9aa68050d8421f2f16e354dbb2aab70d4a7e43d960f0228ee2c",
+      "completed_utc": "2026-07-30T04:14:59.481614+00:00"
+    }
+  ],
+  "final_scene_prediction_count": 0,
+  "final_layout_json_parse_count": 0,
+  "final_camera_pose_numeric_parse_count": 0,
+  "final_annotation_semantic_parse_count": 0,
+  "completed_utc": "2026-07-30T04:14:59.481614+00:00"
+}

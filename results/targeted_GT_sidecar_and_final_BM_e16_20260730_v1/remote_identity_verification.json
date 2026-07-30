@@ -1,0 +1,148 @@
+{
+  "status": "passed",
+  "verified_count": 14,
+  "expected_count": 14,
+  "objects": {
+    "Structured3D_perspective_empty_01.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_01.zip",
+      "total_length": 12203949642,
+      "head_sha256": "d9cf3e76a8e01b53d17bb5e42736ed7184f168a4bbd6b499d5dac2fdcb272fed",
+      "tail_sha256": "e18d847436b53dd2b3611c14975bca4d8fd15fedd12077a428ef9c5cdb09eaea",
+      "strong_etag": "\"22AB4BBC5D52B30684B638696BFE4B50-233\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:37 GMT",
+      "verified_utc": "2026-07-30T03:24:09.376970+00:00"
+    },
+    "Structured3D_perspective_empty_02.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_02.zip",
+      "total_length": 13160457877,
+      "head_sha256": "27faa180f98f0739fc5abf928c286fa3047df9ca410d32553e5a65d1a019b7d7",
+      "tail_sha256": "cf0366994565bc13d99b644b2fef8d0427489fb61bf77ab428d0776395b0144d",
+      "strong_etag": "\"F1D787BC47ADD7F59A854E33881A92FC-252\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:57 GMT",
+      "verified_utc": "2026-07-30T03:27:04.705217+00:00"
+    },
+    "Structured3D_perspective_empty_03.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_03.zip",
+      "total_length": 11533873828,
+      "head_sha256": "c662a6d4f013523aace2d64a00fa1ffdc0d0c1abbb761486069d948f8916f45d",
+      "tail_sha256": "4746b2fccee01e5ba2e97e18365399283ee6355f9233b934b0dc85ca63d78865",
+      "strong_etag": "\"C3F805A42D7DB18202411D2F51DFDA1A-220\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:34 GMT",
+      "verified_utc": "2026-07-30T03:27:04.862720+00:00"
+    },
+    "Structured3D_perspective_empty_04.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_04.zip",
+      "total_length": 11068160268,
+      "head_sha256": "8f0f8fb68e186bfb9e8ad43c253c499e10d8158f1453df006ff910cc56178e87",
+      "tail_sha256": "d6643b681eb01215b2fe7e12d621f6a21e388a2317e0b1c9da25595db33cb82a",
+      "strong_etag": "\"234E44CE785BE0FD84F03602180B1949-212\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:28 GMT",
+      "verified_utc": "2026-07-30T03:27:05.002421+00:00"
+    },
+    "Structured3D_perspective_empty_05.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_05.zip",
+      "total_length": 11073036879,
+      "head_sha256": "ba576af5edd584201c3e4d12298b01cb77f4c8af62222459680f33df258b2453",
+      "tail_sha256": "91e38af979db31f0bc5992351c78a4cd276ca3a76fd562913bfe263d8e2f6879",
+      "strong_etag": "\"EE6843692AF66194973C78167DC135E9-212\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:52 GMT",
+      "verified_utc": "2026-07-30T03:27:05.100021+00:00"
+    },
+    "Structured3D_perspective_empty_06.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_06.zip",
+      "total_length": 10577205296,
+      "head_sha256": "bea04be33bfac3eeedd131991fc4bd71359e3ccb1500935a6509d5e4187b4597",
+      "tail_sha256": "c6d8911a90b9d270c85ad47e643e93055ff9634740bd52fa97948c18b4d7d7ed",
+      "strong_etag": "\"510D6A1DE4DF2AB188603B4064746BBC-202\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:21 GMT",
+      "verified_utc": "2026-07-30T03:27:05.195880+00:00"
+    },
+    "Structured3D_perspective_empty_07.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_07.zip",
+      "total_length": 11632168244,
+      "head_sha256": "e88f28ee4e6f07231179dc7f61bd986e2e41cd26c036fdf812faf06892ba3522",
+      "tail_sha256": "0589d594a239723ad9e128584d2a4d27a3b8c30362238fd045c093cd442a528d",
+      "strong_etag": "\"5FBEC2716783340076295A3E6C90D7A6-222\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:58 GMT",
+      "verified_utc": "2026-07-30T03:27:05.277082+00:00"
+    },
+    "Structured3D_perspective_empty_08.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_08.zip",
+      "total_length": 11844662919,
+      "head_sha256": "b47f68854e13afb2a91ca7b6e531cbd54b815185b757fb6e212d8fe5402338c8",
+      "tail_sha256": "3f30afbf6803a7530ace5279e44b5a75c0850ba9f464931705cb9f75fd256efb",
+      "strong_etag": "\"0FD2DDF267B96F05DA79F181DE0F8E68-226\"",
+      "last_modified": "Sun, 26 Mar 2023 10:52:19 GMT",
+      "verified_utc": "2026-07-30T03:27:05.386724+00:00"
+    },
+    "Structured3D_perspective_empty_09.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_09.zip",
+      "total_length": 11500639986,
+      "head_sha256": "409a245bf317faf7e4d0c4e3882b59d3f11817428124a132e192ae29e0302bf9",
+      "tail_sha256": "28ac24d3b32e310e408120e636a8e8fdd03092ad043d618775a104b26dbf2c63",
+      "strong_etag": "\"CF10930C42811E06743DFD699C630E33-220\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:54 GMT",
+      "verified_utc": "2026-07-30T03:31:25.987408+00:00"
+    },
+    "Structured3D_perspective_empty_10.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_10.zip",
+      "total_length": 13870208349,
+      "head_sha256": "9687c3c67010e30523c879689dff2f1efe794e336d9ed1cda890f8877b8de3b7",
+      "tail_sha256": "edcd437dfeade1984f283fe3948b9d8a7eda47769e24db9c3debfd759f6d1ca9",
+      "strong_etag": "\"36A41A1DB6DD2C7B160071B366C9DE0C-265\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:57 GMT",
+      "verified_utc": "2026-07-30T03:32:04.572436+00:00"
+    },
+    "Structured3D_perspective_empty_11.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_11.zip",
+      "total_length": 11374775582,
+      "head_sha256": "11f0178977290b75437e20cbbe68b8176362abc66fb777fac1301a53a7fff1cf",
+      "tail_sha256": "056dc9e06e7cf9c76fc5afea864df040250d9856430581dd36763bdbe971c914",
+      "strong_etag": "\"ADF8D08BA2AFF85A3364D1AD858EC3B0-217\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:34 GMT",
+      "verified_utc": "2026-07-30T03:32:04.669174+00:00"
+    },
+    "Structured3D_perspective_empty_12.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_12.zip",
+      "total_length": 10820568883,
+      "head_sha256": "ef123691fe2bc6ee3f991660afff7c2a11254bd0b5583168cc248d5781d0acec",
+      "tail_sha256": "cb3c53ebf4ad4e1ca19842d16edf42ca38905f0c887b9ab3d77f45b84a7d73b0",
+      "strong_etag": "\"361110183F72BB1DA9C021667A8EDB4D-207\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:55 GMT",
+      "verified_utc": "2026-07-30T03:32:04.768962+00:00"
+    },
+    "Structured3D_perspective_empty_13.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_13.zip",
+      "total_length": 10710441091,
+      "head_sha256": "19eeeefe60a28a40c8b808c4b76a300e7ea527e63ee8f417f1a485acd5c9def1",
+      "tail_sha256": "eb973ab74a020ee324fd6f3c2e99fce40656d46afdeff82233417a1d37246593",
+      "strong_etag": "\"6090B4B94B5341E856F0A72F0A343393-205\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:21 GMT",
+      "verified_utc": "2026-07-30T03:32:04.891527+00:00"
+    },
+    "Structured3D_perspective_empty_14.zip": {
+      "status": "matched",
+      "archive_name": "Structured3D_perspective_empty_14.zip",
+      "total_length": 11784417792,
+      "head_sha256": "0f3ad5f0dce134af59cbc17a9d41717f9f662e151611091dede9f505ea646cc7",
+      "tail_sha256": "c454690ac55b331284d5c96bc8d87d7b3c9c41903154e0164b84eed9cd226b77",
+      "strong_etag": "\"3D3DF1C7C7A70C33720AE224D7F56793-225\"",
+      "last_modified": "Sun, 26 Mar 2023 10:51:38 GMT",
+      "verified_utc": "2026-07-30T03:32:44.455630+00:00"
+    }
+  },
+  "verified_utc": "2026-07-30T03:40:10.209294+00:00"
+}
