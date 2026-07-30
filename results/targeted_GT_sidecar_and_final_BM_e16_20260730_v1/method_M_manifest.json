@@ -1,0 +1,22 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "input": "E14 global_cache_e14 + direct_support_e14",
+  "initial_fragment_construction": "shared",
+  "identity_features": "joint_without_bias_with_tangent_support",
+  "identity_model_sha256": "8e207b6f52ce538f0580beca81c61c44a285988726df942fba95486d21ec8ab9",
+  "identity_cost_threshold": 0.6204897226361007,
+  "clustering": "average_linkage",
+  "minimum_fragment_points": 64,
+  "maximum_geometry_points": 512,
+  "plane_parameter_estimation": "shared deterministic covariance eigensolver",
+  "prediction_schema": "LightRecon3D_E16_prediction/v1",
+  "configuration_sha256": "5e418f3b6dd15c180aa6e8e49c087e14ad303e4dad165494d8967e4b21de27b0",
+  "execution_commit": "c24e543b3098ba280b062d918acdbc9dd8ecdbf5",
+  "method_id": "M16",
+  "learned_intra_fragment_split_enabled": true,
+  "only_B_M_difference": "learned_intra_fragment_split",
+  "checkpoint_path": "E:\\Study\\code\\LightRecon3D\\local_outputs\\intra_fragment_splitter_global_pairs_20260726_v1\\best.pt",
+  "checkpoint_sha256": "bd8f89bc8c457fd0b54547c775477813b4d5e3a0667f81c08ec28d4faaadfcd1",
+  "checkpoint_parameter_count": 27730,
+  "split_affinity_threshold": 0.175
+}

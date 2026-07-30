@@ -1,0 +1,12 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "status": "frozen_before_final_predictions",
+  "source_path": "evaluate_final_bm_e16.py",
+  "source_sha256": "198b30a7585923713c4b375d1dbda5faeb129e20340230c5d9248f1ecde69e3c",
+  "execution_commit": "c24e543b3098ba280b062d918acdbc9dd8ecdbf5",
+  "match_iou": 0.5,
+  "fragmentation_iou": 0.1,
+  "paired_bootstrap_repetitions": 10000,
+  "paired_bootstrap_seed": 20260729,
+  "non_mutating": true
+}

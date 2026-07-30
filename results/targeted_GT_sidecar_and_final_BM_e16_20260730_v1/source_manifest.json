@@ -1,0 +1,16 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "status": "frozen",
+  "execution_commit": "c24e543b3098ba280b062d918acdbc9dd8ecdbf5",
+  "clean_worktree_before_freeze": true,
+  "scientific_source_hashes": {
+    "final_bm_methods_e16.py": "dced31db7f8e077d44899b48fce885e46a9a2d4c438c681fdfb94f53513bb45b",
+    "evaluate_final_bm_e16.py": "198b30a7585923713c4b375d1dbda5faeb129e20340230c5d9248f1ecde69e3c",
+    "build_structured3d_point_aligned_gt.py": "f9a6fefb7f17cdcf35b6f67670a08df0c58d46add147dddeb03bd802f02bcc9e",
+    "configs/e16_final_bm.json": "5e418f3b6dd15c180aa6e8e49c087e14ad303e4dad165494d8967e4b21de27b0"
+  },
+  "configuration_sha256": "5e418f3b6dd15c180aa6e8e49c087e14ad303e4dad165494d8967e4b21de27b0",
+  "shared_identity_model_sha256": "8e207b6f52ce538f0580beca81c61c44a285988726df942fba95486d21ec8ab9",
+  "m_checkpoint_sha256": "bd8f89bc8c457fd0b54547c775477813b4d5e3a0667f81c08ec28d4faaadfcd1",
+  "frozen_utc": "2026-07-30T04:20:17.398869+00:00"
+}

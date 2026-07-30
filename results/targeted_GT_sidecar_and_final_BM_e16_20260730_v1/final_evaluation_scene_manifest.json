@@ -1,0 +1,523 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "use": "single_final_evaluation_only",
+  "scene_count": 128,
+  "selected_view_count": 636,
+  "five_view_scene_count": 124,
+  "four_view_scene_count": 4,
+  "ordered_scenes": [
+    {
+      "scene_id": "scene_00426",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01741",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02976",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01767",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02023",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01068",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02174",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02335",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01840",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01164",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00659",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02808",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01892",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01765",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01864",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02336",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01177",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00821",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02338",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00507",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01436",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02505",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02795",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01768",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01560",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02684",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00472",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01621",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00954",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00455",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02842",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01954",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02299",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01272",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01872",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01497",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02009",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02491",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02263",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00527",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02465",
+      "view_count": 4
+    },
+    {
+      "scene_id": "scene_00630",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00597",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02169",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01619",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02845",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02121",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00557",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00719",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00797",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01594",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02734",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02501",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00235",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02038",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01846",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01357",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02943",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00399",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00239",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00397",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01012",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02816",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01878",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02785",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02651",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01713",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01672",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00769",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00321",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02102",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01509",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02887",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01184",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00789",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00270",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00562",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01312",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01422",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02817",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01790",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02176",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01934",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01299",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01188",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02075",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01728",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00377",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02716",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01937",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02392",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02942",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02305",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01698",
+      "view_count": 4
+    },
+    {
+      "scene_id": "scene_01218",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00885",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00972",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01923",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01815",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01199",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02978",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02618",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01718",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00375",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01922",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02008",
+      "view_count": 4
+    },
+    {
+      "scene_id": "scene_01338",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00752",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00551",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02876",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02905",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02222",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01209",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01847",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02932",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00790",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02424",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02208",
+      "view_count": 4
+    },
+    {
+      "scene_id": "scene_02682",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02029",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02486",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_02727",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00555",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01092",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01936",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_01969",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00697",
+      "view_count": 5
+    },
+    {
+      "scene_id": "scene_00858",
+      "view_count": 5
+    }
+  ],
+  "training_selection_tuning_count": 0
+}

@@ -1,0 +1,26 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "use": "development_only",
+  "scene_count": 17,
+  "scenes": [
+    "final_000_scene_00180",
+    "final_001_scene_00181",
+    "final_002_scene_00182",
+    "final_003_scene_00184",
+    "final_004_scene_00185",
+    "final_005_scene_00186",
+    "final_006_scene_00187",
+    "final_007_scene_00189",
+    "final_008_scene_00190",
+    "final_009_scene_00191",
+    "final_010_scene_00192",
+    "final_011_scene_00193",
+    "final_012_scene_00194",
+    "final_013_scene_00195",
+    "final_014_scene_00197",
+    "final_015_scene_00198",
+    "final_016_scene_00199"
+  ],
+  "edge_source_sha256": "dd40125fa288f726824b3b29863c9033f277e12fd3b7dffa29656b02505c24bf",
+  "final_scene_usage_count": 0
+}
