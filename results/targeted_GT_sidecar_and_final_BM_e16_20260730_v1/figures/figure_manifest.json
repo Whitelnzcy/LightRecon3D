@@ -1,0 +1,43 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "reporting_only": true,
+  "scientific_outputs_modified": false,
+  "source_summary_sha256": "c71a413506c2fe241a333bf57ea763c4a3cb5baefe3a211a584b27d1c24c3cc4",
+  "source_metrics_sha256": "da69550d61d7af3f3c45c11f35aadf68b7c23a5f649f11a2dceda10d7ea474e9",
+  "source_prediction_manifest_sha256": "8f3550779ea395fc634fc14bbba366ea36901910a5f6d6b157208cc0748f6399",
+  "source_gt_manifest_sha256": "934aba076b49c3870301e1836bbb94c84722b1413603b85d847c96c81836afaa",
+  "similar_scenes": [
+    "scene_02817",
+    "scene_02785",
+    "scene_01218",
+    "scene_02976"
+  ],
+  "extra_split_no_gain_scenes": [
+    "scene_00597",
+    "scene_01767",
+    "scene_01619"
+  ],
+  "support_gap_scene": "scene_01922",
+  "figures": {
+    "main_results_table": {
+      "path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\e16_main_results_table.png",
+      "sha256": "9264fb6c9ed2d208413a34a0099e26db68ce73bc59a03a736f16ba1d4e194dd9"
+    },
+    "pair_f1_delta_distribution": {
+      "path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\e16_pair_f1_delta_distribution.png",
+      "sha256": "6a1e24cbbcd75995268b5e5b91eabe0121404aed84718a019e16b05f954773b4"
+    },
+    "similar_scene_gallery": {
+      "path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\e16_similar_scene_gallery.png",
+      "sha256": "484112845409d727690a6a9ead4cecbb9dda054730d209c994ece8064df80d4b"
+    },
+    "extra_split_gallery": {
+      "path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\e16_extra_split_gallery.png",
+      "sha256": "cc112bef9479ce51f3754be99863a3ce905a1f3df58986a7f15685392b4bedca"
+    },
+    "support_domain_gap": {
+      "path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\e16_support_domain_gap.png",
+      "sha256": "22af6ecf700f268af3dcee13a531dbb505109018886e5ba347a5e89da16f0598"
+    }
+  }
+}

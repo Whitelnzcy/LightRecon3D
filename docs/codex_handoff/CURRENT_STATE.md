@@ -3953,3 +3953,76 @@ analysis and project reporting.
 
 Canonical return:
 `docs/codex_returns/CODEX_RETURN_targeted_GT_sidecar_and_final_BM_e16_20260730.md`.
+
+## E16 reporting closure (2026-07-30)
+
+The method experiment is closed. No E17 experiment was opened, and no model,
+evaluator, prediction, GT sidecar or frozen metric artifact was modified.
+Reporting-only work added:
+
+```text
+visualize_e16_final_results.py
+tests/test_visualize_e16_final_results.py
+docs/research_practice/E16_FAILURE_ANALYSIS.md
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/
+```
+
+`README.md`, `docs/research_practice/REPORT_DRAFT.md`,
+`docs/research_practice/REPORT_OUTLINE.md` and the E16 return now use the final
+scientific interpretation:
+
+```text
+B16 is the stable default.
+M16 remains a complete research extension and ablation.
+M16 does not provide a statistically stable identity-recovery improvement.
+The dominant limitation is sparse direct-support coverage, not intra-fragment
+split capacity.
+```
+
+The reporting script mechanically selected four near-identical B/M scenes,
+three extra-split/no-gain scenes, and one support-domain example from frozen
+E16 metrics. Display colours for M are aligned to B by maximum frozen-support
+overlap only; this affects visualization and does not remap scientific
+predictions or metrics.
+
+Generated figures:
+
+```text
+e16_main_results_table.png
+e16_pair_f1_delta_distribution.png
+e16_similar_scene_gallery.png
+e16_extra_split_gallery.png
+e16_support_domain_gap.png
+figure_manifest.json
+```
+
+Validation:
+
+```text
+python -m pytest tests/test_visualize_e16_final_results.py
+  tests/test_e16_final_bm_contract.py
+  tests/test_execute_targeted_gt_sidecars_e16.py -q
+12 passed in 2.55s
+git diff --check: passed
+```
+
+The base Python environment cannot import its existing Matplotlib build
+because of a NumPy binary-ABI mismatch. No dependency was installed or
+modified. Figures were generated with the existing compatible environment
+`E:\anaconda\envs\ai\python.exe` (NumPy 2.2.6, Matplotlib 3.10.8), while all
+tests ran in the base project environment.
+
+Frozen core hashes remain:
+
+```text
+prediction_manifest.json =
+8f3550779ea395fc634fc14bbba366ea36901910a5f6d6b157208cc0748f6399
+point_aligned_gt_manifest.json =
+934aba076b49c3870301e1836bbb94c84722b1413603b85d847c96c81836afaa
+summary.json =
+c71a413506c2fe241a333bf57ea763c4a3cb5baefe3a211a584b27d1c24c3cc4
+```
+
+Next exact action: final prose formatting or citation cleanup only. Do not
+change the model, evaluator, support, thresholds, scene set or frozen E16
+scientific outputs.

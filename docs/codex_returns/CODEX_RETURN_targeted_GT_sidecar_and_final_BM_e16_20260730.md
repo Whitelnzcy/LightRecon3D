@@ -315,3 +315,15 @@ Summary SHA-256:
 ```text
 c71a413506c2fe241a333bf57ea763c4a3cb5baefe3a211a584b27d1c24c3cc4
 ```
+
+Post-verdict reporting artifacts were generated without changing any E16
+scientific output:
+
+```text
+visualize_e16_final_results.py
+docs/research_practice/E16_FAILURE_ANALYSIS.md
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/
+```
+
+The figure manifest is bound to the frozen summary, per-scene metrics,
+prediction manifest and GT manifest hashes.

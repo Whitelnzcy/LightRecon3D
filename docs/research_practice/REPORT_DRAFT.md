@@ -1,14 +1,14 @@
 # 面向无姿态先验室内图像的轻量化多特征三维重建
 
-版本：2026-07-17 第三版正文（17场景恢复完成）
+版本：2026-07-30 最终实验稿（E16 独立验证完成）
 
 ## 摘要
 
-室内场景中存在大面积白墙、玻璃、重复纹理和遮挡，仅依靠局部图像匹配容易产生相机位姿漂移，也难以直接得到可编辑的结构表示。本项目研究一组无序或弱位姿先验的室内图像，目标不是生成更密的点云，而是在统一三维坐标中恢复带有可见支撑范围的平面实例，并补充能够反映墙角、门窗边缘等结构的三维线段。系统以 DUSt3R 的点图预测和全局对齐为公共几何底座，在二维阶段预测平面 support，经局部几何检验后，使用显式的 `(alignment_view_index, x, y)` 键映射到对齐点图。最终方法没有直接采用学习分组作为平面结果，而是用其生成并排序平面假设，再在完整点云上执行共识检验、置信度加权重拟合和连通域分割。这样保留了 RANSAC 对异常点的鲁棒性，同时利用了图像分支提供的实例线索。
+室内场景中存在大面积白墙、玻璃、重复纹理和遮挡，仅依靠局部图像匹配容易产生相机位姿漂移，也难以直接得到可编辑的结构表示。本项目研究一组无序或弱位姿先验的室内图像，目标是在统一三维坐标中恢复带有可见支撑范围的平面实例，并补充能够反映墙角、门窗边缘等结构的三维线段。系统以 DUSt3R 点图和全局对齐为公共几何底座，在二维阶段预测稀疏平面 support，再通过显式的 `(alignment_view_index, x, y)` 键映射到对齐点图。最终 B16 使用 topology-logistic 模型恢复跨记录平面身份，M16 在相同流程中加入 learned intra-fragment split。两种方法共享输入、identity 特征、聚类、平面参数估计和评价器。
 
-实验从冻结验证划分中选出17个独立Structured3D场景。第一次批处理完成14个场景，另外3个因服务器初始化或CUDA设备异常中断；按冻结配置恢复后，最终17个场景全部形成有效的成对结果。两种方法在每个场景中读取相同的DUSt3R有序全局点云缓存。普通RANSAC的平均配对F1为`0.632406`，学习support引导RANSAC为`0.706348`，平均增益为`+0.073942`；引导方法在16个场景中提高F1，在`scene_00194`上下降约`0.002`。平均matched IoU从`0.489136`提高到`0.678036`，平均overmerge excess从`2.882353`降至`1.470588`。公开平面分组评价中，VOI从`1.493965`降至`1.172062`，Rand Index从`0.789837`提高到`0.834620`，对称Segmentation Covering从`0.561563`提高到`0.658550`。[E4][E5] Stage1在80个固定配对记录上的平均precision、recall和F1分别为`0.883814`、`0.629410`和`0.724166`。[E1] 五视图DUSt3R推理与300步全局对齐的中位耗时为`9.123 s`。引导方法在17场景批次中的平均平面提取耗时较低，但先前冻结效率门槛没有通过，因此本文只讨论质量变化，不把加速列为贡献。实验结果说明，学习support更适合用于提出和排序几何假设，而不适合直接代替全局点云上的共识检验。
+开发阶段的17场景实验表明，学习 support 可以改善完整点云上的 RANSAC 候选选择，但该批次不承担最终 B/M 裁决。[E4][E5] 最终实验另取128个未参与训练和调参的Structured3D场景。在GT解封前，B16和M16的256份prediction全部冻结，128对support hash完全一致。两种方法的Plane F1和matched IoU均为0。预测只标注约11.1%的缓存点，而GT平面覆盖约97.2%，所以完整support IoU主要暴露support completeness瓶颈。B16和M16的partition pair F1分别为`0.358892`和`0.358968`，平均差值为`+0.0000758`，95% bootstrap区间为`[-0.0000552,+0.0002065]`。M16把预测平面总数从878增加到1292，但没有形成有效Plane TP。[E6] 因此B16作为默认方法，M16保留为未取得显著整体收益的研究扩展。
 
-关键词：无姿态先验三维重建；室内平面；DUSt3R；RANSAC；结构线；可编辑几何
+关键词：无姿态先验三维重建；室内平面；DUSt3R；平面身份；稀疏support；可编辑几何
 
 ## 1 研究背景与任务定义
 
@@ -100,7 +100,7 @@ Stage1 的平均 pairwise precision、recall 和 F1 为 `0.883814`、`0.629410` 
 
 在固定环境中，DUSt3R 两图像 backbone 的 P50/P95 为 `148.428/152.940 ms`；Stage1 单图像 head 为 `75.160/101.401 ms`，增量峰值显存为 `361.899 MiB`；Stage2 一次处理 64 个候选对仅需 `0.451/0.483 ms`。五视图推理和 300 步全局对齐的 P50/P95 为 `9.123/11.922 s`。[E1] 本机没有编译 CUDA 版 RoPE2D，所以这些数据用于说明项目实际成本，不用于推断其他硬件上的极限速度。
 
-### 6.2 最终平面方法
+### 6.2 开发阶段的 guided RANSAC
 
 8场景冻结确认实验中，全局RANSAC的平均配对F1为`0.704999`，学习support引导方法为`0.744248`，平均和中位配对增益分别为`+0.039248`和`+0.035580`。8个场景全部获得正增益，场景配对bootstrap 95%区间为`[+0.015288,+0.063010]`，精确双侧符号检验为`p=0.007812`。[E2] 这一步用于确认方法和冻结质量门槛，不再作为样本量最大的主结果。
 
@@ -140,6 +140,48 @@ Matched IoU增加`0.188899`，说明提升不只是实例编号层面的变化�
 
 从8场景冻结确认结果看，引导方法的增益不是由覆盖率下降换来的，其GT coverage中位数保持在`0.999828`。[E2] 17场景总览中，两种RANSAC的已分配点比例也普遍接近完整点云。[E4] 与之相反，conflict-drop的分数提升伴随接近零的full-cache coverage。这个对比说明评价平面实例时不能只看precision或F1，每个方法都必须同时给出被分配的全局点比例和GT覆盖范围。
 
+### 6.5 128场景独立 B/M 验证
+
+开发实验结束后，项目另行冻结了128个此前未参与训练、阈值选择或checkpoint选择的Structured3D场景。124个场景使用5个视图，4个场景使用4个视图。B16与M16都读取E14冻结的global cache和direct support。B16采用topology-logistic身份恢复，M16只增加learned intra-fragment split。两种方法的初始fragment、identity特征、logistic模型、聚类阈值、平面参数估计和评价器完全相同。[E6]
+
+全部256份prediction在最终GT解封前完成并hash。128对B/M support hash全部相同。评价器读取同一组point-aligned GT，且评价前后的support、plane ID、plane parameter和provenance hash保持不变。Evaluator没有扩张support、重新拟合平面或执行RANSAC。
+
+| 指标 | B16 | M16 | M16-B16 |
+|---|---:|---:|---:|
+| Plane F1 | 0.000000 | 0.000000 | 0.000000 |
+| matched IoU | 0.000000 | 0.000000 | 0.000000 |
+| partition pair precision | 0.237140 | 0.237244 | +0.000103 |
+| partition pair recall | 0.799792 | 0.799375 | -0.000417 |
+| partition pair F1 | 0.358892 | 0.358968 | +0.0000758 |
+| GT-support assignment | 0.111023 | 0.111023 | 0.000000 |
+| full-cache label rate | 0.111012 | 0.111012 | 0.000000 |
+| GT-plane label rate | 0.972479 | 0.972479 | 0.000000 |
+| 预测平面总数 | 878 | 1292 | +414 |
+
+Plane F1为0不能解释成模型完全无效。B16和M16处理的是Stage1产生的稀疏direct support，而注册GT覆盖完整可见平面。两种预测只标注约11.1%的缓存点，GT平面点约占97.2%。稀疏预测与完整GT平面的IoU难以达到0.5，因此Plane F1和matched IoU主要反映support completeness缺口，不能有效区分B/M的fragment identity能力。
+
+Partition pair F1提供了固定GT域上的相对比较。M16的平均差值为`+0.0000758`，中位差值为`+0.0000945`，95%配对bootstrap区间为`[-0.0000552,+0.0002065]`，场景胜、平、负数量为`78/1/49`。区间跨过0，不能认为M16有稳定提升。M16产生1292个平面，较B16多414个，但没有改善Plane TP、matched IoU或coverage。最终裁决为`Mixed_Result`。B16按简单性作为默认方法，M16保留为完整研究扩展和消融结果。[E6]
+
+机械选择的失败场景进一步说明这一点。`scene_00597`从8个平面增加到20个，pair F1下降`0.000656`；`scene_01767`从7个增加到17个，pair F1下降`0.000811`；`scene_01619`从5个增加到14个，pair F1下降`0.000741`。相反，`scene_02817`、`scene_02785`、`scene_01218`和`scene_02976`的最终平面数相同，B/M pair F1几乎不变。Learned split能够改变已有稀疏support内部的分区，但无法补回未分配区域。
+
+![E16主结果表](../../results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/e16_main_results_table.png)
+
+图中最明显的变化是M16多出414个预测平面，而Plane F1、matched IoU和coverage没有变化。
+
+![Partition pair F1配对差值分布](../../results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/e16_pair_f1_delta_distribution.png)
+
+配对差值集中在0附近，bootstrap区间跨过0。该分布不支持稳定提升。
+
+![B/M结果近似一致的场景](../../results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/e16_similar_scene_gallery.png)
+
+![M额外拆分但未改善的场景](../../results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/e16_extra_split_gallery.png)
+
+两组gallery使用冻结support overlap匹配显示颜色。颜色匹配只用于排版，不修改prediction ID或评价。
+
+![完整GT support与稀疏预测support](../../results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/e16_support_domain_gap.png)
+
+`scene_01922`的实际视图显示了评价域差异。GT几乎覆盖整张可见布局，direct support只在稀疏像素格点上提供标签。
+
 ## 7 工程实现与复现
 
 项目代码使用 Python、PyTorch、NumPy、SciPy 和 OpenCV。DUSt3R 作为 vendored 依赖保存在仓库中，服务器入口脚本固定使用 `lightrecon` Conda 环境，并检查 `roma`、OpenCV、NumPy、SciPy、PyTorch 与 CUDA。早期运行曾因系统 Python 中没有 torch、`roma.__version__` 不存在以及 `trimesh` 缺失而中断。后续脚本改为显式指定 Python，通过 `importlib.metadata` 查询包版本，并在需要导出 GLB 时检查 trimesh。环境错误在创建输出目录之前报告，避免把半次运行误认为完整实验。
@@ -156,25 +198,25 @@ Matched IoU增加`0.188899`，说明提升不只是实例编号层面的变化�
 
 ## 8 局限性
 
-数据范围仍然有限。主结果来自Structured3D，17个合格验证场景最终全部完成全流程。样本量比早期8场景更大，但仍不足以覆盖真实照片中的运动模糊、曝光变化、镜面反射、家具移动和相机内参误差。第一次运行暴露的3个服务器故障已经通过不可覆盖的定向恢复解决，这说明恢复机制有效，也说明当前复现实验仍依赖稳定的GPU平台。
+数据范围仍然有限。最终B/M实验包含128个独立Structured3D场景，比开发阶段的17场景更大，但仍不能覆盖真实照片中的运动模糊、曝光变化、镜面反射、家具移动和相机内参误差。所有最终场景都来自同一合成数据集，因此结果不能直接推广到真实室内图像。
 
 几何底座方面，系统依赖DUSt3R的全局对齐质量。引导RANSAC处理的是对齐后的点云分组。如果点图出现明显双层、尺度漂移或错误相机关系，学习support只能改变候选顺序，不能恢复正确几何。项目早期尝试把平面残差反馈给对齐优化，但较低的plane loss没有带来更好的注册结构指标。当前方法选择固定公共几何，是为了让比较可控，不代表对齐误差已经解决。
 
-Stage1 recall为`0.629410`，明显低于precision。后备RANSAC能补充学习分支没有覆盖的平面，却也会重新引入随机搜索的过合并风险。若support本身把相邻区域错误分在一起，引导候选仍可能偏向错误方向。17场景结果说明这种引导在当前数据上整体有效，但`scene_00194`的轻微下降也表明它不是逐场景必胜。后续可研究候选不确定性、跨视图一致性和基于GT匹配颜色的错误诊断，而不是继续为个别场景调阈值。
+Stage1在开发侧的recall为`0.629410`，低于precision。E16给出了更直接的限制：B16/M16的full-cache label rate只有约`0.111`，而GT-plane label rate约为`0.972`。最终B/M没有full-support recovery模块，所以learned split只能在已分配点内改变身份，无法补回大部分未分配区域。M16增加414个预测平面仍没有形成Plane TP，说明当前首要问题不是继续细分fragment。
 
 结构线目前是独立输出，没有参与平面参数或相机优化。LSD会把门窗边缘、家具纹理和高光边界同时检测出来，三维深度连续性只能过滤其中一部分。现有结果可以说明系统能够保存点、线、面三类几何，不能说明线特征已经提高平面重建精度。若后续把线加入优化，应先建立可量化的三维线GT或跨视图重复性指标。
 
 平面输出也不是完整房间模型。当前primitive保存观测支撑点和连通分量，没有恢复完整多边形边界，也没有补全被遮挡墙面。它适合实例选择、着色、局部编辑和错误分析，但与完整CAD房间模型仍有差距。可视化中的彩色点云表示平面分配，不等同于水密网格或具有纹理的最终渲染。正文必须把这种输出称为结构化点云和平面primitive，不能把它写成完整室内模型。
 
-工程上还有两个限制。Stage1 head的checkpoint接近305 MiB，不适合称为极小模型。当前RoPE2D使用慢速PyTorch实现，效率数字包含这部分开销。轻量化主要来自共享DUSt3R、较小的Stage2和无需额外训练的几何后端，而不是整个系统参数很少。后续若继续研究，应先在真实场景上复核provenance映射和guided consensus，再考虑压缩Stage1或把可靠的线和平面邻接关系加入优化。课程截止前不再启动新的基础模型训练。
+工程上还有两个限制。Stage1 head的checkpoint接近305 MiB，不适合称为极小模型。当前RoPE2D使用慢速PyTorch实现，效率数字包含这部分开销。轻量化主要来自共享DUSt3R、较小的Stage2和确定性后端，而不是整个系统参数很少。本项目不再训练M、调整split阈值或修改最终评价器。后续工作只整理图表、失败案例和复现材料。
 
 ## 9 结论
 
-本项目完成了一套无给定位姿的室内结构化重建流程。系统把二维平面support通过显式视图索引和像素键映射到DUSt3R全局点图，输出带观测支撑的平面primitive和三维结构线。最终方法使用学习support提出并排序平面假设，再由完整点云上的RANSAC共识、置信度加权重拟合和连通分量确定结果，没有直接使用学习标签替代全局几何，也没有把平面残差写回DUSt3R对齐。
+本项目完成了一套无给定位姿的室内结构化重建流程。系统把二维平面support通过显式视图索引和像素键映射到DUSt3R全局点图，输出带观测支撑的平面primitive和三维结构线。最终B16使用topology-logistic模型恢复跨记录身份，M16在同一流程中增加learned intra-fragment split。两种方法都保留稀疏direct support，不在评价器中扩张support。
 
-17个合格验证场景全部完成有效成对比较。引导方法的平均配对F1从`0.632406`提高到`0.706348`，matched IoU从`0.489136`提高到`0.678036`，overmerge excess从`2.882353`降到`1.470588`，VOI从`1.493965`降到`1.172062`，RI从`0.789837`提高到`0.834620`，SC从`0.561563`提高到`0.658550`，16个场景取得正F1增益，1个场景轻微下降。[E4][E5] 这些结果支持“学习support能够改善当前冻结协议下的RANSAC候选选择”，但不支持公开数据集领先、逐场景必胜或普遍加速结论。第一次运行的服务器错误、manual identity、conflict-drop和平面反馈负结果均被保留。
+17场景guided RANSAC实验属于开发证据，它说明学习support可以改善完整点云上的候选选择。[E4][E5] 最终128场景B/M实验给出了更严格的结论。B16和M16的Plane F1与matched IoU均为0，partition pair F1只相差`+0.0000758`，且95%区间跨过0。M16增加了414个预测平面，没有改善完整平面匹配。[E6] 这不是对B16平面恢复质量的正面证明，也不能把M16写成有效提升。
 
-本次科研实践的主要工作不是训练一个替代DUSt3R的新基础模型，而是把二维实例线索、全局点图和稳健几何估计连接成一条可检查的实验链。坐标契约、相同缓存对比、失败账本、SHA256和真实三维可视化使每个结果都能回到具体输入与程序版本。现阶段系统仍有样本规模、真实数据和完整表面表达方面的限制，但已经满足科研实践对方法实现、多场景实验、负结果分析和可复现工程的要求。
+最终方法定位是：B16作为默认方案，M16作为经过独立验证但未取得显著整体收益的研究扩展。当前主要限制不是fragment内部拆分，而是稀疏support到完整平面support之间的恢复缺口。坐标契约、相同support对比、prediction freeze barrier和non-mutating evaluator保证了这项负结果可以追溯。方法实验到此结束，后续只做可视化、失败分析和报告整理。
 
 ## 证据索引
 
@@ -223,7 +265,19 @@ Stage1 recall为`0.629410`，明显低于precision。后备RANSAC能补充学习
 /gemini/data-1/lightrecon_runs/research_practice_public_metrics_20260717_v1/public_plane_metrics.md
 ```
 
-正式提交前仍需完成30条参考文献的格式核验，并补齐学校格式信息、图号和表号。实验数字不得脱离以上证据路径单独修改。第一次14场景结果只作为恢复前记录保留，正文表格使用[E4]中的17场景合并数字。
+`[E6]` 128场景前瞻性B16/M16独立验证：
+
+```text
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/summary.json
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/per_scene_metrics.csv
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/paired_effects.csv
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/bootstrap_statistics.json
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/prediction_manifest.json
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/point_aligned_gt_manifest.json
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/figure_manifest.json
+```
+
+正式提交前仍需完成30条参考文献的格式核验，并补齐学校格式信息、图号和表号。实验数字不得脱离以上证据路径单独修改。17场景guided RANSAC结果作为开发证据保留，最终B/M定位使用[E6]的128场景独立验证。
 
 本稿已经建立 30 条原始论文来源，见
 `docs/research_practice/REFERENCES.md`。正式排版时需将其转换为学校要求的

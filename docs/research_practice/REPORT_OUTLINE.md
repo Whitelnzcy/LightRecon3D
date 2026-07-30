@@ -32,7 +32,9 @@ Word/template rendering.
 * Stage1/Stage2 plane support path;
 * structural-line path;
 * exact provenance registry;
-* global fusion and editable outputs.
+* topology-logistic global identity recovery;
+* optional learned intra-fragment split;
+* bounded editable outputs.
 
 ## 4. Method (about 2,500 characters)
 
@@ -40,9 +42,10 @@ Word/template rendering.
 * plane instance support prediction;
 * local geometry validation and SVD refit;
 * 2D line detection and exact 3D lifting;
-* learning-support-guided plane hypotheses, global consensus and weighted refit;
-* bounded connected components, exact provenance and conflict handling;
-* why alignment feedback is excluded from the final method.
+* topology/geometric identity features and shared logistic model;
+* average-linkage remerge and deterministic plane estimation;
+* learned intra-fragment split as the only B/M variable;
+* exact provenance, prediction freeze barrier and non-mutating evaluation.
 
 ## 5. Data and evaluation protocol (about 1,000 characters)
 
@@ -55,11 +58,38 @@ Word/template rendering.
 ## 6. Experiments (about 1,800 characters)
 
 * Stage1 accuracy, speed and model size;
-* direct SVD, global RANSAC, guided RANSAC and support-fusion comparison;
+* development-only direct SVD, global RANSAC and guided RANSAC comparison;
+* final 128-scene prospective B16/M16 comparison;
 * structural-line diagnostics;
 * ablations;
 * qualitative results;
 * archived negative feedback experiment.
+
+Final E16 result for the main B/M table:
+
+```text
+128 independent Structured3D scenes
+124 five-view scenes and 4 four-view scenes
+256/256 predictions frozen before final GT parse
+128/128 paired support hashes identical
+B16 / M16 Plane F1: 0.000000 / 0.000000
+B16 / M16 matched IoU: 0.000000 / 0.000000
+B16 / M16 partition pair F1: 0.358892 / 0.358968
+mean delta pair F1: +0.0000758
+95% paired bootstrap CI: [-0.0000552, +0.0002065]
+B16 / M16 predicted planes: 878 / 1292
+prediction full-cache label rate: about 0.111
+GT plane label rate: about 0.972
+mechanical verdict: Mixed_Result
+final default: B16
+research extension: M16
+```
+
+The zero Plane F1 is a support-completeness result. It must not be described
+as proof that the models are wholly useless. The sparse prediction domain
+cannot reach the frozen full-support IoU threshold. Use partition pair F1 for
+the relative B/M comparison and state that its confidence interval crosses
+zero.
 
 Current large-scale result for Table 3:
 
@@ -110,8 +140,10 @@ not the efficiency path; its runtime is not a promoted contribution.
 
 ## 7. Failure analysis and limitations (about 800 characters)
 
-* fragmentation and over-merge;
-* sparse support and coverage;
+* Stage1 direct-support coverage is the primary bottleneck;
+* sparse prediction support versus complete GT support;
+* learned split changes only already assigned points;
+* M creates additional plane fragments without stable identity improvement;
 * depth discontinuities for image lines;
 * single-backbone limitation;
 * plane residual versus true geometry conflict.
@@ -129,7 +161,9 @@ Figure 2  exact coordinate/provenance mapping
 Figure 3  plane and line front-end outputs
 Figure 4  global bounded editable result
 Figure 5  global RANSAC/guided RANSAC/fusion comparison
-Figure 6  failure gallery
+Figure 6  E16 B/M paired-effect distribution
+Figure 7  similar-result and extra-split B/M galleries
+Figure 8  complete GT support versus sparse prediction support
 Table 1   related-method scope comparison
 Table 2   Stage1 accuracy/speed/model-size result
 Table 3   multi-scene plane identity/support result
@@ -142,3 +176,7 @@ Table 5   end-to-end runtime and memory
 Every result sentence must cite an archived JSON/CSV path. Published-method
 numbers must retain their original dataset, protocol and source; numbers from
 incompatible protocols must not be placed in one superiority ranking.
+
+The 17-scene guided RANSAC result is development evidence. The prospective
+128-scene E16 result controls the final B16/M16 method positioning. Do not
+blend the two protocols into one superiority claim.
