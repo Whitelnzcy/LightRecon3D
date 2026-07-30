@@ -1,0 +1,7 @@
+{
+  "status": "not_computed",
+  "repetitions": 10000,
+  "seed": 20260729,
+  "confidence_interval": 0.95,
+  "reason": "No valid paired final metrics exist."
+}

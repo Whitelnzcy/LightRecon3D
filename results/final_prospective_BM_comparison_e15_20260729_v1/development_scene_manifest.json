@@ -1,0 +1,24 @@
+{
+  "usage": "development_only",
+  "scene_ids": [
+    "scene_00180",
+    "scene_00181",
+    "scene_00182",
+    "scene_00184",
+    "scene_00185",
+    "scene_00186",
+    "scene_00187",
+    "scene_00189",
+    "scene_00190",
+    "scene_00191",
+    "scene_00192",
+    "scene_00193",
+    "scene_00194",
+    "scene_00195",
+    "scene_00197",
+    "scene_00198",
+    "scene_00199"
+  ],
+  "training_started": false,
+  "calibration_started": false
+}

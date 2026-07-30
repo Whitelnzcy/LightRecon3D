@@ -1,0 +1,10 @@
+{
+  "usage": "single_use_final_evaluation",
+  "scene_count": 128,
+  "order_source": "results/variable_view_clean_input_materialization_e14_20260729_v1/view_selection_manifest_e14.json",
+  "order_source_sha256": "ab17b1f23e840d88b609c0c5d640766735eddaafddea59755900d2effd7bb0c9",
+  "global_cache_root": "F:\\Structured3D_clean_e11\\global_cache_e14",
+  "direct_support_root": "F:\\Structured3D_clean_e11\\direct_support_e14",
+  "prediction_started": false,
+  "GT_semantic_parse_count": 0
+}

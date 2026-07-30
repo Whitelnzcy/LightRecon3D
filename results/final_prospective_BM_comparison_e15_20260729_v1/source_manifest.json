@@ -1,0 +1,9 @@
+{
+  "registration_id": "E15_PREREG_final_prospective_BM_comparison_20260729_v1",
+  "base_commit": "23ea0d520ea32fadfebb953dd4a31f5367df35d0",
+  "branch": "codex/e15-final-bm-comparison",
+  "canonical_request_sha256": "3b53b9f1be22f02e97c2b02d8378efd7469d6f72ac1403b74f47c35527d66a40",
+  "point_aligned_gt_builder_sha256": "2419a90f232816ae4d1ad59b8f85ad78cc323bdf5ad95e15986b6bcb55ac14a9",
+  "scientific_execution_commit": null,
+  "status": "not_frozen_due_to_pre_implementation_blocker"
+}

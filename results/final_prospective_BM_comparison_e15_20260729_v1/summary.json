@@ -1,0 +1,12 @@
+{
+  "registration_id": "E15_PREREG_final_prospective_BM_comparison_20260729_v1",
+  "verdict": "Blocked",
+  "specific_blocker": "Blocked_Missing_PointAligned_GT_Inputs",
+  "stage": "pre_implementation_pre_prediction",
+  "reason": "E14 contains RGB, global-cache, direct-support, and sealed annotation_3d bytes, but contains no per-view layout.json or camera_pose.txt and no equivalent frozen point-aligned GT mapping.",
+  "final_scene_count": 128,
+  "predictions_completed": 0,
+  "final_gt_semantic_parse_count": 0,
+  "scientific_result_available": false,
+  "mechanical_next_action": "Stop. E15 cannot resume under its frozen input and evaluator contract."
+}

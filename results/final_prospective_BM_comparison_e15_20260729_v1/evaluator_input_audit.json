@@ -1,0 +1,59 @@
+{
+  "registration_id": "E15_PREREG_final_prospective_BM_comparison_20260729_v1",
+  "audit_scope": "file existence, schemas, and development-only annotation structure",
+  "final_gt_semantic_parse_count": 0,
+  "e14_input_counts": {
+    "raw_scene_directories": 128,
+    "rgb_rawlight_files": 3265,
+    "global_cache_npz_files": 128,
+    "direct_support_npz_files": 128,
+    "sealed_scene_directories": 128,
+    "sealed_annotation_3d_files": 128,
+    "layout_json_files": 0,
+    "camera_pose_txt_files": 0
+  },
+  "e14_global_cache_registry_fields_observed": [
+    "alignment_view_index",
+    "image_path",
+    "points_hw",
+    "global_point_offset",
+    "global_point_count"
+  ],
+  "e14_global_cache_registry_contains_camera_pose": false,
+  "e14_global_cache_registry_contains_gt_pixel_labels": false,
+  "development_annotation_3d_top_level_keys": [
+    "cuboids",
+    "junctions",
+    "lineJunctionMatrix",
+    "lines",
+    "manhattan",
+    "planeLineMatrix",
+    "planes",
+    "semantics"
+  ],
+  "development_annotation_3d_contains_camera_pose": false,
+  "verified_point_aligned_gt_builder": {
+    "path": "build_structured3d_point_aligned_gt.py",
+    "sha256": "2419a90f232816ae4d1ad59b8f85ad78cc323bdf5ad95e15986b6bcb55ac14a9",
+    "requires_per_view_layout_json": true,
+    "requires_per_view_camera_pose_txt": true,
+    "requirement_lines": [380, 381, 385, 386, 387, 388]
+  },
+  "e14_input_manifest": {
+    "path": "results/variable_view_clean_input_materialization_e14_20260729_v1/input_preparation_manifest_e14.json",
+    "sha256": "84e7f30ae517d7026df015088e4aad35f4451c17d6c819d52c8a9a014d97a300"
+  },
+  "mechanical_conclusion": "No registered mapping exists from the 128 sealed annotation_3d world planes to E14 DUSt3R view pixels/global points.",
+  "disallowed_workarounds": [
+    "resume data acquisition for layout.json or camera_pose.txt",
+    "replace the final scene pool",
+    "invent a new camera or pixel-label mapping",
+    "change the evaluator or GT contract",
+    "interpret annotation_3d as point-aligned labels"
+  ],
+  "top_level_verdict": "Blocked",
+  "specific_blocker": "Blocked_Missing_PointAligned_GT_Inputs",
+  "stop_stage": "pre_implementation_pre_prediction",
+  "prediction_count": 0,
+  "prediction_frozen_before_gt_evaluation": false
+}

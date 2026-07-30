@@ -1,0 +1,7 @@
+{
+  "status": "not_trained_due_to_pre_implementation_blocker",
+  "model_sha256": null,
+  "identity_threshold": null,
+  "development_scene_count": 17,
+  "final_scene_usage_count": 0
+}

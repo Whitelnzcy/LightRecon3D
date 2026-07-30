@@ -1,0 +1,8 @@
+{
+  "registration_id": "E15_PREREG_final_prospective_BM_comparison_20260729_v1",
+  "status": "not_started_due_to_pre_prediction_blocker",
+  "expected_prediction_count": 256,
+  "completed_prediction_count": 0,
+  "prediction_frozen_before_GT_evaluation": false,
+  "predictions": []
+}

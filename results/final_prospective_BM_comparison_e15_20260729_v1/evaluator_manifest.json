@@ -1,0 +1,8 @@
+{
+  "status": "blocked_before_freeze",
+  "specific_blocker": "Blocked_Missing_PointAligned_GT_Inputs",
+  "non_mutating_contract_changed": false,
+  "final_gt_semantic_parse_count": 0,
+  "support_mutation_count": 0,
+  "details": "evaluator_input_audit.json"
+}

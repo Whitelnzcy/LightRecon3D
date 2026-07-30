@@ -1,0 +1,17 @@
+{
+  "registration_id": "E15_PREREG_final_prospective_BM_comparison_20260729_v1",
+  "final_gt_semantic_parse_count": 0,
+  "final_prediction_count": 0,
+  "B15_inference_count": 0,
+  "M15_inference_count": 0,
+  "B_or_M_training_count": 0,
+  "threshold_calibration_count": 0,
+  "formal_evaluator_count": 0,
+  "GT_matcher_count": 0,
+  "plane_metric_count": 0,
+  "support_expansion_count": 0,
+  "geometry_refit_count": 0,
+  "RANSAC_count": 0,
+  "support_mutation_count": 0,
+  "protocol_modification_count": 0
+}

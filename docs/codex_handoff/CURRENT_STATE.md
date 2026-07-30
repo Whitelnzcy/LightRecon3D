@@ -3868,3 +3868,19 @@ slowest scenes. Then freeze the internal decision table before an official-
 split canary. Official validation/test data are not present locally, and the
 17 current scenes remain an internal development set rather than a public
 benchmark.
+# E15 final prospective B/M comparison (2026-07-30)
+
+Registration `E15_PREREG_final_prospective_BM_comparison_20260729_v1`
+mechanically stopped as `Blocked_Missing_PointAligned_GT_Inputs` before
+implementation and before any final prediction.
+
+The E14 pool has 128 global caches, 128 direct supports, 3,265 RGB files and
+128 sealed `annotation_3d.json` files, but zero per-view `layout.json` and zero
+`camera_pose.txt` files. The E14 view registry contains no equivalent pose or
+GT pixel-label mapping. The verified point-aligned GT builder requires both
+missing per-view files. Final-scene GT semantic parse count, B/M prediction
+count, training count, evaluator count, Plane metric count, expansion/refit
+count and RANSAC count all remain zero.
+
+See
+`docs/codex_returns/CODEX_RETURN_final_prospective_BM_comparison_e15_20260729.md`.
