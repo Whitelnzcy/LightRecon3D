@@ -1,0 +1,65 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "reporting_only": true,
+  "scientific_outputs_modified": false,
+  "description": "Actual frozen RGB, global point cloud, and B16/M16 reconstruction outputs.",
+  "scenes": [
+    {
+      "scene_id": "scene_01922",
+      "selected_view": 4,
+      "rgb_path": "F:\\Structured3D_clean_e11\\raw_rgb\\scene_01922\\2D_rendering\\1429\\perspective\\empty\\4\\rgb_rawlight.png",
+      "b_plane_count": 6,
+      "m_plane_count": 8,
+      "support_point_count": 81821,
+      "output_path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\actual_reconstruction\\scene_01922_actual_reconstruction.png",
+      "sha256": "c659db1a665b306d89e5fe6bf450124976f590ff0429c623ebc2196637595d8b"
+    },
+    {
+      "scene_id": "scene_02817",
+      "selected_view": 0,
+      "rgb_path": "F:\\Structured3D_clean_e11\\raw_rgb\\scene_02817\\2D_rendering\\1655\\perspective\\empty\\0\\rgb_rawlight.png",
+      "b_plane_count": 4,
+      "m_plane_count": 4,
+      "support_point_count": 81911,
+      "output_path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\actual_reconstruction\\scene_02817_actual_reconstruction.png",
+      "sha256": "aa1a63fe6295ecbaeee1ef96200a515a80729c20f46dd3e60e2ff8b52b9d79ca"
+    },
+    {
+      "scene_id": "scene_00597",
+      "selected_view": 3,
+      "rgb_path": "F:\\Structured3D_clean_e11\\raw_rgb\\scene_00597\\2D_rendering\\1714\\perspective\\empty\\3\\rgb_rawlight.png",
+      "b_plane_count": 8,
+      "m_plane_count": 20,
+      "support_point_count": 81718,
+      "output_path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\actual_reconstruction\\scene_00597_actual_reconstruction.png",
+      "sha256": "ace2f3fe1f2c3f0aef587902a518688b4a9fcc2ae185cc2627f5e0ff98254925"
+    }
+  ],
+  "b16_final_method_gallery": {
+    "output_path": "E:\\Study\\code\\LightRecon3D_e16_final_bm\\results\\targeted_GT_sidecar_and_final_BM_e16_20260730_v1\\figures\\actual_reconstruction\\b16_final_method_gallery.png",
+    "sha256": "62a7302bd0eaaaf99ae81a8b7f5287de48c3dea13d72693e97aee7866d9b1037",
+    "scenes": [
+      {
+        "scene_id": "scene_01922",
+        "selected_view": 4,
+        "rgb_path": "F:\\Structured3D_clean_e11\\raw_rgb\\scene_01922\\2D_rendering\\1429\\perspective\\empty\\4\\rgb_rawlight.png",
+        "plane_count": 6,
+        "support_point_count": 81821
+      },
+      {
+        "scene_id": "scene_02817",
+        "selected_view": 0,
+        "rgb_path": "F:\\Structured3D_clean_e11\\raw_rgb\\scene_02817\\2D_rendering\\1655\\perspective\\empty\\0\\rgb_rawlight.png",
+        "plane_count": 4,
+        "support_point_count": 81911
+      },
+      {
+        "scene_id": "scene_00597",
+        "selected_view": 3,
+        "rgb_path": "F:\\Structured3D_clean_e11\\raw_rgb\\scene_00597\\2D_rendering\\1714\\perspective\\empty\\3\\rgb_rawlight.png",
+        "plane_count": 8,
+        "support_point_count": 81718
+      }
+    ]
+  }
+}

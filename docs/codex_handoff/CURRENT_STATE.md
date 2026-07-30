@@ -4026,3 +4026,34 @@ c71a413506c2fe241a333bf57ea763c4a3cb5baefe3a211a584b27d1c24c3cc4
 Next exact action: final prose formatting or citation cleanup only. Do not
 change the model, evaluator, support, thresholds, scene set or frozen E16
 scientific outputs.
+
+### Actual reconstruction visualization correction
+
+The first reporting pass emphasized tables and metric diagnostics. A follow-up
+reporting-only pass now visualizes the method's actual frozen output:
+
+```text
+visualize_e16_reconstruction_results.py
+tests/test_visualize_e16_reconstruction_results.py
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/
+  figures/actual_reconstruction/
+```
+
+The primary `b16_final_method_gallery.png` shows three frozen scenes as input
+RGB, B16 plane identities in the selected image, and B16 plane identities in
+the DUSt3R-aligned 3D point cloud. Three detailed figures show the RGB point
+cloud and B16/M16 outputs side by side. These are direct renders of frozen
+prediction points and IDs. They do not create dense plane support, change the
+prediction schema, use GT, or alter any metric.
+
+Validation:
+
+```text
+python -m pytest tests/test_visualize_e16_reconstruction_results.py
+  tests/test_visualize_e16_final_results.py
+  tests/test_e16_final_bm_contract.py
+  tests/test_execute_targeted_gt_sidecars_e16.py -q
+14 passed in 2.72s
+four actual-output PNG hashes match actual_reconstruction_manifest.json
+frozen prediction, point-aligned GT, and summary hashes unchanged
+```

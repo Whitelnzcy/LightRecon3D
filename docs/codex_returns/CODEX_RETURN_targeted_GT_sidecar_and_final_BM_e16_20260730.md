@@ -321,9 +321,23 @@ scientific output:
 
 ```text
 visualize_e16_final_results.py
+visualize_e16_reconstruction_results.py
 docs/research_practice/E16_FAILURE_ANALYSIS.md
 results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/
 ```
 
 The figure manifest is bound to the frozen summary, per-scene metrics,
 prediction manifest and GT manifest hashes.
+
+The actual-output visualization reads frozen RGB, DUSt3R global point clouds
+and B16/M16 predictions. Its primary figure is:
+
+```text
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/
+figures/actual_reconstruction/b16_final_method_gallery.png
+```
+
+It shows input RGB, image-space plane identities and the final globally
+aligned 3D plane identities. Three detailed scene figures additionally show
+B16 and M16 side by side. Display rendering does not expand support, refit
+planes or change prediction IDs.

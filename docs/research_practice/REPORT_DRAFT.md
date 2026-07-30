@@ -146,6 +146,10 @@ Matched IoU增加`0.188899`，说明提升不只是实例编号层面的变化�
 
 全部256份prediction在最终GT解封前完成并hash。128对B/M support hash全部相同。评价器读取同一组point-aligned GT，且评价前后的support、plane ID、plane parameter和provenance hash保持不变。Evaluator没有扩张support、重新拟合平面或执行RANSAC。
 
+![B16最终方法的真实重建效果](../../results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/actual_reconstruction/b16_final_method_gallery.png)
+
+图中每一行对应一个冻结场景，从左到右依次为输入RGB、B16在该视图中的平面身份和统一坐标中的三维平面结果。彩色点是B16实际输出的direct-support平面身份，淡色RGB点云是DUSt3R全局对齐结果。该图直接展示方法输出，而不是GT匹配或评价器生成的示意结果。B16能够恢复主要墙面、地面和部分局部平面的三维身份，但没有恢复Stage1未提供的完整可见support。
+
 | 指标 | B16 | M16 | M16-B16 |
 |---|---:|---:|---:|
 | Plane F1 | 0.000000 | 0.000000 | 0.000000 |

@@ -159,11 +159,12 @@ novelty or superiority claims.
 Figure 1  final system diagram
 Figure 2  exact coordinate/provenance mapping
 Figure 3  plane and line front-end outputs
-Figure 4  global bounded editable result
+Figure 4  actual B16 input, image-space identities, and global 3D result
 Figure 5  global RANSAC/guided RANSAC/fusion comparison
-Figure 6  E16 B/M paired-effect distribution
-Figure 7  similar-result and extra-split B/M galleries
-Figure 8  complete GT support versus sparse prediction support
+Figure 6  actual frozen B16/M16 reconstruction comparison
+Figure 7  E16 B/M paired-effect distribution
+Figure 8  similar-result and extra-split B/M galleries
+Figure 9  complete GT support versus sparse prediction support
 Table 1   related-method scope comparison
 Table 2   Stage1 accuracy/speed/model-size result
 Table 3   multi-scene plane identity/support result

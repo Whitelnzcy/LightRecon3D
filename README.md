@@ -26,6 +26,20 @@ B16 是默认方法。M16 作为研究扩展和消融实验完整保留。
 
 坐标映射不依赖数组形状或文件名猜测。每个 support 点都保存视图编号、点图像素和全局点索引。B16 与 M16 使用相同输入、identity 特征、logistic 模型、聚类阈值、平面参数估计和评价器。两者唯一的区别是是否启用 learned split。
 
+## 最终重建效果
+
+下图直接读取冻结的输入 RGB、DUSt3R 全局点云和 B16 prediction。每一行从左到右依次是输入视图、图像中的平面身份以及统一坐标中的最终三维平面结果。颜色表示不同平面身份，三维图中的淡色 RGB 点云表示完整场景上下文。
+
+![B16最终重建效果](results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/actual_reconstruction/b16_final_method_gallery.png)
+
+这张图展示的是方法真实输出，不是 GT 匹配图或指标示意图。当前输出已经能在全局三维坐标中分离主要墙面、地面和部分局部平面，但只覆盖 Stage1 提供的 direct support，没有补全整块可见平面。
+
+单场景的 B16/M16 图像与三维结果对照位于：
+
+```text
+results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/actual_reconstruction/
+```
+
 ## 128 场景独立验证
 
 最终比较使用 128 个此前未参与训练和调参的 Structured3D 场景，其中 124 个场景使用 5 个视图，4 个场景使用 4 个视图。旧 17 个场景只用于训练共享 identity 模型、冻结阈值和工程测试。
@@ -76,6 +90,8 @@ results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/
 
 其中包括：
 
+- B16 最终方法真实重建总览
+- 3 个场景的 RGB、全局点云及 B16/M16 三维结果
 - B16/M16 主结果表
 - 128 场景 partition pair F1 配对差值分布
 - 4 个 B/M 结果近似一致的场景
@@ -86,6 +102,7 @@ results/targeted_GT_sidecar_and_final_BM_e16_20260730_v1/figures/
 
 ```powershell
 E:\anaconda\envs\ai\python.exe visualize_e16_final_results.py
+E:\anaconda\envs\ai\python.exe visualize_e16_reconstruction_results.py
 ```
 
 脚本只读取冻结结果，不运行模型，不修改 prediction、GT 或 evaluator 输出。
