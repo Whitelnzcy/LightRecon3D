@@ -3884,3 +3884,72 @@ count and RANSAC count all remain zero.
 
 See
 `docs/codex_returns/CODEX_RETURN_final_prospective_BM_comparison_e15_20260729.md`.
+
+# E16 targeted GT sidecars and final B/M comparison (2026-07-30)
+
+Registration
+`E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1` completed with the
+valid mechanical verdict `Mixed_Result`. E15 remains
+`Blocked_Missing_PointAligned_GT_Inputs`; it was not resumed or reinterpreted.
+
+The E14 128-scene/636-view input set was verified unchanged. E16 mapped and
+member-range acquired exactly 636 `layout.json` plus 636 `camera_pose.txt`
+files from the same 14 official `perspective_empty` archives. The transfer
+covered 457,081 compressed bytes and 1,520,945 uncompressed bytes. All 1,272
+files passed central-directory identity, local-header, range, size, CRC32 and
+SHA-256 checks. Final layout, camera numeric and annotation semantic parse
+counts remained zero throughout acquisition, development and prediction.
+
+The prospective methods were frozen in scientific source commit
+`c24e543b3098ba280b062d918acdbc9dd8ecdbf5`:
+
+```text
+B16 = shared topology-logistic pipeline, learned split disabled
+M16 = the identical pipeline, learned intra-fragment split enabled
+shared identity model SHA-256 =
+8e207b6f52ce538f0580beca81c61c44a285988726df942fba95486d21ec8ab9
+M checkpoint SHA-256 =
+bd8f89bc8c457fd0b54547c775477813b4d5e3a0667f81c08ec28d4faaadfcd1
+identity threshold = 0.6204897226361007
+development OOF macro pair F1 = 0.8982585715063541
+```
+
+Only the old 17 scenes trained/calibrated shared identity. Development GT
+alignment and B16/M16 4/5-view smoke tests passed. All 256 final predictions
+then completed without GT access or quality-driven reruns. The prediction
+manifest SHA-256 is
+`8f3550779ea395fc634fc14bbba366ea36901910a5f6d6b157208cc0748f6399`;
+all 128 paired B/M support hashes match.
+
+After the prediction barrier, one shared point-aligned GT set was built for
+128/128 scenes from 636 selected views and 128 annotations. All GT output
+hashes were verified. The frozen evaluator preserved every prediction hash
+and made zero expansion, support mutation, refit, RANSAC, ID modification or
+GT-guided repair calls.
+
+Final macro results:
+
+| Metric | B16 | M16 | M16-B16 |
+|---|---:|---:|---:|
+| Plane F1 | 0.000000 | 0.000000 | 0.000000 |
+| matched IoU | 0.000000 | 0.000000 | 0.000000 |
+| partition pair F1 | 0.358892 | 0.358968 | +0.0000758 |
+| GT-support assignment | 0.111023 | 0.111023 | 0.000000 |
+| full-cache label rate | 0.111012 | 0.111012 | 0.000000 |
+| GT-plane label rate | 0.972479 | 0.972479 | 0.000000 |
+
+The pair-F1 effect has 95% paired-bootstrap interval
+`[-0.0000552, +0.0002065]` with W/T/L `78/1/49`. Fragmentation and overmerge
+are both zero under the frozen full-support IoU thresholds. Because the shared
+prediction support labels only about 11.10% of the cache while GT planes cover
+about 97.24%, neither method reaches a full-support IoU TP. This support
+ceiling makes the learned identity split effect negligible in the registered
+comparison, but the evaluation contract must not be changed after unsealing.
+
+Mechanical direction: B16 is the simple default and M16 is retained as a
+mixed-result extension. Do not retrain M, tune thresholds, add evaluation
+scenes or restore L/G/J. Proceed only to result visualization, failure
+analysis and project reporting.
+
+Canonical return:
+`docs/codex_returns/CODEX_RETURN_targeted_GT_sidecar_and_final_BM_e16_20260730.md`.

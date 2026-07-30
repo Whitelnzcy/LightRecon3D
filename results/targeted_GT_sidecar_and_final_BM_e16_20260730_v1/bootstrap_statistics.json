@@ -1,0 +1,37 @@
+{
+  "repetitions": 10000,
+  "seed": 20260729,
+  "confidence_interval": 0.95,
+  "effects": [
+    {
+      "metric": "Plane_F1",
+      "mean": 0.0,
+      "median": 0.0,
+      "ci95_lower": 0.0,
+      "ci95_upper": 0.0,
+      "positive_scene_count": 0,
+      "zero_scene_count": 128,
+      "negative_scene_count": 0
+    },
+    {
+      "metric": "matched_iou_mean",
+      "mean": 0.0,
+      "median": 0.0,
+      "ci95_lower": 0.0,
+      "ci95_upper": 0.0,
+      "positive_scene_count": 0,
+      "zero_scene_count": 128,
+      "negative_scene_count": 0
+    },
+    {
+      "metric": "partition_pair_f1",
+      "mean": 7.577341317496615e-05,
+      "median": 9.449248671408728e-05,
+      "ci95_lower": -5.520666468923561e-05,
+      "ci95_upper": 0.00020650138656844072,
+      "positive_scene_count": 78,
+      "zero_scene_count": 1,
+      "negative_scene_count": 49
+    }
+  ]
+}

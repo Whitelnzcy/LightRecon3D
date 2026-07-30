@@ -1,0 +1,22 @@
+2026-07-30T04:20:17.413862+00:00 E16 source freeze
+registration_id=E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1
+execution_commit=c24e543b3098ba280b062d918acdbc9dd8ecdbf5
+E14 upstream=passed
+sealed sidecars=1272/1272
+development identity=17 scenes
+development smoke=passed (B16/M16, 4/5 views)
+final predictions=0
+final GT semantic parses=0
+2026-07-30T04:26:05.252580+00:00 prediction freeze barrier passed
+formal predictions=256/256
+paired B/M support hash matches=128/128
+prediction manifest sha256=8f3550779ea395fc634fc14bbba366ea36901910a5f6d6b157208cc0748f6399
+prediction-barrier final GT parse counts=0/0/0
+2026-07-30T04:32:20.970325+00:00 shared point-aligned GT frozen
+GT scenes=128/128
+selected views parsed=636/636
+annotation scenes parsed=128/128
+2026-07-30T04:33:29.848537+00:00 non-mutating evaluation completed
+prediction immutability=passed
+forbidden evaluator calls=0
+mechanical verdict=Mixed_Result

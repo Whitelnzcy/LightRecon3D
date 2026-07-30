@@ -1,0 +1,770 @@
+[
+  {
+    "scene_id": "scene_00426",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00010326646104519277
+  },
+  {
+    "scene_id": "scene_01741",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0009777595044155873
+  },
+  {
+    "scene_id": "scene_02976",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 4.413773343897587e-05
+  },
+  {
+    "scene_id": "scene_01767",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0008107322598491229
+  },
+  {
+    "scene_id": "scene_02023",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 8.090375483260637e-05
+  },
+  {
+    "scene_id": "scene_01068",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0002283866268082413
+  },
+  {
+    "scene_id": "scene_02174",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0005009169189370555
+  },
+  {
+    "scene_id": "scene_02335",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.000355502807331487
+  },
+  {
+    "scene_id": "scene_01840",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0004934247583244789
+  },
+  {
+    "scene_id": "scene_01164",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0001764696679294464
+  },
+  {
+    "scene_id": "scene_00659",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00104667078866294
+  },
+  {
+    "scene_id": "scene_02808",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00031560298564603517
+  },
+  {
+    "scene_id": "scene_01892",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -3.338588977747081e-05
+  },
+  {
+    "scene_id": "scene_01765",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0006929718560791387
+  },
+  {
+    "scene_id": "scene_01864",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0002537837075378968
+  },
+  {
+    "scene_id": "scene_02336",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -5.200882102168736e-05
+  },
+  {
+    "scene_id": "scene_01177",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00018431954074449308
+  },
+  {
+    "scene_id": "scene_00821",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -4.2218114744169144e-05
+  },
+  {
+    "scene_id": "scene_02338",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00017822748281903777
+  },
+  {
+    "scene_id": "scene_00507",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -3.9230450090799174e-05
+  },
+  {
+    "scene_id": "scene_01436",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0010979762671675664
+  },
+  {
+    "scene_id": "scene_02505",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0002676334982207318
+  },
+  {
+    "scene_id": "scene_02795",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0003164013227037188
+  },
+  {
+    "scene_id": "scene_01768",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0015975548061784028
+  },
+  {
+    "scene_id": "scene_01560",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 7.939410449828155e-05
+  },
+  {
+    "scene_id": "scene_02684",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0017690135699853227
+  },
+  {
+    "scene_id": "scene_00472",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 8.349141491464929e-05
+  },
+  {
+    "scene_id": "scene_01621",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0006251451413069042
+  },
+  {
+    "scene_id": "scene_00954",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00025347877150078135
+  },
+  {
+    "scene_id": "scene_00455",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00036213199515761074
+  },
+  {
+    "scene_id": "scene_02842",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -8.029157211680849e-05
+  },
+  {
+    "scene_id": "scene_01954",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0002809071740074165
+  },
+  {
+    "scene_id": "scene_02299",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0017932340142226
+  },
+  {
+    "scene_id": "scene_01272",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00014959745687409542
+  },
+  {
+    "scene_id": "scene_01872",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0011238090492424746
+  },
+  {
+    "scene_id": "scene_01497",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -5.329895014472008e-05
+  },
+  {
+    "scene_id": "scene_02009",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00038423198638903866
+  },
+  {
+    "scene_id": "scene_02491",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.000595241252987655
+  },
+  {
+    "scene_id": "scene_02263",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0008959622393698852
+  },
+  {
+    "scene_id": "scene_00527",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 7.028196933545061e-05
+  },
+  {
+    "scene_id": "scene_02465",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00025672269556614724
+  },
+  {
+    "scene_id": "scene_00630",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0014176046925946095
+  },
+  {
+    "scene_id": "scene_00597",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0006563242416103288
+  },
+  {
+    "scene_id": "scene_02169",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00015189209349664168
+  },
+  {
+    "scene_id": "scene_01619",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.000741182758032144
+  },
+  {
+    "scene_id": "scene_02845",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -9.315409679849784e-05
+  },
+  {
+    "scene_id": "scene_02121",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0006265689334767899
+  },
+  {
+    "scene_id": "scene_00557",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0021388604146393986
+  },
+  {
+    "scene_id": "scene_00719",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.000553059745550033
+  },
+  {
+    "scene_id": "scene_00797",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00025347362833483267
+  },
+  {
+    "scene_id": "scene_01594",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00025423564295279366
+  },
+  {
+    "scene_id": "scene_02734",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0004603122819374361
+  },
+  {
+    "scene_id": "scene_02501",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0012353729892528587
+  },
+  {
+    "scene_id": "scene_00235",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.001054240954116159
+  },
+  {
+    "scene_id": "scene_02038",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0008558892018549202
+  },
+  {
+    "scene_id": "scene_01846",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0007706873239333722
+  },
+  {
+    "scene_id": "scene_01357",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.000711343719167673
+  },
+  {
+    "scene_id": "scene_02943",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0010700307571210321
+  },
+  {
+    "scene_id": "scene_00399",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0005008798969970418
+  },
+  {
+    "scene_id": "scene_00239",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 5.3958109026142065e-05
+  },
+  {
+    "scene_id": "scene_00397",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0005739258127837876
+  },
+  {
+    "scene_id": "scene_01012",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00027951811571591545
+  },
+  {
+    "scene_id": "scene_02816",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00029246867797780296
+  },
+  {
+    "scene_id": "scene_01878",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.002266144795195879
+  },
+  {
+    "scene_id": "scene_02785",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 3.909792381517896e-07
+  },
+  {
+    "scene_id": "scene_02651",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00030648969271096504
+  },
+  {
+    "scene_id": "scene_01713",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00029605414525435414
+  },
+  {
+    "scene_id": "scene_01672",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0004690910824591832
+  },
+  {
+    "scene_id": "scene_00769",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0011346705474241103
+  },
+  {
+    "scene_id": "scene_00321",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0005488178174679614
+  },
+  {
+    "scene_id": "scene_02102",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0005971472049982607
+  },
+  {
+    "scene_id": "scene_01509",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0006909718053340064
+  },
+  {
+    "scene_id": "scene_02887",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0012479545563587324
+  },
+  {
+    "scene_id": "scene_01184",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0017940518917836656
+  },
+  {
+    "scene_id": "scene_00789",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00039269182108386813
+  },
+  {
+    "scene_id": "scene_00270",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00010133688848990019
+  },
+  {
+    "scene_id": "scene_00562",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0002312042799670344
+  },
+  {
+    "scene_id": "scene_01312",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0007587127981249497
+  },
+  {
+    "scene_id": "scene_01422",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0006067829779485834
+  },
+  {
+    "scene_id": "scene_02817",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0
+  },
+  {
+    "scene_id": "scene_01790",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0017276808791642506
+  },
+  {
+    "scene_id": "scene_02176",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0008311855163797288
+  },
+  {
+    "scene_id": "scene_01934",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00027119176823625635
+  },
+  {
+    "scene_id": "scene_01299",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00032627159338383116
+  },
+  {
+    "scene_id": "scene_01188",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00020266393725743015
+  },
+  {
+    "scene_id": "scene_02075",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 9.928032608008674e-05
+  },
+  {
+    "scene_id": "scene_01728",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00017441362593517695
+  },
+  {
+    "scene_id": "scene_00377",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00048295514292967523
+  },
+  {
+    "scene_id": "scene_02716",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 8.970464734808781e-05
+  },
+  {
+    "scene_id": "scene_01937",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0003691963021271727
+  },
+  {
+    "scene_id": "scene_02392",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0002997741217223293
+  },
+  {
+    "scene_id": "scene_02942",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.001609915960940289
+  },
+  {
+    "scene_id": "scene_02305",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 5.103940438067056e-05
+  },
+  {
+    "scene_id": "scene_01698",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.000989156094865884
+  },
+  {
+    "scene_id": "scene_01218",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 3.749587136481214e-05
+  },
+  {
+    "scene_id": "scene_00885",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0012803804519877504
+  },
+  {
+    "scene_id": "scene_00972",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 6.656159764129033e-05
+  },
+  {
+    "scene_id": "scene_01923",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0006027038249242778
+  },
+  {
+    "scene_id": "scene_01815",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 2.238830186751528e-05
+  },
+  {
+    "scene_id": "scene_01199",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0012791442630943894
+  },
+  {
+    "scene_id": "scene_02978",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0009181712373323159
+  },
+  {
+    "scene_id": "scene_02618",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00039412166872723753
+  },
+  {
+    "scene_id": "scene_01718",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0008313906409271876
+  },
+  {
+    "scene_id": "scene_00375",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0007762486930439905
+  },
+  {
+    "scene_id": "scene_01922",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0007746622146580506
+  },
+  {
+    "scene_id": "scene_02008",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0003155643840040412
+  },
+  {
+    "scene_id": "scene_01338",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0002707696052489661
+  },
+  {
+    "scene_id": "scene_00752",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0012613586896183526
+  },
+  {
+    "scene_id": "scene_00551",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0006505026228009192
+  },
+  {
+    "scene_id": "scene_02876",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00011648827038057696
+  },
+  {
+    "scene_id": "scene_02905",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 8.779355747501327e-06
+  },
+  {
+    "scene_id": "scene_02222",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0002460430928806212
+  },
+  {
+    "scene_id": "scene_01209",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -1.4156862816305793e-05
+  },
+  {
+    "scene_id": "scene_01847",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0007928155501170375
+  },
+  {
+    "scene_id": "scene_02932",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0002950716871704673
+  },
+  {
+    "scene_id": "scene_00790",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0007507148147527509
+  },
+  {
+    "scene_id": "scene_02424",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00016687310013663303
+  },
+  {
+    "scene_id": "scene_02208",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0005905220826234459
+  },
+  {
+    "scene_id": "scene_02682",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.0005124837255544024
+  },
+  {
+    "scene_id": "scene_02029",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00019195203657501603
+  },
+  {
+    "scene_id": "scene_02486",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.00011302508579474901
+  },
+  {
+    "scene_id": "scene_02727",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0018496375706866797
+  },
+  {
+    "scene_id": "scene_00555",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 6.499949604199529e-05
+  },
+  {
+    "scene_id": "scene_01092",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0005254312119870042
+  },
+  {
+    "scene_id": "scene_01936",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.001919588916624193
+  },
+  {
+    "scene_id": "scene_01969",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": -0.00019638041866787415
+  },
+  {
+    "scene_id": "scene_00697",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.001170494744397954
+  },
+  {
+    "scene_id": "scene_00858",
+    "delta_plane_f1": 0.0,
+    "delta_matched_iou": 0.0,
+    "delta_partition_pair_f1": 0.0004257809367519405
+  }
+]

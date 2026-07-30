@@ -1,15 +1,21 @@
 {
   "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
-  "phase": "pre_final_prediction_freeze",
-  "final_layout_json_parse_count": 0,
-  "final_camera_pose_numeric_parse_count": 0,
-  "final_annotation_semantic_parse_count": 0,
+  "phase": "completed",
+  "prediction_count": 256,
+  "prediction_barrier_layout_json_parse_count": 0,
+  "prediction_barrier_camera_pose_numeric_parse_count": 0,
+  "prediction_barrier_annotation_semantic_parse_count": 0,
+  "post_barrier_layout_json_parse_count": 636,
+  "post_barrier_camera_pose_numeric_parse_count": 636,
+  "post_barrier_annotation_semantic_parse_count": 128,
   "final_scene_training_count": 0,
   "final_scene_threshold_calibration_count": 0,
   "expansion_call_count": 0,
   "support_mutation_call_count": 0,
   "evaluator_plane_fit_refit_call_count": 0,
+  "weighted_fit_call_count": 0,
   "RANSAC_call_count": 0,
   "L_G_J_call_count": 0,
-  "frozen_utc": "2026-07-30T04:20:17.412862+00:00"
+  "prediction_immutability_passed": true,
+  "completed_utc": "2026-07-30T04:33:29.848537+00:00"
 }

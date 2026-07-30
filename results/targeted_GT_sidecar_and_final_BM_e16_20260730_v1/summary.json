@@ -1,0 +1,144 @@
+{
+  "registration_id": "E16_PREREG_targeted_GT_sidecar_and_final_BM_20260730_v1",
+  "status": "completed",
+  "verdict": "Mixed_Result",
+  "scene_count": 128,
+  "macro": {
+    "B16": {
+      "Plane_F1": 0.0,
+      "matched_iou_mean": 0.0,
+      "partition_pair_precision": 0.23714036590692175,
+      "partition_pair_recall": 0.799791890821238,
+      "partition_pair_f1": 0.3588922923651372,
+      "fragmentation_excess": 0.0,
+      "overmerge_excess": 0.0,
+      "gt_support_assignment_rate": 0.11102274489165556,
+      "gt_support_matched_coverage": 0.0,
+      "full_cache_label_rate": 0.11101224422454833,
+      "gt_plane_label_rate": 0.9724786811404759,
+      "nonplane_false_assignment_rate": 0.11062223139755639
+    },
+    "M16": {
+      "Plane_F1": 0.0,
+      "matched_iou_mean": 0.0,
+      "partition_pair_precision": 0.23724372130454247,
+      "partition_pair_recall": 0.799374775481462,
+      "partition_pair_f1": 0.3589680657783122,
+      "fragmentation_excess": 0.0,
+      "overmerge_excess": 0.0,
+      "gt_support_assignment_rate": 0.11102274489165556,
+      "gt_support_matched_coverage": 0.0,
+      "full_cache_label_rate": 0.11101224422454833,
+      "gt_plane_label_rate": 0.9724786811404759,
+      "nonplane_false_assignment_rate": 0.11062223139755639
+    }
+  },
+  "aggregate": {
+    "B16": {
+      "true_positive_planes": 0,
+      "predicted_plane_count": 878,
+      "gt_plane_count": 1067,
+      "plane_precision": 0.0,
+      "plane_recall": 0.0,
+      "Plane_F1": 0.0,
+      "matched_iou_mean": 0.0,
+      "partition_pair_precision": 0.23825654417375372,
+      "partition_pair_recall": 0.7999417762596347,
+      "partition_pair_f1": 0.3671579107781135,
+      "fragmentation_excess": 0,
+      "overmerge_excess": 0,
+      "gt_support_assignment_rate": 0.11102269623454201,
+      "gt_support_matched_coverage": 0.0,
+      "full_cache_label_rate": 0.11101189166161665,
+      "gt_plane_label_rate": 0.9724286264010362,
+      "nonplane_false_assignment_rate": 0.11063081975125488
+    },
+    "M16": {
+      "true_positive_planes": 0,
+      "predicted_plane_count": 1292,
+      "gt_plane_count": 1067,
+      "plane_precision": 0.0,
+      "plane_recall": 0.0,
+      "Plane_F1": 0.0,
+      "matched_iou_mean": 0.0,
+      "partition_pair_precision": 0.23836110352505,
+      "partition_pair_recall": 0.799437778621374,
+      "partition_pair_f1": 0.3672289003003952,
+      "fragmentation_excess": 0,
+      "overmerge_excess": 0,
+      "gt_support_assignment_rate": 0.11102269623454201,
+      "gt_support_matched_coverage": 0.0,
+      "full_cache_label_rate": 0.11101189166161665,
+      "gt_plane_label_rate": 0.9724286264010362,
+      "nonplane_false_assignment_rate": 0.11063081975125488
+    }
+  },
+  "five_view_descriptive": {
+    "B16": {
+      "scene_count": 124,
+      "Plane_F1": 0.0
+    },
+    "M16": {
+      "scene_count": 124,
+      "Plane_F1": 0.0
+    }
+  },
+  "four_view_descriptive": {
+    "B16": {
+      "scene_count": 4,
+      "Plane_F1": 0.0
+    },
+    "M16": {
+      "scene_count": 4,
+      "Plane_F1": 0.0
+    }
+  },
+  "paired_effects": [
+    {
+      "metric": "Plane_F1",
+      "mean": 0.0,
+      "median": 0.0,
+      "ci95_lower": 0.0,
+      "ci95_upper": 0.0,
+      "positive_scene_count": 0,
+      "zero_scene_count": 128,
+      "negative_scene_count": 0
+    },
+    {
+      "metric": "matched_iou_mean",
+      "mean": 0.0,
+      "median": 0.0,
+      "ci95_lower": 0.0,
+      "ci95_upper": 0.0,
+      "positive_scene_count": 0,
+      "zero_scene_count": 128,
+      "negative_scene_count": 0
+    },
+    {
+      "metric": "partition_pair_f1",
+      "mean": 7.577341317496615e-05,
+      "median": 9.449248671408728e-05,
+      "ci95_lower": -5.520666468923561e-05,
+      "ci95_upper": 0.00020650138656844072,
+      "positive_scene_count": 78,
+      "zero_scene_count": 1,
+      "negative_scene_count": 49
+    }
+  ],
+  "fragmentation_mean_B": 0.0,
+  "fragmentation_mean_M": 0.0,
+  "overmerge_mean_B": 0.0,
+  "overmerge_mean_M": 0.0,
+  "prediction_immutability_passed": true,
+  "forbidden_evaluator_calls": {
+    "expansion": 0,
+    "support_addition_removal_reassignment": 0,
+    "plane_fit_refit": 0,
+    "weighted_fit": 0,
+    "RANSAC": 0,
+    "plane_ID_modification": 0,
+    "plane_parameter_modification": 0,
+    "GT_guided_prediction_repair": 0
+  },
+  "completed_utc": "2026-07-30T04:33:29.848537+00:00"
+}
