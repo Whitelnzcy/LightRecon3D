@@ -7716,3 +7716,84 @@ results/stage1_feature_ablation_20260802_v1/
 Launcher PID is `46368`. It runs RGB seeds first, followed by DUSt3R seeds,
 then invokes the paired summarizer. At the latest check the first RGB run was
 active and caching the 2,048 training records. No formal verdict exists yet.
+
+## 2026-08-02 main publication integration
+
+Integration branch:
+
+```text
+codex/main-integration-20260802
+```
+
+Integrated code commit before this handoff update:
+
+```text
+315f398f (Integrate complete reconstruction pipeline)
+```
+
+Publication scope:
+
+* integrated the 53 commits already ahead of `origin/main`;
+* integrated E14 variable-view input materialization and E15/E16 final B/M,
+  targeted GT-sidecar, evaluation, reporting and visualization commits;
+* committed 105 previously uncommitted pipeline, evaluation, training,
+  visualization, test and protocol files as `e2c058f`;
+* preserved the chronological handoff history from both branches;
+* excluded generated `local_outputs/`, non-E16 local `results/`, point-cloud
+  dumps, weights, caches, temporary files, PDFs/PPTX and unrelated personal
+  work;
+* did not include the local deletion of `BOUNDED_SUPPORT_HEAD.md`.
+
+Representative changed areas:
+
+```text
+Stage1 training and DUSt3R-vs-RGB ablation
+Stage2 learned region merge export and fragment identity/splitting
+Stage3 DUSt3R global alignment, support mapping, plane fusion and baselines
+point-aligned GT, bounded-support evaluation and research-practice audits
+E14 input materialization and E16 B/M/GT-sidecar evaluation
+tests and reproducibility protocols for the above
+```
+
+Commands and checks executed:
+
+```text
+git diff --check
+<ai-python> -m py_compile <all changed Python files relative to origin/main>
+<ai-python> -m unittest discover -s tests -p <changed unittest file> -q
+python -m pytest tests/test_e16_final_bm_contract.py \
+  tests/test_execute_targeted_gt_sidecars_e16.py \
+  tests/test_visualize_e16_final_results.py \
+  tests/test_visualize_e16_reconstruction_results.py -q
+```
+
+Validation:
+
+```text
+changed Python syntax check                  passed
+69 unittest-compatible changed test files   passed
+4 pytest-style E16 test files                14 passed
+merge conflicts                              resolved (handoff append-only)
+git diff --check                             passed
+secret-pattern scan                          no matches
+```
+
+Outputs generated:
+
+```text
+No new model, dataset, cache or evaluation output was generated.
+Only Git integration and validation artifacts were created.
+```
+
+Remaining issues:
+
+* The formal Stage1 DUSt3R-feature versus RGB experiment was still running at
+  the last recorded check; no formal ablation verdict is claimed here.
+* The original shared worktree intentionally retains excluded generated and
+  personal files plus the unstaged `BOUNDED_SUPPORT_HEAD.md` deletion.
+* The temporary integration worktree may be removed after the final push.
+
+Next exact step:
+
+Push the validated integration head to `origin/main`, verify the remote SHA,
+then keep local generated outputs and personal files untracked.
