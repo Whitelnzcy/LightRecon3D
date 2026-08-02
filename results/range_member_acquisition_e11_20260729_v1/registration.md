@@ -167,4 +167,3 @@ pool、Forbidden-call audit、Verdict、Mechanical next action、Artifacts。
 定位冻结 128 个 candidate 的成员字节区间，通过 HTTP Range 逐 member
 下载、解压、CRC 和 SHA-256 验证；annotation archive 完整下载但保持
 sealed。Clean Raw 达到 77 即 Ready。
-

@@ -23,4 +23,3 @@ Range reads. It must not download any complete perspective archive. The small
 annotation archive may be downloaded in full and must remain semantically
 sealed. No model, preparation, training, fitting, matcher, or evaluation call
 is authorized.
-

@@ -13,4 +13,3 @@ exactly one `layout.json` and one `camera_pose.txt` beside each selected RGB by
 member-level HTTP Range, keeps all final GT semantics sealed until 256 B16/M16
 predictions are frozen, and then performs the single registered non-mutating
 comparison.
-
