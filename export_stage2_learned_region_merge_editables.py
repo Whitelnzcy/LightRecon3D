@@ -88,12 +88,12 @@ def load_model(checkpoint_path, device):
 def safe_pair_gate(region_a, region_b, args):
     normal_a = region_a["normal"]
     normal_b = region_b["normal"]
-    dot = float(abs(np.dot(normal_a, normal_b)))
+    dot = float(abs(np.sum(normal_a * normal_b)))
     dot = min(max(dot, 0.0), 1.0)
     angle = float(np.degrees(np.arccos(dot)))
     offset = abs(abs(float(region_a["offset"])) - abs(float(region_b["offset"])))
-    residual_ab = abs(float(region_a["centroid"] @ normal_b + region_b["offset"]))
-    residual_ba = abs(float(region_b["centroid"] @ normal_a + region_a["offset"]))
+    residual_ab = abs(float(np.sum(region_a["centroid"] * normal_b) + region_b["offset"]))
+    residual_ba = abs(float(np.sum(region_b["centroid"] * normal_a) + region_a["offset"]))
     residual = 0.5 * (residual_ab + residual_ba)
     min_area = min(region_a["area_frac"], region_b["area_frac"])
     max_area = max(region_a["area_frac"], region_b["area_frac"])

@@ -492,7 +492,8 @@ def markdown_report(result: dict[str, Any]) -> str:
             ),
             (
                 "Exact two-sided sign-test p-value: "
-                f"{diagnostics['f1_sign_test_two_sided_p']:.6f}. With eight scenes, "
+                f"{diagnostics['f1_sign_test_two_sided_p']:.6f}. With "
+                f"{diagnostics['independent_scenes']} scenes, "
                 "this is descriptive evidence rather than a broad generalization claim."
             ),
             "",

@@ -315,7 +315,7 @@ def dice_cost(pred_prob, targets, eps=1e-6):
     return 1.0 - (2.0 * intersection + eps) / (denominator + eps)
 
 
-def match_queries(mask_logits, targets, args):
+def match_queries(mask_logits, targets, args, existence_logits=None):
     if targets.shape[0] == 0:
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
     pred_prob = mask_logits.sigmoid()
@@ -329,6 +329,14 @@ def match_queries(mask_logits, targets, args):
         reduction="none",
     ).mean(dim=-1)
     cost = args.match_bce_weight * bce + args.match_dice_weight * dice_cost(pred_prob, targets)
+    existence_weight = float(getattr(args, "match_existence_weight", 0.0))
+    if existence_logits is not None and existence_weight > 0.0:
+        existence_cost = F.binary_cross_entropy_with_logits(
+            existence_logits,
+            torch.ones_like(existence_logits),
+            reduction="none",
+        )
+        cost = cost + existence_weight * existence_cost[:, None]
     cost_np = cost.detach().cpu().numpy()
     states = {0: (0.0, ())}
     for target_id in range(target_count):

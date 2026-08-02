@@ -14,6 +14,7 @@ import math
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from export_stage3_scene_plane_fusion import load_global_views_from_cache
@@ -32,6 +33,11 @@ ASSOCIATION_RGB = {
     2: (239, 71, 111),
     3: (17, 138, 178),
 }
+
+
+def vector_norm(values, axis=None):
+    values = np.asarray(values)
+    return np.sqrt(np.sum(values * values, axis=axis))
 
 
 def file_sha256(path, chunk_size=1024 * 1024):
@@ -169,11 +175,6 @@ def build_plane_label_maps(global_views, records=None):
 
 
 def detect_lines_lsd(image_rgb, min_length_px=24.0, max_lines=256):
-    try:
-        import cv2
-    except ImportError as error:
-        raise RuntimeError("opencv-python is required for structural-line extraction") from error
-
     image = np.asarray(image_rgb, dtype=np.uint8)
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError(f"image_rgb must have shape (H,W,3), got {image.shape}")
@@ -183,7 +184,7 @@ def detect_lines_lsd(image_rgb, min_length_px=24.0, max_lines=256):
     if detected is None:
         return np.empty((0, 4), dtype=np.float32)
     lines = np.asarray(detected, dtype=np.float32).reshape(-1, 4)
-    lengths = np.linalg.norm(lines[:, 2:4] - lines[:, 0:2], axis=1)
+    lengths = vector_norm(lines[:, 2:4] - lines[:, 0:2], axis=1)
     keep = lengths >= float(min_length_px)
     lines = lines[keep]
     lengths = lengths[keep]
@@ -195,7 +196,7 @@ def detect_lines_lsd(image_rgb, min_length_px=24.0, max_lines=256):
 
 def sample_line_pixels(line_xyxy, height, width, step_px=2.0):
     line = np.asarray(line_xyxy, dtype=np.float64).reshape(4)
-    length = float(np.linalg.norm(line[2:4] - line[0:2]))
+    length = float(vector_norm(line[2:4] - line[0:2]))
     count = max(2, int(math.ceil(length / max(float(step_px), 0.25))) + 1)
     x = np.linspace(line[0], line[2], count)
     y = np.linspace(line[1], line[3], count)
@@ -223,7 +224,7 @@ def associate_line_with_planes(line_xyxy, plane_label_map, step_px=2.0, side_off
     height, width = label_map.shape
     line = np.asarray(line_xyxy, dtype=np.float64).reshape(4)
     direction = line[2:4] - line[0:2]
-    norm = float(np.linalg.norm(direction))
+    norm = float(vector_norm(direction))
     if norm < 1e-6:
         return -1, -1, 0.0, 0.0, 0
     normal = np.asarray([-direction[1], direction[0]], dtype=np.float64) / norm
@@ -256,7 +257,7 @@ def associate_line_with_planes(line_xyxy, plane_label_map, step_px=2.0, side_off
 def _split_valid_run(sample_positions, points, gap_factor):
     if not len(sample_positions):
         return np.empty((0,), dtype=np.int64)
-    distances = np.linalg.norm(points[1:] - points[:-1], axis=1)
+    distances = vector_norm(points[1:] - points[:-1], axis=1)
     adjacent = np.diff(sample_positions) == 1
     positive = distances[adjacent & np.isfinite(distances) & (distances > 1e-8)]
     gap_threshold = math.inf
@@ -310,19 +311,26 @@ def lift_line_to_3d(
     run_xyz = valid_xyz[run]
     run_positions = positions[run]
     center = run_xyz.mean(axis=0)
-    _, singular_values, vh = np.linalg.svd(run_xyz - center, full_matrices=False)
-    direction = vh[0].astype(np.float32)
+    centered = run_xyz - center
+    covariance = np.sum(
+        centered[:, :, None] * centered[:, None, :], axis=0, dtype=np.float64
+    )
+    ok, eigenvalues, eigenvectors = cv2.eigen(covariance)
+    if not ok:
+        return None
+    singular_values = np.sqrt(np.maximum(eigenvalues.reshape(-1), 0.0))
+    direction = eigenvectors[0].astype(np.float32)
     dominant = int(np.argmax(np.abs(direction)))
     if direction[dominant] < 0:
         direction = -direction
-    projection = (run_xyz - center) @ direction
+    projection = np.sum((run_xyz - center) * direction[None], axis=1)
     lower, upper = np.quantile(projection, [0.02, 0.98])
     endpoint_3d = np.stack((center + lower * direction, center + upper * direction)).astype(np.float32)
-    length_3d = float(np.linalg.norm(endpoint_3d[1] - endpoint_3d[0]))
+    length_3d = float(vector_norm(endpoint_3d[1] - endpoint_3d[0]))
     if not np.isfinite(length_3d) or length_3d <= 1e-8:
         return None
     reconstructed = center + projection[:, None] * direction[None]
-    residual = np.linalg.norm(run_xyz - reconstructed, axis=1)
+    residual = vector_norm(run_xyz - reconstructed, axis=1)
     line_ratio = float(
         singular_values[0] / max(float(singular_values[1]) if len(singular_values) > 1 else 0.0, 1e-8)
     )
@@ -482,7 +490,7 @@ def main():
             if lifted is None:
                 rejected_3d += 1
                 continue
-            length_2d = float(np.linalg.norm(line[2:4] - line[0:2]))
+            length_2d = float(vector_norm(line[2:4] - line[0:2]))
             row = {
                 "line_id": int(len(rows)),
                 "alignment_view_index": view_index,

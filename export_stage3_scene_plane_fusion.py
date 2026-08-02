@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -11,19 +12,29 @@ from make_full_pointcloud_edit_comparison import HTML_TEMPLATE, PLANE_COLORS, de
 
 
 def fit_plane_np(points):
-    """Dependency-light SVD refit used by Stage3 and its mapping tests."""
+    """Fit a plane through the smallest covariance eigenvector."""
     points = np.asarray(points, dtype=np.float32)
     if len(points) < 3:
         return np.asarray([0.0, 0.0, 1.0], np.float32), 0.0, np.zeros((0,), np.float32)
     centroid = points.mean(axis=0)
-    _, _, vh = np.linalg.svd(points - centroid, full_matrices=False)
-    normal = vh[-1].astype(np.float32)
-    normal /= max(float(np.linalg.norm(normal)), 1e-8)
+    centered = np.ascontiguousarray(points - centroid, dtype=np.float32)
+    # DUSt3R initializes PyTorch before Stage3 refits planes.  On the local
+    # Windows runtime, invoking NumPy's LAPACK decomposition afterwards can
+    # deadlock, so solve the equivalent 3x3 eigensystem with PyTorch.
+    import torch
+
+    centered_tensor = torch.from_numpy(centered)
+    covariance = centered_tensor.transpose(0, 1) @ centered_tensor
+    _, eigenvectors = torch.linalg.eigh(covariance)
+    normal = eigenvectors[:, 0].detach().cpu().numpy().astype(np.float32)
+    normal_norm = float(np.sqrt(np.sum(normal * normal)))
+    normal /= max(normal_norm, 1e-8)
     dominant = int(np.argmax(np.abs(normal)))
     if normal[dominant] < 0:
         normal = -normal
-    offset = -float(normal @ centroid)
-    return normal, offset, np.abs(points @ normal + offset).astype(np.float32)
+    offset = -float(np.sum(normal * centroid))
+    residual = np.abs(np.sum(points * normal[None, :], axis=1) + offset)
+    return normal, offset, residual.astype(np.float32)
 
 
 class UnionFind:
@@ -111,7 +122,7 @@ def group_key(raw, fallback, mode):
 
 
 def plane_angle_deg(normal_a, normal_b):
-    dot = float(abs(np.dot(normal_a, normal_b)))
+    dot = float(abs(np.sum(normal_a * normal_b)))
     dot = min(max(dot, 0.0), 1.0)
     return float(np.degrees(np.arccos(dot)))
 
@@ -125,8 +136,8 @@ def mutual_residual(plane_a, plane_b):
     offset_b = plane_b["offset"]
     if len(points_a) == 0 or len(points_b) == 0:
         return float("inf")
-    residual_ab = np.abs(points_a @ normal_b + offset_b)
-    residual_ba = np.abs(points_b @ normal_a + offset_a)
+    residual_ab = np.abs(np.sum(points_a * normal_b[None], axis=1) + offset_b)
+    residual_ba = np.abs(np.sum(points_b * normal_a[None], axis=1) + offset_a)
     return float(0.5 * (np.mean(residual_ab) + np.mean(residual_ba)))
 
 
@@ -701,7 +712,8 @@ def should_merge(plane_a, plane_b, args):
     angle = plane_angle_deg(plane_a["normal"], plane_b["normal"])
     offset = abs(abs(float(plane_a["offset"])) - abs(float(plane_b["offset"])))
     residual = mutual_residual(plane_a, plane_b)
-    centroid_distance = float(np.linalg.norm(plane_a["centroid"] - plane_b["centroid"]))
+    centroid_delta = plane_a["centroid"] - plane_b["centroid"]
+    centroid_distance = float(np.sqrt(np.sum(centroid_delta * centroid_delta)))
     return (
         angle <= args.max_angle_deg
         and offset <= args.max_offset
@@ -715,20 +727,27 @@ def should_merge(plane_a, plane_b, args):
     }
 
 
-def safe_filename(text):
-    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in text)[-120:] or "scene"
+def safe_filename(text, max_length=64):
+    sanitized = "".join(
+        ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in text
+    ) or "scene"
+    if len(sanitized) <= max_length:
+        return sanitized
+    digest = hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:10]
+    tail_length = max(max_length - len(digest) - 1, 1)
+    return f"{sanitized[-tail_length:]}_{digest}"
 
 
 def plane_basis(normal):
     normal = np.asarray(normal, dtype=np.float32)
-    normal /= max(float(np.linalg.norm(normal)), 1e-8)
+    normal /= max(float(np.sqrt(np.sum(normal * normal))), 1e-8)
     helper = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-    if abs(float(np.dot(helper, normal))) > 0.9:
+    if abs(float(np.sum(helper * normal))) > 0.9:
         helper = np.array([0.0, 1.0, 0.0], dtype=np.float32)
     u = np.cross(normal, helper).astype(np.float32)
-    u /= max(float(np.linalg.norm(u)), 1e-8)
+    u /= max(float(np.sqrt(np.sum(u * u))), 1e-8)
     v = np.cross(normal, u).astype(np.float32)
-    v /= max(float(np.linalg.norm(v)), 1e-8)
+    v /= max(float(np.sqrt(np.sum(v * v))), 1e-8)
     return u, v
 
 
@@ -737,7 +756,10 @@ def plane_bbox_area(points, normal):
         return 0.0
     u, v = plane_basis(normal)
     centered = points - points.mean(axis=0, keepdims=True)
-    uv = np.stack((centered @ u, centered @ v), axis=1)
+    uv = np.stack(
+        (np.sum(centered * u[None], axis=1), np.sum(centered * v[None], axis=1)),
+        axis=1,
+    )
     span = uv.max(axis=0) - uv.min(axis=0)
     return float(max(span[0], 0.0) * max(span[1], 0.0))
 
@@ -749,7 +771,10 @@ def plane_uv(points, normal):
     u, v = plane_basis(normal)
     center = points.mean(axis=0).astype(np.float32)
     centered = points - center[None]
-    uv = np.stack((centered @ u, centered @ v), axis=1).astype(np.float32)
+    uv = np.stack(
+        (np.sum(centered * u[None], axis=1), np.sum(centered * v[None], axis=1)),
+        axis=1,
+    ).astype(np.float32)
     return uv, center, u, v
 
 
@@ -894,7 +919,9 @@ def plane_quality_rows(points, assignment, normals, offsets, source_views, point
             )
             continue
         pts = points[mask]
-        residual = np.abs(pts @ normals[plane_id] + offsets[plane_id]).astype(np.float32)
+        residual = np.abs(
+            np.sum(pts * normals[plane_id][None], axis=1) + offsets[plane_id]
+        ).astype(np.float32)
         source_values, source_counts = np.unique(source_views[mask], return_counts=True)
         support_counts = {str(int(value)): int(num) for value, num in zip(source_values, source_counts)}
         rows.append(
@@ -1341,11 +1368,17 @@ def fuse_scene(scene_key, files, output_dir, args, model=None, device=None):
             original_global_cloud["pixel_xy"], refined_global_cloud["pixel_xy"]
         ):
             raise RuntimeError("Plane feedback changed global-cloud registry/order")
-        displacement = np.linalg.norm(
-            refined_global_cloud["points"] - original_global_cloud["points"], axis=1
+        displacement_delta = (
+            refined_global_cloud["points"] - original_global_cloud["points"]
         )
-        proposed_displacement = np.linalg.norm(
-            proposed_points - original_global_cloud["points"], axis=1
+        displacement = np.sqrt(
+            np.sum(displacement_delta * displacement_delta, axis=1)
+        )
+        proposed_displacement_delta = proposed_points - original_global_cloud["points"]
+        proposed_displacement = np.sqrt(
+            np.sum(
+                proposed_displacement_delta * proposed_displacement_delta, axis=1
+            )
         )
         full_keys = (
             (original_global_cloud["view_indices"].astype(np.int64) << 42)

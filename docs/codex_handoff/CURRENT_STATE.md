@@ -3868,3 +3868,3662 @@ slowest scenes. Then freeze the internal decision table before an official-
 split canary. Official validation/test data are not present locally, and the
 17 current scenes remain an internal development set rather than a public
 benchmark.
+
+## 2026-07-24 Plane-DUSt3R local five-view smoke passed
+
+The pinned official Plane-DUSt3R repository is available at
+`E:\Study\code\Plane-DUSt3R`, commit
+`9a1ae50650ec6d706bf329352aaaf49efded90a0`. Both required checkpoints are
+present and loadable:
+
+```text
+checkpoint-best-onlyencoder.pth
+bytes 4411401351
+sha256 54a0015b2df35de5ca6eeabae114f8e6139c29ed56d5db5eaa380d7c74dbfa56
+
+Structured3D_pretrained.pt
+bytes 137254828
+sha256 a0e576567ca5f1632fb06c82258f1e05fe41c0ccdd495a84a11ffbb737629384
+```
+
+The user-required local `ai` environment is Python 3.12.11 with
+PyTorch 2.9.1+cu126. `easydict==1.9` and `tensorboardX==2.1` were installed.
+An attempted `mmcv==1.2.1 --no-deps` source build failed because Microsoft
+C++ Build Tools were unavailable and briefly overlaid NumPy 2.4.3. NumPy was
+immediately restored and verified as 2.2.6; Numba 0.63.1, PyTorch and CUDA
+remain importable. MMCV was not installed.
+
+`run_plane_dust3r_same_input_smoke.py` now stages an isolated runtime without
+changing the official repository. The runtime provides only the three MMCV
+APIs imported by NonCuboidRoom, allows `argparse.Namespace` through PyTorch's
+weights-only safe loader, isolates legacy TensorBoard protobuf behavior,
+copies code when Windows symlinks are unavailable, forces NonCuboid
+`num_workers=0` on Windows, and replaces six POSIX-only path parses in the
+runtime copy of `metric.py`. The wrapper can checksum and reuse completed
+DUSt3R or room-level intermediate outputs. Official tracked-file changes still
+fail the worktree audit; only checkpoints and generated `__pycache__` entries
+are allowed.
+
+Validation in `E:\anaconda\envs\ai\python.exe`:
+
+```text
+py_compile: passed
+tests/test_run_plane_dust3r_same_input_smoke.py: 10 tests passed
+both models loaded on RTX 4060 Ti with strict key matching
+static model allocation: 2318.9 MiB
+static model reservation: 2428.0 MiB
+five-view DUSt3R inference/global alignment: passed without OOM
+sampled total GPU use during inference: 5421 MiB; 2529 MiB free
+```
+
+The first complete same-input smoke passed for
+`scene_00180 / room 445895 / positions 0--4`. These are the same five
+`perspective/empty` images used by the frozen LightRecon3D experiment,
+materialized as an explicitly non-native `perspective/full` compatibility
+view. The official `convert_plane_depth.py` generated five evaluation depth
+maps in the copied dataset. Canonical successful output:
+
+```text
+local_outputs/plane_dust3r_same_input_smoke_scene00180_20260724_v7/
+status pass
+return code 0
+```
+
+Five-view mean native metrics are:
+
+```text
+layout IoU             0.5971863801
+pixel error            0.1214576226
+edge error             7.7542636513
+depth RMSE             0.0366002411
+scale-aligned RMSE     0.0366833496
+plane precision        1.0000000000
+plane recall           0.4444444444
+```
+
+Generated artifacts include `metric_results.txt`, `dust3r_output.npz`,
+`plane_detection.json`, `node_data.json`, `layout.png`, and five
+`seg_pred_vis_*.png` images. Intermediate failed outputs v1--v6 are retained
+as audit evidence and were not overwritten.
+
+These numbers are a one-room same-input reproduction, not Plane-DUSt3R's
+paper-native Structured3D test result and not yet a common-output ranking
+against LightRecon3D. Next exact step: promote the Windows-safe runtime and
+artifact-reuse behavior into a batch executor, run all 17 frozen rooms, then
+report Plane-DUSt3R native layout metrics separately from any defensible
+common-point-cache adapter.
+
+## 2026-07-24 Plane-DUSt3R 17-room same-input batch passed
+
+The 17 frozen development scenes were materialized without changing the source
+Structured3D tree:
+
+```text
+local_outputs/plane_dust3r_same_input_17scene_20260724_v1/
+scenes 17
+images 85
+source render mode perspective/empty
+compatibility declaration perspective/full
+```
+
+The official `convert_plane_depth.py` generated all 85 evaluation depth maps
+in that copied dataset and completed with return code 0.
+
+`run_plane_dust3r_same_input_batch.py` is the new one-process batch executor.
+It validates the non-native protocol declaration, official repository commit
+and worktree, stages the isolated Windows-safe runtime, loads both models once,
+supports checksummed room-output reuse, and writes `batch_manifest.json` plus
+`batch_metrics.csv`. The ledger independently re-parses every room's native
+metric file and marks missing or malformed artifacts as failures. The Git
+read-only audit now scopes `safe.directory` to each command, avoiding any
+global Git configuration change.
+
+Validation:
+
+```text
+py_compile: passed
+batch tests: 4 passed
+smoke tests: 11 passed
+single-scene batch canary: 1/1 room and 5/5 views passed
+```
+
+Canonical complete batch:
+
+```text
+local_outputs/plane_dust3r_same_input_batch_17scene_20260724_v1/
+status pass
+return code 0
+runtime 1014.6898072 seconds
+rooms 17/17
+views 85/85
+```
+
+`scene_00180` reused the verified prediction intermediates; the other 16 rooms
+ran fresh inference. Observed RTX 4060 Ti use was approximately 6.3 GiB with
+approximately 1.6 GiB free during inference, and there was no OOM.
+
+The 17-room native metric aggregate is:
+
+```text
+layout IoU                         0.7763029385
+pixel error                        0.0781947595
+edge error                         7.1339249102
+depth RMSE                         0.0749965016
+scale-aligned RMSE                 0.0641348465
+plane precision, room macro mean   0.5070028011
+plane recall, room macro mean      0.4237278245
+```
+
+All rooms have one each of `dust3r_output.npz`, `plane_detection.json`,
+`node_data.json`, `layout.png`, and `metric_results.txt`, plus five separate
+`seg_pred_vis_*.png` files. `scene_00193` has the highest layout IoU
+(`0.9636468778`); `scene_00197` is the clearest failure case with layout IoU
+`0.3809978764` and plane precision/recall both `0`.
+
+These remain Plane-DUSt3R native layout/depth metrics on the same-input
+compatibility data. They are not the paper-native test protocol and must not
+be put in the same numeric column as LightRecon3D's current point-cache plane
+F1. The next defensible comparison task is a common output-domain
+adapter/evaluator, while keeping this native table as a separate external
+baseline result.
+
+## 2026-07-24 common-point-cache external baseline evaluation passed
+
+Plane-DUSt3R can be compared to the two LightRecon3D RANSAC baselines without
+aligning their independently reconstructed 3D frames. All methods observe the
+same five images at the same `288x512` pointmap resolution. The new adapter
+uses the explicit key `(alignment_view_index,x,y)` to transfer
+Plane-DUSt3R's global structural-plane identities onto the existing ordered
+LightRecon3D cache. No spatial nearest-neighbour join is used.
+
+Implementation:
+
+```text
+adapt_plane_dust3r_to_point_cache.py
+evaluate_plane_dust3r_common_domain_batch.py
+visualize_common_point_cache_partitions.py
+tests/test_adapt_plane_dust3r_to_point_cache.py
+tests/test_evaluate_plane_dust3r_common_domain_batch.py
+tests/test_visualize_common_point_cache_partitions.py
+```
+
+The adapter reuses the pinned runtime's official polygon reconstruction
+function, preserves `node_data.json` global wall identities across views, and
+assigns distinct scene-global IDs to floor and ceiling. It samples those
+labels at the GT cache's recorded `xy` pixels, then refits each predicted
+plane on the same LightRecon3D cache points used by the other methods. The
+refit uses predicted support only and never reads GT labels. GT enters only
+the unchanged downstream evaluator. The adapter validates that the GT
+`source_cache_indices` preserve both view index and pixel coordinates.
+
+The canonical 17-scene result is:
+
+```text
+local_outputs/plane_dust3r_common_domain_17scene_20260724_v2/
+status pass
+scenes 17/17
+join key (alignment_view_index,x,y)
+nearest-neighbour join false
+IoU match threshold 0.5
+fragmentation threshold 0.1
+minimum predicted/observed plane points 64
+```
+
+Mean common-domain metrics:
+
+```text
+method                    precision  recall   F1       IoU      VOI↓     RI       SC
+ordinary RANSAC           0.3748     0.3594   0.3587   0.5239   1.4813   0.7918   0.5641
+learning-guided RANSAC    0.5484     0.5497   0.5427   0.6802   1.1721   0.8347   0.6590
+Plane-DUSt3R              0.8591     0.7735   0.8098   0.8305   0.3982   0.9494   0.8752
+```
+
+Plane-DUSt3R versus learning-guided RANSAC paired over the 17 scenes:
+
+```text
+Plane F1: 14 wins / 2 ties / 1 loss; mean delta +0.2671
+matched IoU: 16 / 0 / 1; mean delta +0.1503
+VOI: 16 / 0 / 1; mean improvement 0.7739 nats
+RI: 16 / 0 / 1; mean delta +0.1147
+SC: 16 / 0 / 1; mean delta +0.2163
+```
+
+The adapted Plane-DUSt3R assigned-point rate is
+`0.9999793` on average, with range `0.9998882--1.0`. Its mean normal angular
+error (`6.6412` degrees) is worse than guided RANSAC (`4.2449`) because of
+the severe `scene_00197` failure, while its median is better
+(`1.1572` versus `2.0448` degrees). `scene_00197` is the only scene where
+Plane-DUSt3R loses clearly: its common-domain plane F1 is zero, matching the
+failure already visible in the method-native result.
+
+Separate headed visual diagnostics are retained for `scene_00180` and
+`scene_00197` under:
+
+```text
+local_outputs/plane_dust3r_common_domain_17scene_20260724_v1/visualizations/
+```
+
+Each view has separate RGB, GT, guided-RANSAC and Plane-DUSt3R PNG files.
+Prediction colors are Hungarian-matched to GT only for display; the adapter
+NPZ is generated before and independently of this coloring.
+
+Validation:
+
+```text
+py_compile: passed
+adapter tests: 3 passed
+batch/paired-summary tests: 4 passed
+visualization test: 1 passed
+single-scene real adapter/evaluator canary: passed
+17-scene batch: 17/17 passed
+```
+
+Interpretation limits: these 17 scenes are still the frozen internal
+development set, not a public test split. The common GT is the visible
+Structured3D structural-layout partition, which is especially aligned with
+Plane-DUSt3R's room-layout task. This result supports a same-input structural
+plane comparison, not a claim that Plane-DUSt3R solves the entire bounded,
+editable primitive objective or the paper-native benchmark.
+
+### Clarification: point-support evaluation is not bounded-surface evaluation
+
+The common-domain table above is a **3D ordered-point-cache plane partition**
+evaluation. Plane equations are refit on common 3D points and the IoU/F1/RI/SC
+metrics compare 3D point membership, so the numbers are not 2D mask metrics.
+However, the first diagnostic images were 2D view projections. More
+importantly, this evaluation does not yet score continuous bounded plane-patch
+polygons, surface area overlap, 3D boundary distance, or plane adjacency.
+It must not be described as a complete bounded editable primitive evaluation.
+
+Separate true 3D z-buffer point-cloud views for GT, ordinary RANSAC, guided
+RANSAC and Plane-DUSt3R are now available at:
+
+```text
+local_outputs/plane_dust3r_common_domain_3d_visuals_20260724_v1/
+```
+
+They use identical 3D points, cameras and deterministic 80,000-point samples.
+For `scene_00180`, Plane-DUSt3R has common-cache 3D plane F1 `0.727` and
+matched support IoU `0.890`; the 3D view shows that it preserves the major
+room planes but merges/misses narrow wall planes. `scene_00197` visibly
+retains the previously measured global identity failure (F1 and matched IoU
+both zero).
+
+The next evaluator must construct bounded 3D patches in a per-plane tangent
+frame and report surface/boundary/topology metrics separately from the current
+point-partition table.
+
+## 2026-07-24 provenance-aware canonical-plane hypothesis gate
+
+Branch: `codex/bounded-support-head`
+
+Current commit SHA: `1fa7027` (the diagnostic is uncommitted and lives under
+the ignored `local_outputs/` tree).
+
+The proposed research hypothesis is that a DUSt3R global pointmap must not be
+treated as an ordinary merged point cloud. Each aligned point remains a
+view-conditioned observation of a latent canonical plane. A candidate model
+would jointly infer plane membership, canonical plane parameters, per-view
+plane observation bias and reliability without moving the original pointmap.
+
+A first GT-conditioned, cross-validated diagnostic was executed on all 17
+frozen development scenes. For each GT plane with at least 256 points in at
+least three views, a canonical normal was fit on a spatially interleaved half
+of the pixels. Per-view scalar offsets were estimated on that training half
+and evaluated on the held-out half.
+
+Results over 72 eligible planes:
+
+```text
+median held-out RMSE ratio after per-view offset       0.8917
+mean held-out RMSE ratio                               0.8243
+median residual variance explained                     0.2048
+mean residual variance explained                       0.2870
+planes with >=10% held-out RMSE reduction              51.39%
+planes with >=25% held-out RMSE reduction              27.78%
+planes with >=25% explained residual variance          43.06%
+median per-view normal disagreement                    1.9965 degrees
+```
+
+This passes only the weakest phenomenon gate: view provenance explains a
+material part of plane thickness for a subset of planes, but not universally.
+Several planes receive almost no benefit, and some have large per-view normal
+disagreement, so an unconditional free scalar `b_vk` is insufficient.
+
+Diagnostic files:
+
+```text
+local_outputs/provenance_bias_diagnostic_20260724.py
+local_outputs/bottleneck_diagnosis_20260724.py
+```
+
+Commands executed:
+
+```text
+E:\anaconda\envs\ai\python.exe local_outputs\provenance_bias_diagnostic_20260724.py
+E:\anaconda\envs\ai\python.exe local_outputs\bottleneck_diagnosis_20260724.py
+```
+
+No checkpoint, cache, NPZ prediction or visualization was overwritten.
+
+Important prior negative evidence remains binding: PlaneGraph-BA v0 modified
+per-view geometry and could improve its plane residual while worsening metric
+correspondence, even with GT plane identity. The new hypothesis must therefore
+treat view bias as a nuisance variable in canonical-plane inference and leave
+the frozen DUSt3R pointmaps unchanged.
+
+Unresolved confounds:
+
+* different views observe different regions of the same plane, so the current
+  view effect may partly absorb spatially varying pointmap error;
+* a free `b_vk` has a gauge ambiguity with the canonical offset;
+* unconstrained bias can incorrectly merge distinct parallel planes;
+* scalar offsets cannot explain view-dependent tilt or non-rigid local warp.
+
+Next exact step:
+
+Bin GT-plane observations in a common plane-tangent coordinate system, keep
+cells observed by multiple views, and compare held-out residual models with
+spatial-cell effects only versus spatial-cell plus view effects. If the view
+term survives this overlap control, implement a GT-identity oracle estimator
+with zero-mean/shrinkage-constrained view bias and evaluate canonical plane
+geometry plus fragmentation/overmerge before authorizing a learned assignment
+network.
+
+## 2026-07-24 provenance-aware canonical-plane full gate
+
+The overlap control, GT-identity oracle, shared-bias structure test and
+fragment-association tests are complete. The outcome is a qualified result:
+view provenance is a real nuisance variable for canonical plane estimation,
+but a free per-view/per-plane scalar bias is not sufficient to solve plane
+instance identity. It should be retained inside a future structured grouping
+model, not promoted to the main method by itself.
+
+### 1. Spatial-overlap-controlled provenance effect
+
+Script:
+
+```text
+analyze_provenance_view_bias.py
+tests/test_analyze_provenance_view_bias.py
+```
+
+Output:
+
+```text
+local_outputs/provenance_overlap_control_17scene_20260724_v1/
+```
+
+For each GT plane, observations were binned in metric plane-tangent cells.
+Only cells observed by multiple connected views were retained. Held-out
+prediction compared spatial-cell effects alone against spatial-cell plus a
+regularized view effect.
+
+At the canonical 10 cm cell size over 68 eligible planes:
+
+```text
+median held-out RMSE ratio, view+cell / cell-only       0.722987
+mean held-out RMSE ratio                                0.684782
+median incremental explained variance                  0.477274
+planes improved                                        100.00%
+planes improved by at least 5%                          82.35%
+planes improved by at least 10%                         75.00%
+```
+
+The result is stable across 5 cm and 20 cm controls:
+
+```text
+cell size   planes   median RMSE ratio   median incremental explained variance
+0.05 m      54       0.647480            0.580690
+0.10 m      68       0.722987            0.477274
+0.20 m      69       0.751800            0.434790
+```
+
+This closes the main confound in the first diagnostic: the provenance effect
+does not disappear after controlling for which part of a plane each view
+observes. It remains heterogeneous, including planes with almost no effect.
+
+### 2. Canonical-plane oracle under GT identity
+
+Script:
+
+```text
+evaluate_canonical_plane_bias_oracle.py
+tests/test_evaluate_canonical_plane_bias_oracle.py
+```
+
+Output:
+
+```text
+local_outputs/canonical_plane_bias_oracle_17scene_20260724_v2/
+```
+
+All methods use the same frozen pointmaps and GT plane identity. A single
+scene-level trimmed metric Sim3 is used only for metric evaluation. The bias
+variables use a zero-mean gauge and never move the pointmaps.
+
+Over 72 planes:
+
+```text
+method                   mean normal   median normal   mean offset   median offset
+pooled SVD               5.321 deg    1.742 deg       0.2762 m      0.1134 m
+free view bias           4.354 deg    1.569 deg       0.2543 m      0.1143 m
+bias + reliability       4.517 deg    1.207 deg       0.2481 m      0.0719 m
+```
+
+Paired free-bias versus pooled results:
+
+```text
+normal mean delta                        -0.9676 deg
+normal wins                              70.8% of planes, 76.5% of scenes
+offset mean delta                        -0.0219 m
+bias-corrected held-out RMSE delta       -0.0137 m
+corrected-RMSE wins                      86.1% of planes, 82.35% of scenes
+```
+
+The raw canonical-plane residual becomes worse when measured against the
+unmodified biased layers; this is expected and confirms that `b_vk` must be
+interpreted as an observation nuisance variable rather than a pointmap
+correction.
+
+### 3. A shared view translation does not explain the bias
+
+Script:
+
+```text
+evaluate_shared_view_bias_structure.py
+tests/test_evaluate_shared_view_bias_structure.py
+```
+
+Output:
+
+```text
+local_outputs/shared_view_bias_structure_17scene_20260724_v1/
+```
+
+The model tested whether offsets for different planes in the same view obey
+`b_vk ~= n_k^T t_v`. Leave-one-plane-out prediction over 309 plane-view
+observations produced:
+
+```text
+zero predictor RMSE                      0.3293 m
+shared-translation predictor RMSE        0.4190 m
+shared / zero RMSE ratio                 1.2724
+absolute-error win rate                  22.33%
+incremental explained variance          -61.89%
+```
+
+Therefore the effect is not a simple residual camera translation that can be
+estimated from the other planes of a view. It is more consistent with
+view-by-surface and locally non-rigid pointmap error.
+
+### 4. Pairwise fragment identity gate
+
+Script:
+
+```text
+evaluate_bias_aware_fragment_association.py
+tests/test_evaluate_bias_aware_fragment_association.py
+```
+
+Output:
+
+```text
+local_outputs/bias_aware_fragment_association_17scene_20260724_v1/
+```
+
+The audit population contains 30,773 pairs of high-purity Stage2 fragments,
+including 5,466 same-plane and 25,307 different-plane pairs. Fragment support
+was joined exactly to the GT cache through
+`(alignment_view_index, pixel_x, pixel_y)`.
+
+```text
+pair cost                        ROC AUC    AP
+ordinary pooled fit             0.806585   0.765088
+free bias, marginalized         0.806681   0.764979
+bias + 2x required-bias penalty 0.821015   0.770869
+```
+
+On near-parallel, disjoint-view pairs, where the hypothesis should matter
+most, pooled and penalized AUC are `0.975509` and `0.978334`. The gain is
+real but very small; free marginalization alone is slightly worse.
+
+### 5. Leave-one-scene-out global clustering gate
+
+Script:
+
+```text
+analyze_bias_aware_fragment_clustering.py
+tests/test_analyze_bias_aware_fragment_clustering.py
+```
+
+Canonical output:
+
+```text
+local_outputs/bias_aware_fragment_clustering_17scene_20260724_v1/summary.json
+```
+
+Each held-out scene uses a single global threshold selected only on the other
+16 scenes. Connected components then converts fragment pairs into an actual
+global partition, exposing transitive merge failures.
+
+```text
+pair cost                        precision   recall     mean F1   median F1
+ordinary pooled fit             0.81584     0.57822    0.65774   0.72960
+free bias, marginalized         0.82482     0.56239    0.64527   0.70815
+bias + 2x required-bias penalty 0.85018     0.57844    0.66971   0.74549
+```
+
+Paired against pooled:
+
+```text
+free bias             mean F1 delta -0.01247; wins/ties/losses 2/10/5
+penalized bias        mean F1 delta +0.01197; wins/ties/losses 6/7/4
+```
+
+The original exhaustive threshold implementation and the optimized
+incremental union-find implementation produced the same result. The optimized
+curve is covered by a direct-equivalence unit test. Four clustering tests
+pass.
+
+### Decision
+
+Do not train a network whose main claimed contribution is merely predicting
+free `b_vk`. The evidence supports the following narrower role:
+
+```text
+global learned plane-instance partition
+-> canonical plane refit
+-> provenance-conditioned nuisance bias and reliability
+-> bounded support and adjacency refinement
+```
+
+The main learned object must be global plane identity/partition, using
+appearance, image connectivity, 2D support overlap, 3D geometry, normal
+compatibility and provenance jointly. The bias term is useful as a
+geometry-aware residual and regularizer inside that structured model:
+
+* explaining a small view-conditioned shift should not prevent a valid merge;
+* requiring a large or inconsistent shift should be negative merge evidence;
+* after grouping, bias/reliability improves the canonical plane parameter.
+
+The next implementation gate is a fragment-graph dataset and leave-one-scene-
+out structured identity baseline. It must compare geometry-only,
+appearance/2D-connectivity-only, provenance-bias-only and their joint model.
+Training on the same 17 development scenes without a held-out scene protocol
+is not authorized as evidence.
+
+Validation executed in the `ai` environment:
+
+```text
+test_analyze_provenance_view_bias.py                 4 passed
+test_evaluate_canonical_plane_bias_oracle.py         4 passed
+test_evaluate_shared_view_bias_structure.py          2 passed
+test_evaluate_bias_aware_fragment_association.py     3 passed
+test_analyze_bias_aware_fragment_clustering.py       4 passed
+```
+
+No checkpoint, feature cache, input NPZ or prior visualization was
+overwritten. The failed/empty timing-attempt directory
+`local_outputs/bias_aware_fragment_clustering_17scene_20260724_v2/` and the
+duplicate optimized result in `..._v3/` are retained rather than deleted.
+
+## 2026-07-24 learned global fragment-identity gate
+
+The next gate tested the actual remaining bottleneck: predicting whether two
+Stage2 fragments belong to the same physical plane, then converting the edge
+scores into a globally consistent partition. This is still an
+oracle-conditioned association audit, not an end-to-end plane benchmark.
+
+### Prediction-only fragment graph
+
+Script and test:
+
+```text
+build_fragment_graph_features.py
+tests/test_build_fragment_graph_features.py
+```
+
+Output:
+
+```text
+local_outputs/fragment_graph_features_17scene_20260724_v1/
+```
+
+The exporter produced 30,773 candidate edges over 17 scenes with 26 features.
+The largest scene contains 87 accepted fragments and 3,066 candidate edges.
+Feature groups include:
+
+* fitted-plane compatibility, centroid/tangent distance, cross-plane residual,
+  3D support gap and covariance shape;
+* RGB mean/variance;
+* same-view pointmap bounding-box overlap, gap and centroid distance;
+* view-set overlap and disjoint provenance;
+* bias-corrected residual and the magnitude/range of the required view bias.
+
+All feature values are computed from predicted support, frozen pointmaps, RGB
+samples or provenance. GT is used only to retain fragments with at least
+`0.8` dominant-plane purity and to label edges. The exact GT join remains
+`(alignment_view_index, pixel_x, pixel_y)`. Metric features use a prediction-
+only per-scene median point-radius normalizer.
+
+### Scene-held-out learned edge baseline
+
+Script and test:
+
+```text
+evaluate_learned_fragment_identity.py
+tests/test_evaluate_learned_fragment_identity.py
+```
+
+Canonical output:
+
+```text
+local_outputs/learned_fragment_identity_17scene_20260724_v3/
+```
+
+The model is deliberately small: standardized, class-balanced logistic
+regression. Every scene is held out once. For each outer fold, the global
+clustering threshold is calibrated using four-fold scene-grouped cross-fitted
+predictions from the other 16 scenes; the held-out labels never influence the
+model or threshold.
+
+Connected-component fragment partition results:
+
+```text
+method                          precision   recall     mean F1   median F1
+pooled-fit scalar threshold     0.81584     0.57822    0.65774   0.72960
+learned geometry only           0.84155     0.82498    0.82437   0.85039
+appearance/connectivity only    0.43190     0.69443    0.50452   0.48642
+provenance/bias only            0.69024     0.61915    0.60717   0.65185
+joint without bias variables    0.87429     0.83250    0.83907   0.89144
+joint all 26 features           0.88389     0.84024    0.85245   0.90047
+```
+
+The joint model improves mean fragment-partition F1 by `+0.19471` over the
+pooled-fit baseline. It wins 15, ties 0 and loses 2 held-out scenes. Mean
+held-out pair ROC AUC/AP are `0.97208/0.93306`. The previously catastrophic
+`scene_00197` association F1 improves from `0.0` to `0.5983`.
+
+The comparison also sharpens the role of provenance bias. Bias-only features
+are insufficient. Adding the four exclusive bias variables to the full joint
+feature set raises connected-component mean F1 from `0.83907` to `0.85245`,
+but gains are heterogeneous.
+
+### Component-consistent partition
+
+Script and test:
+
+```text
+evaluate_fragment_partition_linkage.py
+tests/test_evaluate_fragment_partition_linkage.py
+```
+
+Output:
+
+```text
+local_outputs/fragment_partition_linkage_17scene_20260724_v1/
+```
+
+Connected components can merge complete plane instances through one false
+positive edge. Average linkage instead requires the mean cross-component
+evidence to remain compatible. Thresholds use the same nested scene-held-out
+protocol.
+
+```text
+method                          precision   recall     mean F1   median F1
+pooled fit + average linkage    0.78210     0.53919    0.61846   0.65865
+learned geometry + avg link     0.88257     0.87131    0.86850   0.91045
+joint no bias + avg link        0.89351     0.88359    0.88128   0.93855
+joint all + avg link            0.91707     0.89473    0.90190   0.94551
+```
+
+Important paired contrasts:
+
+```text
+pooled average vs pooled connected       -0.03929 F1; 6/0/11
+joint average vs pooled connected        +0.24416 F1; 17/0/0
+joint average vs joint connected         +0.04945 F1; 11/1/5
+joint all vs joint no-bias average        +0.02062 F1; 4/10/3
+```
+
+Thus the improvement is not explained by replacing connected components with
+average linkage: the raw pooled scalar becomes worse under the same
+partitioner. The useful combination is learned multi-cue identity evidence
+plus component-level consistency. The view-bias features provide a small,
+non-universal auxiliary gain, consistent with the preceding hypothesis gate.
+
+### Compute and interpretation
+
+The current learned baseline is CPU-only and requires zero GPU VRAM. The
+canonical six-ablation nested evaluation completes in under one minute on the
+local machine; the joint model's accumulated fit time over all nested folds is
+about 9.7 seconds. A small graph/edge head at the observed maximum of 87 nodes,
+3,066 edges and 26 scalar edge features is comfortably compatible with an
+8 GB RTX 4060 Ti when trained on frozen caches. This does not imply that
+fine-tuning the DUSt3R backbone would fit in 8 GB.
+
+Do not compare the `0.90190` fragment-partition F1 directly with the
+Plane-DUSt3R common-point-cache F1. The former:
+
+* evaluates only Stage2 fragments with GT purity at least `0.8`;
+* measures whether those fragments are grouped correctly;
+* does not penalize internally mixed/impure fragments that were excluded;
+* does not yet reconstruct and score all point supports or bounded surfaces.
+
+The next mandatory gate is inference over all predicted fragments without a
+GT-purity filter, followed by point-level and bounded-surface evaluation.
+Only after that gate can the learned grouping result be called an end-to-end
+improvement.
+
+Validation in the `ai` environment:
+
+```text
+test_build_fragment_graph_features.py              3 passed
+test_evaluate_learned_fragment_identity.py         4 passed
+test_evaluate_fragment_partition_linkage.py        2 passed
+```
+
+No existing cache, checkpoint, NPZ prediction or visualization was
+overwritten.
+
+## 2026-07-24 all-fragment end-to-end identity gate
+
+The GT-purity-conditioned limitation in the preceding fragment audit has now
+been removed from held-out inference. A model is trained only on high-purity
+fragments from the other 16 scenes, but every sufficiently large Stage2
+fragment in the held-out scene is inferred, clustered and mapped back to all
+repeated 3D support observations. Internally mixed fragments are retained and
+penalized.
+
+Implementation:
+
+```text
+evaluate_all_fragment_identity_end_to_end.py
+evaluate_all_fragment_common_cache.py
+tests/test_evaluate_all_fragment_identity_end_to_end.py
+tests/test_evaluate_all_fragment_common_cache.py
+```
+
+The fast end-to-end gate uses the 22 joint geometry/RGB/2D-connectivity/
+provenance features without the four expensive pairwise view-bias variables.
+It retains the scene-held-out logistic identity model, four-fold
+scene-cross-fitted threshold calibration and average-linkage component
+consistency.
+
+### Repeated 3D support-record result
+
+Canonical output:
+
+```text
+local_outputs/all_fragment_identity_end_to_end_17scene_20260724_v1/
+```
+
+Mean over 17 held-out scenes:
+
+```text
+metric                                      Stage2 direct   learned identity
+support partition pairwise precision        0.88625         0.77902
+support partition pairwise recall           0.07252         0.85084
+support partition pairwise F1                0.13310         0.80698
+partition purity                             0.92727         0.85569
+partition completeness                       0.11274         0.89826
+purity/completeness F1                       0.19982         0.87420
+predicted plane count                       77.82            6.47
+observed GT plane count                       7.59            7.59
+matched plane precision                       0.000           0.735
+matched plane recall                          0.000           0.674
+matched IoU                                   0.000           0.791
+normal error                                  N/A            10.03 deg
+```
+
+Pairwise F1 improves on every scene. The mean `0.80698` is higher under the
+same repeated-support metric than the previously frozen rows:
+
+```text
+B3 manual merge       0.72149
+B4 guided RANSAC      0.70657
+O1 GT support/RANSAC  0.71958
+```
+
+This closes the most important oracle-population objection to the learned
+identity result. The remaining high mean normal error is driven by imperfect
+support-plane parameters and motivates the already validated canonical
+bias/reliability refit after identity recovery.
+
+### Common full-cache expansion
+
+The initial common-cache lift is retained at:
+
+```text
+local_outputs/all_fragment_identity_common_cache_17scene_20260724_v1/
+```
+
+It intentionally used the old conflict-drop lift and exposed a coverage
+contract mismatch: roughly 80k repeated sparse support records cover only
+about 2.2% of the roughly 650k-point common cache after duplicate keys and
+conflicts are removed. Full-domain Plane F1 is therefore zero despite
+excellent support-conditioned identity. This is a failed adapter, not a
+model-quality result.
+
+The corrected deterministic completion treats learned component planes as
+canonical seeds, assigns every global point to its nearest seed within the
+same frozen `0.03` distance threshold, and performs two SVD refits. It uses no
+random RANSAC hypotheses and no GT at inference.
+
+Canonical output:
+
+```text
+local_outputs/all_fragment_identity_common_cache_17scene_20260724_v2/
+```
+
+Same-domain comparison:
+
+```text
+method                    precision  recall   plane F1  IoU     normal   VOI     RI      SC
+ordinary RANSAC           0.3748     0.3594   0.3587    0.5239  9.14deg  1.4813  0.7918  0.5641
+guided RANSAC             0.5484     0.5497   0.5427    0.6802  4.24deg  1.1721  0.8347  0.6590
+learned identity + refit  0.6429     0.5525   0.5881    0.7668  3.95deg  1.1432  0.8755  0.6724
+Plane-DUSt3R              0.8591     0.7735   0.8098    0.8305  6.64deg  0.3982  0.9494  0.8752
+```
+
+Additional learned-identity common-cache statistics:
+
+```text
+assignment rate                         0.96210
+support partition pairwise F1           0.73627
+purity/completeness F1                  0.80195
+point-to-plane residual                 0.00402
+mean predicted/GT plane count           6.41 / 7.88
+```
+
+The candidate direction therefore passes the practical improvement gate: it
+beats guided RANSAC on mean plane F1, matched IoU, normal error, VOI, Rand
+index and segmentation covering, while using a deterministic learned
+identity partition instead of random plane hypothesis discovery. It does not
+yet match Plane-DUSt3R's structural-layout identity quality.
+
+The strongest scenes (`scene_00186`, `scene_00192`, `scene_00199`) achieve
+full-cache plane F1 `1.0`. The persistent bad cases are `scene_00191`
+(`0.211`), `scene_00190` (`0.286`) and `scene_00187`/`scene_00198`
+(`0.308`), primarily due to incorrect whole-plane merging or missing narrow
+walls rather than fragmentation.
+
+### Separate 3D visual outputs
+
+Separate headed PNGs, retaining RGB and GT rows plus guided and learned
+predictions for three representative scenes, are under:
+
+```text
+local_outputs/all_fragment_identity_visuals_17scene_20260724_v1/
+  final_000_scene_00180/
+  final_010_scene_00192/
+  final_014_scene_00197/
+```
+
+Each scene contains three camera views and separate files for RGB, GT, guided
+RANSAC and learned identity. All renders use the identical common 3D cache and
+an identical deterministic 80k display sample. Visual inspection confirms
+that `scene_00192` is structurally coherent, `scene_00180` reduces
+fragmentation relative to guided RANSAC, and `scene_00197` still merges a
+major front-wall structure that GT keeps separate.
+
+### Decision and remaining limits
+
+The research direction is now:
+
+```text
+Stage2 support fragments
+-> learned multi-cue global identity
+-> component-consistent partition
+-> deterministic full-cache support expansion
+-> provenance-aware canonical plane refit
+-> bounded support and topology
+```
+
+This is materially different from “use another method's planes and add
+RANSAC.” The learned object is global plane identity; geometry recovers
+parameters and dense support from that learned partition.
+
+Remaining evidence limits:
+
+* all 17 scenes are an internal development set, although each is held out
+  from training and threshold calibration;
+* no official Structured3D test split is available locally;
+* the end-to-end fast gate has not yet reintroduced the four bias variables;
+* deterministic distance expansion is not yet spatially bounded in a plane
+  tangent frame and can absorb a nearby parallel/coplanar surface;
+* continuous bounded-polygon and adjacency metrics remain unimplemented.
+
+## 2026-07-25 bounded tangent-support expansion
+
+The deterministic learned-identity adapter no longer has to treat each
+canonical seed as an infinite plane. `evaluate_all_fragment_common_cache.py`
+now optionally estimates a robust 2D bounding box in each plane's tangent
+frame from the provenance-resolved seed support. Full-cache assignment
+requires both:
+
+```text
+absolute point-to-plane distance <= 0.03
+projected point lies inside the trimmed seed box + margin
+```
+
+The tangent boxes remain fixed during the two SVD refits, so repeated refits
+cannot expand the support boundary. A missing or degenerate seed box rejects
+expansion for that plane instead of silently reverting to an infinite plane.
+The old behavior remains available through `--bound_mode none`.
+
+Focused validation:
+
+```text
+set PYTHONPATH=E:\Study\code\LightRecon3D&&
+E:\anaconda\envs\ai\python.exe tests\test_evaluate_all_fragment_common_cache.py
+
+Ran 3 tests in 0.374s
+OK
+
+E:\anaconda\envs\ai\python.exe -m py_compile
+  evaluate_all_fragment_common_cache.py
+```
+
+The `ai` environment does not contain pytest. Module-form unittest discovery
+also resolves an unrelated site-packages package named `tests`, so the
+focused test file was executed directly with the repository on `PYTHONPATH`.
+
+Three 17-scene margin ablations used the same learned fragment predictions,
+frozen `0.03` plane distance, 1%/99% tangent support quantiles, two SVD refits,
+and no GT at inference:
+
+```text
+output                                                        margin
+local_outputs/all_fragment_identity_common_cache_17scene_
+  20260725_bound002_v1/                                      0.02
+local_outputs/all_fragment_identity_common_cache_17scene_
+  20260725_bound005_v1/                                      0.05
+local_outputs/all_fragment_identity_common_cache_17scene_
+  20260725_bound010_v1/                                      0.10
+```
+
+Unified mean comparison:
+
+```text
+method                    precision  recall   plane F1  IoU     normal   VOI     RI      SC
+ordinary RANSAC           0.3748     0.3594   0.3587    0.5239  9.14deg  1.4813  0.7918  0.5641
+guided RANSAC             0.5484     0.5497   0.5427    0.6802  4.24deg  1.1721  0.8347  0.6590
+unbounded identity        0.6429     0.5525   0.5881    0.7668  3.95deg  1.1432  0.8755  0.6724
+bounded identity, 0.02    0.8025     0.6177   0.6871    0.7988  3.16deg  0.8533  0.8997  0.7507
+bounded identity, 0.05    0.8025     0.6150   0.6856    0.7728  4.06deg  0.9413  0.8905  0.7317
+bounded identity, 0.10    0.7487     0.5812   0.6445    0.7693  3.90deg  1.0243  0.8803  0.7004
+Plane-DUSt3R              0.8591     0.7735   0.8098    0.8305  6.64deg  0.3982  0.9494  0.8752
+```
+
+For the selected 0.02 setting, assignment rate is `0.93496`, point partition
+pairwise F1 is `0.81888`, and purity/completeness F1 is `0.87082`. Relative to
+unbounded identity, per-scene plane F1 improves in 9 scenes, is unchanged in
+6, and decreases in 2; the mean per-scene improvement is `+0.098997`.
+
+This validates the bounded-support hypothesis: a substantial share of the
+remaining unbounded-adapter error came from absorbing points that were close
+to the same infinite plane but outside the observed finite surface. The best
+bounded model now exceeds guided RANSAC by `+0.1444` plane F1 and `+0.1186`
+matched IoU, but remains `0.1227` plane F1 below Plane-DUSt3R.
+
+Separate headed 3D renders (RGB, GT, guided RANSAC, unbounded identity and
+bounded identity, three views each) are under:
+
+```text
+local_outputs/all_fragment_identity_bounded_visuals_17scene_20260725_v1/
+  final_000_scene_00180_retry/
+  final_008_scene_00190/
+  final_014_scene_00197/
+```
+
+Visual inspection shows both the gain and the next bottleneck. In
+`scene_00190`, bounding prevents many distant coplanar assignments but leaves
+a visible unassigned region, consistent with the coverage/precision tradeoff.
+In `scene_00197`, assignment remains 100% and the major front-wall merge is
+unchanged. That error is already present in the learned component identity;
+no post-hoc bound around a merged seed can split it.
+
+The next method change should therefore target learned split/merge decisions,
+not another distance or box-margin sweep. The strongest bounded formulation
+would predict an instance-affinity/support field jointly with local tangent
+occupancy or boundary evidence, allowing a component to split when a
+coplanar geometric discontinuity, provenance inconsistency, or negative
+adjacency edge contradicts one global identity. Continuous support polygons
+and adjacency-aware metrics are still missing.
+
+Changed source files for this step:
+
+```text
+evaluate_all_fragment_common_cache.py
+tests/test_evaluate_all_fragment_common_cache.py
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Latest repository commit remains `1fa7027`; this bounded-support work and the
+preceding experiment scripts/results are not committed in the current dirty
+worktree.
+
+No existing cache, checkpoint, input NPZ or prior visualization was
+overwritten.
+
+## 2026-07-26 learned dense support partition and global reintegration
+
+The crop-level splitter was extended beyond local neighbor supervision.
+`train_intra_fragment_splitter.py` now samples balanced non-local pairs:
+
+```text
+same-plane remote positives
+different-plane global negatives
+nearest different-plane hard negatives
+local pixel-neighbor edges
+local boundary targets
+```
+
+The model remains small (`27,730` parameters). A 600-step run on the local
+4060 Ti 8 GB completed in `37.98 s`, peaked at `28.9 MB` allocated CUDA
+memory, and selected step 100:
+
+```text
+local_outputs/intra_fragment_splitter_global_pairs_20260726_v1/
+```
+
+`evaluate_intra_fragment_splitter.py` now evaluates symmetric dense learned
+affinity with average-linkage clustering as well as the old local connected
+components. Dense pair scores average both directed pair logits. Linkage
+trees are cached, and partition method/threshold selection uses training
+scenes only.
+
+The first dense attempt with the old locally supervised checkpoint failed:
+
+```text
+local_outputs/intra_fragment_splitter_partition_eval_20260726_v1/
+dense average-linkage hard-val F1 = 0.4217
+```
+
+This is retained as a negative result: local-edge supervision does not
+calibrate non-local affinity.
+
+With global-pair training and hard-fragment-only calibration:
+
+```text
+local_outputs/intra_fragment_splitter_partition_eval_20260726_v2/
+selected method                    dense average linkage
+selected affinity                  0.175
+hard-val precision                 0.7538
+hard-val recall                    0.8512
+hard-val F1                        0.7779
+predicted components / fragment    2.95
+GT components / fragment           3.79
+```
+
+The previous local-CC result was F1 `0.7690` with `7.30` predicted
+components. Thus the main gain is removal of severe oversegmentation, with a
+small F1 gain.
+
+Applying the hard-only threshold to every fragment was unsafe: the first
+prediction-only export changed 93 fragments into 236 in scene 00184.
+That output is retained only as a failed audit:
+
+```text
+local_outputs/intra_fragment_split_support_val3_20260726_v1/
+```
+
+Calibration was therefore repeated with equal caps of 64 hard and 64 pure
+training fragments:
+
+```text
+local_outputs/intra_fragment_splitter_partition_eval_20260726_v3/
+```
+
+For full support inference the conservative dense threshold `0.10` was
+selected. Although local CC had slightly higher calibration F1, it predicted
+`12.65` components per hard validation crop and was rejected as operationally
+unsafe. `apply_intra_fragment_splitter.py` performs prediction-only export:
+
+```text
+fragment/view support
+-> deterministic anchors (maximum 512)
+-> learned dense affinity
+-> average linkage
+-> merge tiny anchor clusters
+-> nearest-anchor propagation in source-pixel space
+-> refit plane equations
+```
+
+No GT field is read by this inference script. The accepted three-scene
+support export is:
+
+```text
+local_outputs/intra_fragment_split_support_val3_20260726_v3/
+```
+
+Output fragment counts:
+
+```text
+scene 00184   93 -> 131   split groups 26
+scene 00195  105 -> 153   split groups 43
+scene 00197   64 ->  76   split groups  9
+```
+
+The derived batch retains all 17 scenes; only the three difficult
+development scenes point to split support. Topology-logistic global identity
+was rerun with the identical LOSO audit features:
+
+```text
+local_outputs/all_fragment_identity_split_val3_20260726_v2/
+```
+
+Sparse repeated-support comparison against the previous topology-logistic
+identity:
+
+```text
+scene       plane F1 old -> new   partition F1 old -> new
+00184       0.5714 -> 0.5833      0.8305 -> 0.8712
+00195       0.5556 -> 0.6316      0.7808 -> 0.8822
+00197       0.4000 -> 0.4000      0.5206 -> 0.5216
+```
+
+The identical bounded full-cache adapter was then run with distance `0.03`,
+tangent margin `0.02`, 1% trim and two refits:
+
+```text
+local_outputs/all_fragment_identity_split_val3_bounded_common_20260726_v1/
+```
+
+Full-cache comparison:
+
+```text
+scene       plane F1 old -> new   IoU old -> new      VOI old -> new
+00184       0.6000 -> 0.6364      0.7788 -> 0.7546    0.9243 -> 0.8898
+00195       0.5882 -> 0.8235      0.8284 -> 0.8401    0.8156 -> 0.5370
+00197       0.4000 -> 0.4000      0.8376 -> 0.8378    1.2280 -> 1.2274
+17-scene    0.7087 -> 0.7247
+```
+
+Only three scenes changed, so the aggregate improvement is attributable to
+the learned split/remerge path. Scene 00184 trades a small IoU loss for
+higher plane F1 and lower VOI. Scene 00195 is the strongest positive result.
+Scene 00197 remains the main unresolved failure.
+
+New or changed source/test files in this step:
+
+```text
+train_intra_fragment_splitter.py
+evaluate_intra_fragment_splitter.py
+apply_intra_fragment_splitter.py
+tests/test_train_intra_fragment_splitter.py
+tests/test_evaluate_intra_fragment_splitter.py
+tests/test_apply_intra_fragment_splitter.py
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Focused verification:
+
+```text
+py_compile                                                        passed
+test_train_intra_fragment_splitter.py                             5 passed
+test_evaluate_intra_fragment_splitter.py                          4 passed
+test_apply_intra_fragment_splitter.py                             2 passed
+```
+
+Important limitations and next action:
+
+* Threshold `0.10` is calibrated on difficult and pure training crops, but
+  the full exporter still splits 43 groups in scene 00195 versus 24 known
+  hard fragments. A learned split/no-split gate should replace the current
+  fixed trigger.
+* Non-anchor propagation currently uses nearest source pixel. A scalable
+  sparse affinity propagation or prototype head should be trained directly.
+* Only the three difficult development scenes use split support. A proper
+  final result requires frozen training/calibration followed by all-scene
+  prediction and a separate untouched test set.
+* Scene 00197 does not improve, so its error should be audited before scaling
+  training. It may require features that distinguish large coplanar but
+  disconnected supports rather than stronger pair affinity alone.
+
+Latest repository commit remains `1fa7027`. The worktree contains extensive
+pre-existing unrelated changes and untracked results; this step was not
+committed. No existing checkpoint, cache, NPZ, visualization or prior output
+directory was overwritten.
+
+### 2026-07-26 pause point: million-parameter multiscale splitter
+
+Work was explicitly paused by the user after implementing and training the
+larger learned splitter. The active calibration process was terminated; no
+Python training/evaluation process remains.
+
+The current `IntraFragmentSplitter` keeps the old `architecture=light`
+checkpoint contract and adds `architecture=multiscale`:
+
+```text
+13D point features
+-> 128D point encoder
+-> 3 multiscale EdgeConv-style graph blocks (8/16/32 neighbors)
+-> 4 local-attention blocks (4 heads; neighbor-only attention)
+-> 64D normalized instance embedding
+-> affinity head + boundary head + fragment split/no-split head
+```
+
+The enhanced split gate additionally receives local edge-probability mean,
+standard deviation, minimum and maximum. `apply_intra_fragment_splitter.py`
+now supports both:
+
+```text
+--partition_method local_connected_components
+--partition_method dense_average_linkage
+```
+
+and applies the learned split gate before partitioning.
+
+Capacity and local hardware validation:
+
+```text
+parameters                 1,227,587 initially; 1,228,099 with pair-stat gate
+512 anchor points
+32 local neighbors
+FP16 CUDA
+peak allocated CUDA        about 229.6 MB
+4060 Ti 8 GB               passed comfortably
+```
+
+Smoke output:
+
+```text
+local_outputs/intra_fragment_splitter_multiscale_smoke_20260726_v1/
+20 steps including evaluation: 3.79 s
+```
+
+The first 1,000-step run used GT-stratified crops and is rejected for the
+split gate because it made pure fragments appear artificially mixed:
+
+```text
+local_outputs/intra_fragment_splitter_multiscale_train_20260726_v1/
+```
+
+The second run used natural uniform crops:
+
+```text
+local_outputs/intra_fragment_splitter_multiscale_train_20260726_v2/
+1,000 steps
+best step 300
+runtime 134.06 s
+peak CUDA 229,531,648 bytes
+```
+
+Its completed crop partition calibration is:
+
+```text
+local_outputs/intra_fragment_splitter_multiscale_partition_eval_20260726_v1/
+selected local connected components
+affinity 0.75
+boundary 0.60
+gate 0.20
+hard-val precision 0.7000
+hard-val recall 0.9746
+hard-val F1 0.7932
+predicted components 3.19
+GT components 3.72
+```
+
+This beats the accepted 27K model's hard-val F1 `0.7779`, but its first
+full-support export failed the fragmentation safety check:
+
+```text
+local_outputs/intra_fragment_split_support_multiscale_val3_20260726_v1/
+scene 00184   93 -> 350
+scene 00195  105 -> 555
+scene 00197   64 ->  89
+```
+
+That export must not enter global identity evaluation.
+
+The split gate was then extended with local pair-score statistics and trained
+for 800 steps:
+
+```text
+local_outputs/intra_fragment_splitter_multiscale_train_20260726_v3/
+parameters 1,228,099
+best step 800
+runtime 120.35 s
+peak CUDA 229,572,608 bytes
+val-all gate balanced accuracy at 0.5 = 0.5995
+```
+
+Important sampling detail: that v3 process was already running when the code
+was changed to strict alternating hard/pure fragments, so v3 still used the
+older 75%-hard four-fragment batch distribution. The source currently on
+disk now alternates:
+
+```text
+hard, pure, hard, pure
+```
+
+This current sampler has not yet produced a new checkpoint. The next training
+output should therefore be a new `v4` directory, not overwrite v3.
+
+A new calibration of the v3 checkpoint was started at:
+
+```text
+local_outputs/intra_fragment_splitter_multiscale_partition_eval_20260726_v2/
+```
+
+but the user requested a pause before it completed. The process was stopped
+and that directory has no valid `summary.json`; treat it as incomplete.
+
+Current resume sequence:
+
+1. Run focused syntax/tests once more.
+2. Train `multiscale_train_..._v4` with the current strict 50/50 hard/pure
+   sampler and pair-stat gate.
+3. Calibrate gate/affinity on training scenes only.
+4. Export the three validation scenes and reject immediately if fragment
+   counts inflate similarly to the failed 350/555/89 export.
+5. Only after passing that safety check, rerun global identity and bounded
+   full-cache evaluation.
+
+Focused checks completed during this step:
+
+```text
+py_compile train/evaluate/apply splitter                         passed
+test_train_intra_fragment_splitter.py                            7 passed
+test_evaluate_intra_fragment_splitter.py                         4 passed
+test_apply_intra_fragment_splitter.py                            2 passed
+```
+
+Latest repository commit is still `1fa7027`. None of this multiscale work is
+committed, and no prior checkpoint, support NPZ, cache or result directory
+was overwritten.
+
+### 2026-07-27 dual-agent coordination and multiscale v4
+
+Parallel collaboration is now formalized:
+
+```text
+docs/collaboration/DUAL_AGENT_PROTOCOL.md
+docs/collaboration/ACTIVE_WORK_20260727.md
+docs/codex_handoff/WEB_CONTEXT_20260727.md
+docs/codex_tasks/web_scene00197_gate_review_20260727.md
+docs/web_returns/README.md
+```
+
+The uploadable GPT web context package is:
+
+```text
+local_outputs/web_collab_context_20260727_v1.zip
+```
+
+It contains the task, protocol, current source, handoff and selected result
+JSON files. The web lane owns only a returned analysis Markdown; the local
+lane retains exclusive ownership of code, GPU runs and outputs.
+
+The strict alternating hard/pure multiscale v4 run completed:
+
+```text
+local_outputs/intra_fragment_splitter_multiscale_train_20260727_v4/
+parameters     1,228,099
+best step      600
+runtime        104.73 s
+peak CUDA      229,572,608 bytes
+```
+
+Calibration performance was improved operationally by replacing the Python
+edge-loop union-find in `connected_components` with SciPy sparse graph
+connected-components. A local-only calibration now skips dense all-pair
+affinity and completed in about 33 seconds:
+
+```text
+local_outputs/intra_fragment_splitter_multiscale_partition_eval_20260727_v4_local_fast/
+affinity             0.85
+boundary             0.60
+gate                 0.20
+hard-val F1          0.7590
+pred components      2.72
+GT components        3.72
+```
+
+The v4 full-support safety export is:
+
+```text
+local_outputs/intra_fragment_split_support_multiscale_val3_20260727_v4/
+scene 00184   93 -> 204
+scene 00195  105 -> 370
+scene 00197   64 ->  90
+```
+
+This remains unsafe and must not enter global identity evaluation. The result
+shows that crop-level component metrics do not constrain full-support
+fragment inflation. The next local task is therefore full-natural-support
+gate calibration on training scenes with an explicit fragmentation-inflation
+constraint, separating the decision to split from the partition produced
+after that decision.
+
+The web context addendum containing these v4 facts is:
+
+```text
+docs/codex_handoff/WEB_LOCAL_UPDATE_20260727_V4.md
+```
+
+## 2026-07-25 topology-aware fragment identity learning
+
+The learned identity stage now explicitly models finite support topology
+instead of relying only on plane equations, centroids, RGB and provenance.
+`build_fragment_graph_features.py` adds six prediction-only edge features in
+a shared tangent frame:
+
+```text
+tangent_support_primary_gap_normalized
+tangent_support_primary_overlap
+tangent_support_secondary_gap_normalized
+tangent_support_secondary_overlap
+tangent_support_bbox_gap_normalized
+tangent_support_bbox_overlap
+```
+
+Endpoints use robust 2%/98% support quantiles. The primary tangent axis follows
+the pair's tangent centroid separation; the secondary axis is orthogonal
+inside the plane. This lets the classifier distinguish two finite coplanar
+supports from two noisy observations of the same physical support.
+
+`evaluate_learned_fragment_identity.py` and
+`evaluate_all_fragment_identity_end_to_end.py` additionally support:
+
+```text
+--model_kind logistic
+--model_kind hist_gradient_boosting
+--hard_negative_weight N
+```
+
+The hard-negative definition is supervised only during training: different-GT
+edges with normal angle below 10 degrees and normalized pooled RMSE below 0.1.
+There are 288 such edges among 25,307 negatives in the current audit, so the
+option prevents them from being numerically hidden by easy negatives.
+
+Focused validation:
+
+```text
+tests/test_build_fragment_graph_features.py                 5 passed
+tests/test_evaluate_learned_fragment_identity.py            4 passed
+tests/test_evaluate_all_fragment_identity_end_to_end.py     3 passed
+py_compile                                                   passed
+```
+
+The new 32-feature graph is:
+
+```text
+local_outputs/fragment_graph_features_topology_17scene_20260725_v1/
+```
+
+All-fragment 17-scene LOSO outputs:
+
+```text
+local_outputs/all_fragment_identity_topology_logistic_17scene_20260725_v1/
+local_outputs/all_fragment_identity_topology_hgb_17scene_20260725_v1/
+local_outputs/all_fragment_identity_topology_hgb_hn4_17scene_20260725_v1/
+```
+
+Repeated-support results:
+
+```text
+method                         pair F1   plane precision  plane recall  matched IoU
+previous logistic              0.80698   0.7351           0.6738        0.79095
+topology logistic              0.82407   0.7678           0.6960        0.79185
+topology HGB                   0.83600   0.7463           0.7062        0.81038
+topology HGB + hard-neg x4     0.83419   0.7502           0.7008        0.80870
+```
+
+Hard-negative x4 did not improve over ordinary HGB and is rejected. HGB
+achieves the best sparse repeated-support score, but it takes about 419
+seconds for the full LOSO run versus 156 seconds for topology logistic.
+Everything is CPU-side and fits the local 4060 Ti 8 GB machine without using
+GPU memory.
+
+Both viable models were then evaluated with the identical full-cache adapter:
+distance 0.03, tangent box margin 0.02, 1% trimming and two SVD refits.
+
+```text
+output
+local_outputs/all_fragment_identity_topology_logistic_bounded_common_17scene_20260725_v1/
+local_outputs/all_fragment_identity_topology_hgb_bounded_common_17scene_20260725_v1/
+```
+
+Unified common-domain result:
+
+```text
+method                    precision  recall   plane F1  IoU     normal   VOI     RI      SC
+guided RANSAC             0.5484     0.5497   0.5427    0.6802  4.24deg  1.1721  0.8347  0.6590
+unbounded identity        0.6429     0.5525   0.5881    0.7668  3.95deg  1.1432  0.8755  0.6724
+bounded identity          0.8025     0.6177   0.6871    0.7988  3.16deg  0.8533  0.8997  0.7507
+topology logistic         0.8200     0.6396   0.7087    0.8000  3.54deg  0.7841  0.9087  0.7708
+topology HGB              0.7814     0.6475   0.6975    0.8014  3.01deg  0.8081  0.9060  0.7627
+Plane-DUSt3R              0.8591     0.7735   0.8098    0.8305  6.64deg  0.3982  0.9494  0.8752
+```
+
+Topology logistic is selected despite HGB's higher sparse score because it
+has the best full-cache plane F1 and precision. Relative to the previous
+bounded model it improves 3 scenes, ties 12 and loses 2, with mean plane-F1
+gain `+0.02155`. Major gains are:
+
+```text
+scene_00182  0.3750 -> 0.6667
+scene_00191  0.4444 -> 0.6316
+scene_00190  0.4211 -> 0.5263
+```
+
+Separate headed renders for those scenes are under:
+
+```text
+local_outputs/all_fragment_identity_topology_visuals_17scene_20260725_v1/
+  final_002_scene_00182_retry/
+  final_008_scene_00190/
+  final_009_scene_00191/
+```
+
+Each directory contains separate RGB, GT, previous-bounded and
+topology-learned PNGs for three views. Visual inspection confirms a large
+coverage recovery in `scene_00182` (63.8% to 98.1% assignment in the shown
+view) and more coherent support identities in `scene_00191`.
+
+The remaining bottleneck is now clearer. The graph treats every Stage2
+fragment as atomic, so no edge classifier can split a fragment that already
+contains multiple physical planes. Prediction-only descriptor audits show:
+
+```text
+scene         impure fragments   point rate inside purity<0.8 fragments
+scene_00184   26 / 92            31.3%
+scene_00195   24 / 104           24.0%
+scene_00197   12 / 63            13.3%
+```
+
+The two scenes that regress under topology learning are `scene_00184` and
+`scene_00195`, precisely the scenes with the highest atomic-fragment impurity.
+`scene_00197` remains at F1 0.4. The next learning improvement should therefore
+be an intra-fragment split head or point-level affinity/boundary field before
+global fragment clustering, not a larger edge classifier or another threshold
+sweep.
+
+Changed source files in this step:
+
+```text
+build_fragment_graph_features.py
+evaluate_learned_fragment_identity.py
+evaluate_all_fragment_identity_end_to_end.py
+tests/test_build_fragment_graph_features.py
+tests/test_evaluate_all_fragment_identity_end_to_end.py
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Latest repository commit remains `1fa7027`. These changes are uncommitted, and
+no existing checkpoint, cache, NPZ output or visualization was overwritten.
+
+## 2026-07-25 learned intra-fragment splitting first gate
+
+This step starts actual neural representation learning rather than another
+handcrafted fragment-edge classifier. It deliberately stops at a crop-level
+gate before changing global prediction NPZs.
+
+### Dataset contract and split
+
+`build_intra_fragment_split_dataset.py` creates a read-only manifest over the
+existing direct-support and point-aligned GT NPZs. The join remains the exact
+saved provenance tuple:
+
+```text
+(alignment_view_index, x, y)
+```
+
+No nearest-XYZ GT matching is used. Input features are:
+
+```text
+fragment-centered normalized XYZ
+RGB
+explicit 512-space pointmap pixel XY
+alignment view index
+signed residual to the current fragment plane
+current fragment normal
+```
+
+The pressure validation split contains the three known hard scenes:
+
+```text
+final_003_scene_00184
+final_013_scene_00195
+final_014_scene_00197
+```
+
+The other 14 scenes are training-only. This is a development pressure split,
+not a final unbiased test set.
+
+Canonical manifest:
+
+```text
+local_outputs/intra_fragment_split_manifest_17scene_20260725_v2/manifest.json
+```
+
+Population:
+
+```text
+split   scenes  eligible fragments  hard impure fragments  hard points
+train   14      902                 104                    139,479
+val      3      209                  43                     32,422
+```
+
+All 147 hard impure fragments contain at least one individual source view
+whose points map to two or more GT planes. This establishes that the target
+is learnable as a pointmap-local boundary problem and is not only a cross-view
+association artifact.
+
+### Model and training
+
+`train_intra_fragment_splitter.py` implements a small learned point model:
+
+```text
+point MLP
+-> PointNet global context
+-> view-local pixel-neighbor EdgeConv aggregation
+-> 16D normalized point embedding
+-> local point-pair affinity head
+-> point boundary head
+```
+
+Training alternates ordinary and hard impure fragments, always includes a
+hard fragment per optimizer step, and mines the nearest different-GT point
+for supervised negative affinity edges. Crops are single-view because the
+audit proves that every hard fragment has a within-view mixture. GT is used
+only during training and evaluation.
+
+Early smoke runs are retained:
+
+```text
+local_outputs/intra_fragment_splitter_smoke_20260725_v1/
+local_outputs/intra_fragment_splitter_smoke_20260725_v2/
+local_outputs/intra_fragment_splitter_smoke_20260725_v3/
+```
+
+They exposed two invalid shortcuts:
+
+* ordinary edge F1 was dominated by same-plane local edges;
+* a pointwise boundary head without neighbor aggregation collapsed.
+
+The corrected canonical smoke run is:
+
+```text
+local_outputs/intra_fragment_splitter_smoke_20260725_v4/
+```
+
+It uses 1000 optimizer steps, four fragments per step, 512 points per crop and
+AMP on the local RTX 4060 Ti 8 GB. Best checkpoint is step 200:
+
+```text
+parameters                              27,730
+runtime                                 43.0 seconds
+peak CUDA memory                        26,764,288 bytes (~25.5 MiB)
+hard-val edge balanced accuracy         0.6979
+hard-val same-plane recall              0.8546
+hard-val different-plane recall         0.5412
+hard-val boundary balanced accuracy     0.6659
+hard-val boundary F1                    0.3814
+```
+
+This confirms that local training is far below the 8 GB GPU limit. Ordinary
+edge F1 is retained only as a secondary statistic; balanced accuracy and
+different-plane recall are the relevant anti-merge gates.
+
+### Actual component split evaluation
+
+`evaluate_intra_fragment_splitter.py` converts predicted local affinity edges
+to connected components. Affinity and boundary thresholds are calibrated
+only on 64 hard training-scene fragments, then frozen for the 43 hard
+validation fragments.
+
+Canonical output:
+
+```text
+local_outputs/intra_fragment_splitter_component_eval_20260725_v1/
+```
+
+Selected thresholds:
+
+```text
+affinity >= 0.5
+boundary gate disabled (threshold 1.01)
+```
+
+The disabled boundary gate is evidence that the current gain comes from the
+affinity representation; the boundary head is not yet strong enough to help
+the final partition.
+
+Hard validation crop result:
+
+```text
+method              precision  recall  pair F1  predicted comps  GT comps
+unsplit fragment    0.4512     1.0000  0.6153   1.00             3.79
+learned components  0.7086     0.9112  0.7690   7.30             3.79
+delta              +0.2574    -0.0888 +0.1538
+```
+
+The first research gate therefore passes: learned point affinity can recover
+substantial structure that no fragment-level merge classifier can recover.
+However, the predicted component count shows clear over-segmentation. It is
+not yet authorized as a replacement for global predictions.
+
+The next stage should:
+
+1. reduce over-segmentation with component-consistent affinity training or
+   average-linkage/region-growing instead of raw connected components;
+2. export split support records for only the three held-out hard scenes;
+3. feed those split records into the frozen topology-logistic global identity
+   stage;
+4. rerun bounded full-cache evaluation and require a gain over plane F1
+   `0.7087` before expanding to a full scene-held-out training protocol.
+
+New source files:
+
+```text
+build_intra_fragment_split_dataset.py
+train_intra_fragment_splitter.py
+evaluate_intra_fragment_splitter.py
+tests/test_build_intra_fragment_split_dataset.py
+tests/test_train_intra_fragment_splitter.py
+tests/test_evaluate_intra_fragment_splitter.py
+```
+
+Focused validation:
+
+```text
+dataset tests       2 passed
+training tests      4 passed
+evaluation tests    2 passed
+py_compile          passed
+```
+
+Latest repository commit remains `1fa7027`. All new source and experiment
+outputs are uncommitted. No existing checkpoint, cache, NPZ result or
+visualization was overwritten.
+
+## 2026-07-27 oracle route arbitration and evaluator audit
+
+GPT's frozen route rules are stored at:
+
+```text
+docs/web_returns/WEB_RETURN_oracle_preregister_20260727.md
+```
+
+The local implementation added:
+
+```text
+evaluate_intra_fragment_oracles.py
+tests/test_evaluate_intra_fragment_oracles.py
+```
+
+`apply_intra_fragment_splitter.py` now emits schema-v2 full-support
+diagnostics without changing the learned gate decision:
+
+* per-group gate probability, decision and skip reason;
+* candidate and selected component sizes;
+* tiny-component counts;
+* nearest-anchor distance p50/p95/max;
+* per-point frozen candidate group/component labels;
+* separate view-group and partition inflation.
+
+The audit found and fixed a data-contract bug: input support with
+`point_plane_ids=-1` was previously treated as a fragment and converted to a
+positive plane ID. Contract-fixed validation counts are:
+
+```text
+scene 00184  92 valid input fragments -> 191 outputs
+scene 00195 104 valid input fragments -> 365 outputs
+scene 00197  63 valid input fragments ->  87 outputs
+```
+
+The preserved unassigned point counts are respectively `1078`, `448`, and
+`96`.
+
+The final split-gain oracle selected:
+
+```text
+scene 00184  20 groups versus learned gate 40
+scene 00195  31 groups versus learned gate 44
+scene 00197  14 groups versus learned gate 15
+```
+
+After the identical topology-logistic identity backend and frozen bounded
+common-cache evaluator:
+
+```text
+method                                  00184   00195   00197 Plane F1
+current gate + current identity         0.6000  0.8235  0.4000
+split oracle + current identity         0.6667  0.8235  0.4000
+current gate + dominant-GT identity     0.7273  0.7000  0.2000
+split oracle + dominant-GT identity     0.6364  0.9000  0.2000
+```
+
+Under the preregistered rules, both S and I are failed, so the route is E:
+pause L/G/J and audit the evaluator/data contract.
+
+The decisive E sanity check assigned the same support records their exact
+pointwise GT labels solely for offline evaluator validation:
+
+```text
+scene 00184  Plane F1 1.0
+scene 00195  Plane F1 1.0
+scene 00197  Plane F1 0.0
+```
+
+For `scene_00197`, all five GT-labeled support seeds have normal error below
+`0.05 degrees` and offset error below `1.4e-4`, but the frozen
+`0.03 + tangent_bbox + two refits` expansion produces matched IoUs:
+
+```text
+0.2786, 0.4752, 0.3690, 0.2406, 0.2119
+```
+
+Therefore current bounded results for `scene_00197` cannot arbitrate between
+split and identity methods. The support-to-bounded evaluator fails its own GT
+sanity check.
+
+Mapping validation completed:
+
+```text
+scene 00184  support-key-in-GT rate 0.78815
+scene 00195  support-key-in-GT rate 0.93930
+scene 00197  support-key-in-GT rate 0.90535
+```
+
+Each 80,000-record support contains 60,000 repeated `(view,x,y)` keys. The
+schema-v2 candidate labels reconstruct the formal learned-gate labels exactly
+for all three scenes.
+
+Canonical outputs:
+
+```text
+local_outputs/intra_fragment_split_support_multiscale_val3_20260727_v6_contract_fix/
+local_outputs/intra_fragment_oracles_val3_20260727_v5_evaluator_sanity/
+local_outputs/oracle_common_current_learned_contract_val3_20260727_v1/
+local_outputs/oracle_common_current_split_contract_val3_20260727_v1/
+local_outputs/oracle_common_identity_learned_contract_val3_20260727_v1/
+local_outputs/oracle_common_identity_split_contract_val3_20260727_v1/
+local_outputs/oracle_common_pointwise_gt_evaluator_val3_20260727_v1/
+local_outputs/oracle_route_visuals_scene00197_20260727_v2_contract/
+```
+
+Focused validation:
+
+```text
+py_compile                                            passed
+test_apply_intra_fragment_splitter.py                 5 passed
+test_evaluate_intra_fragment_oracles.py               5 passed
+test_evaluate_intra_fragment_splitter.py              4 passed
+test_train_intra_fragment_splitter.py                 7 passed
+```
+
+Invalid attempts are retained:
+
+```text
+local_outputs/intra_fragment_oracles_val3_20260727_v1/
+  failed because tiny components were rejected by the old >=3-point refit
+
+local_outputs/intra_fragment_oracles_val3_20260727_v2/
+local_outputs/intra_fragment_oracles_val3_20260727_v3/
+  pre-contract-fix diagnostics; not used for the final decision
+```
+
+Changed files in this step:
+
+```text
+apply_intra_fragment_splitter.py
+evaluate_intra_fragment_oracles.py
+tests/test_apply_intra_fragment_splitter.py
+tests/test_evaluate_intra_fragment_oracles.py
+docs/web_returns/WEB_RETURN_oracle_preregister_20260727.md
+docs/collaboration/ACTIVE_WORK_20260727.md
+docs/collaboration/ORACLE_ROUTE_DECISION_20260727.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Latest repository commit remains `1fa7027`; all changes and outputs are
+uncommitted. No existing checkpoint, cache, NPZ, result directory or
+visualization was overwritten.
+
+Next exact step:
+
+Define and freeze a support-to-bounded evaluator on the 14 training scenes
+that handles DUSt3R residual scale, repeated/unmatched provenance keys and
+tangent-bound/refit drift. Do not resume model training until the pointwise-GT
+sanity oracle achieves Plane F1 at least `0.90`, assignment at least `0.98`,
+and zero conflicting keys on each pressure scene.
+
+## 2026-07-27 E0 exact-support evaluator contract audit
+
+GPT's E-route repair preregistration was applied in the required order:
+Literature Gate, repository contract map, E0, then the E0 stop decision.
+
+New implementation and focused test:
+
+```text
+audit_support_bounded_evaluator_contract.py
+tests/test_audit_support_bounded_evaluator_contract.py
+```
+
+The implementation constructs E0 from the complete point-aligned GT registry,
+not from the earlier 80K sparse support records.  It enforces a one-to-one
+global cache registry, deduplicates same-key/same-label records, drops
+ambiguous and unmatched keys without fallback, and preserves the exact GT
+support without expansion or refit.
+
+Literature and code-contract outputs:
+
+```text
+docs/literature/LITERATURE_GATE_support_bounded_20260727.md
+docs/audits/SUPPORT_BOUNDED_CONTRACT_MAP_20260727.md
+```
+
+The Literature Gate actually read the original CVF papers/pages for
+MV-DUSt3R+, PlanarRecon, AirPlanes, PlaneMVS, PolyFit and PlaneRAS.  This work
+is explicitly classified as evaluator/data-contract repair, not innovation.
+
+Canonical E0 output:
+
+```text
+results/evaluator_contract_e0_20260727_v1/
+```
+
+It contains the required config, Git/environment state, input hashes, CSV and
+JSON join/residual/expansion/refit/per-plane/per-scene audits, summary and run
+log.
+
+E0 result:
+
+```text
+scene   Plane F1   TP       IoU median/min   GT assignment   coverage   full-cache assignment
+00184   1.0        13/13    1.0 / 1.0        1.0             1.0        0.959199
+00195   1.0        10/10    1.0 / 1.0        1.0             1.0        0.970761
+00197   1.0         5/5     1.0 / 1.0        1.0             1.0        0.976515
+```
+
+E0 therefore fails only the preregistered historical full-cache assignment
+threshold `>=0.98`.  Exact GT plane support intentionally leaves
+GT-unlabeled/non-plane cache points at `-1`, so the maximum possible
+full-cache assignment rate equals the GT-labeled point rate shown above.
+Join, Hungarian matching, Plane TP and continuous IoU are all exact.
+
+Mechanical verdict:
+
+```text
+E-Key/Data Contract
+```
+
+E1, E2 and E3 were not executed.  L/G/J remain stopped.
+
+The raw sparse-support key diagnostic, before identity reconciliation, found:
+
+```text
+scene   positive records   unique keys   duplicate records   ambiguous keys
+00184   78922              19952         58970               19914
+00195   79552              19988         59564               19974
+00197   79904              20000         59904               19999
+```
+
+Those different labels are pair/view-local fragment IDs; this diagnostic is
+not a score for the reconciled identity output.
+
+Residual-scale audit also confirms that the old fixed `0.03` expansion
+distance is not a stable local-scale contract.  In `00197`, GT plane 4 has
+371,129 points, residual median `0.028909`, p95 `0.058954`, and p95 divided by
+median 8-NN distance `90.11`.
+
+Visual diagnostic:
+
+```text
+results/evaluator_contract_e0_visual_scene00197_20260727_v1/
+```
+
+All five rendered E0 label regions are pixel-identical to their GT renders
+below the title header.
+
+Focused validation:
+
+```text
+py_compile audit/test files                              passed
+test_audit_support_bounded_evaluator_contract.py         5 passed
+test_evaluate_all_fragment_common_cache.py               3 passed
+test_evaluate_intra_fragment_oracles.py                  5 passed
+```
+
+The first test invocation accidentally resolved `tests` to the installed
+Ultralytics package and failed on its settings-file permission.  Repository
+tests were then rerun with `unittest discover` and all 13 passed.
+
+Fixed-format return:
+
+```text
+docs/codex_returns/CODEX_RETURN_evaluator_contract_20260727.md
+```
+
+Changed files in this step:
+
+```text
+audit_support_bounded_evaluator_contract.py
+tests/test_audit_support_bounded_evaluator_contract.py
+docs/literature/LITERATURE_GATE_support_bounded_20260727.md
+docs/audits/SUPPORT_BOUNDED_CONTRACT_MAP_20260727.md
+docs/codex_returns/CODEX_RETURN_evaluator_contract_20260727.md
+docs/collaboration/ACTIVE_WORK_20260727.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Latest repository commit remains `1fa7027`.  No checkpoint, cache, NPZ, old
+result or visualization was overwritten.
+
+Next exact step:
+
+Preregister one assignment/coverage metric contract that separates plane
+support measured over GT-labeled points from optional full-cache labeling of
+GT-unlabeled/non-plane points.  Do not run E1--E3 or resume L/G/J before this
+denominator contract is frozen.
+
+## 2026-07-27 corrected assignment/coverage denominator contract
+
+GPT froze a metric-only correction that retires the ambiguous acceptance name
+`assignment_rate`.  The definitions are now:
+
+```text
+gt_support_assignment_rate      = |A intersection G| / |G|
+gt_support_matched_coverage     = |M| / |G|
+full_cache_label_rate           = |A| / |C|
+gt_plane_label_rate             = |G| / |C|
+nonplane_false_assignment_rate  = |A minus G| / |C minus G|
+```
+
+Here `C` is the valid full cache, `G` is GT plane support, `A` is all
+prediction-assigned points, and `M` is the subset assigned to the prediction
+matched to its GT instance.
+
+The preregistration is stored at:
+
+```text
+docs/web_returns/WEB_RETURN_assignment_coverage_contract_20260727.md
+```
+
+`audit_support_bounded_evaluator_contract.py` now emits the five explicit
+metrics and their integer numerators/denominators.  The historical
+`support_coverage` formula is retained only as `legacy_support_coverage`; it
+equals GT-support assignment, not matched coverage.
+
+The preserved v1 E0 result was rejudged by:
+
+```text
+rejudge_support_bounded_e0_metrics.py
+```
+
+No global cache, point cloud, support NPZ, geometry, join, matcher, or model
+was rerun.  The script used only the existing v1 scene/per-plane JSON tables.
+
+Corrected output:
+
+```text
+results/evaluator_contract_e0_20260727_v2_metric_contract/
+```
+
+Integer result:
+
+```text
+scene   assigned |A|   GT |G|   matched |M|   non-plane false   verdict
+00184   557245         557245   557245        0                 passed
+00195   672582         672582   672582        0                 passed
+00197   651494         651494   651494        0                 passed
+```
+
+For all three scenes:
+
+```text
+gt_support_assignment_rate       1.0
+gt_support_matched_coverage      1.0
+nonplane_false_assignment_rate   0.0
+full_cache_label_rate            exactly equals gt_plane_label_rate
+```
+
+The corrected mechanical verdict is:
+
+```text
+E0 Passed
+```
+
+The original v1 `summary.json` was not modified or deleted.  An additive
+marker was written at:
+
+```text
+results/evaluator_contract_e0_20260727_v1/
+  VERDICT_SUPERSEDED_BY_METRIC_CONTRACT_20260727.json
+```
+
+It marks the old `E-Key/Data Contract` verdict as invalidated by the
+contradictory full-cache assignment denominator and points to the v2 summary.
+
+New focused test:
+
+```text
+tests/test_rejudge_support_bounded_e0_metrics.py
+```
+
+E1--E3 were not executed, and L/G/J were not resumed.
+
+Updated fixed-format return:
+
+```text
+docs/codex_returns/CODEX_RETURN_evaluator_contract_20260727.md
+```
+
+Latest repository commit remains `1fa7027`.  No old output was overwritten.
+
+Next exact step:
+
+Keep E1--E3 and L/G/J paused until a new evaluator-stage preregistration is
+provided.
+
+## 2026-07-27 E1 tangent-bbox expansion safety audit
+
+GPT preregistered E1 after the corrected E0 passed. This round executed only:
+
+```text
+same E0 exact GT support and exact (view,x,y) join
++ frozen current tangent-bbox expansion
++ no plane refit
+```
+
+The E1-specific literature appendix is:
+
+```text
+docs/literature/LITERATURE_GATE_tangent_bbox_e1_20260727.md
+```
+
+PlanarRecon, AirPlanes, PlaneMVS, and PolyFit were rechecked. None was found
+to accept the repository's trimmed axis-aligned tangent rectangle plus a
+single raw point-to-plane threshold as final full-scene support. E1 is
+classified as an evaluator safety test of an engineering heuristic, not a
+method reproduction or innovation.
+
+Implementation:
+
+```text
+evaluate_tangent_bbox_e1_contract.py
+tests/test_evaluate_tangent_bbox_e1_contract.py
+```
+
+The existing `expand_plane_seeds(refit_iterations=0)` cannot satisfy E1
+because it still calls `weighted_fit_plane`. The new E1 path reproduces the
+same first-pass bbox/residual assignment and plane-dropping rule but returns
+the unchanged initial plane parameters. The focused test mocks
+`weighted_fit_plane` to raise if called; the E1 path completes with
+`refit_call_count=0`.
+
+Frozen parameters:
+
+```text
+distance_threshold       0.03
+bound_margin             0.02
+bound_trim_quantile      0.01
+min_points_per_plane     1000
+match_iou                0.5
+fragmentation_iou        0.1
+```
+
+All GT/cache SHA-256 values matched E0. For every scene, cache/GT
+`view_indices`, `pixel_xy`, and point order were equal, and the recomputed
+exact join was elementwise equal to the GT labels with no ambiguous or
+unmatched key.
+
+Formal output:
+
+```text
+results/evaluator_contract_e1_20260727_v1/
+```
+
+Result:
+
+```text
+scene   F1      TP       IoU median/min   GT assign   matched cov   nonplane false   multi/GT   min seed retain
+00184   1.000   13/13    0.921/0.609      0.9982      0.9790        0.9982           0.4836     0.7954
+00195   1.000   10/10    0.897/0.752      0.9980      0.9837        0.9911           0.2674     0.9096
+00197   0.200   1/5      0.392/0.254      0.9437      0.0850        0.9255           0.6228     0.2767
+```
+
+In `00197`, 284,412 of 298,912 added points came from another GT plane
+(`95.15%`). Fragmentation and overmerge excess both increased from zero to
+two. Plane- and point-weighted IoU both decreased, so their directions were
+consistent and did not mask the failure.
+
+Mechanical verdict:
+
+```text
+Failed
+route: E-Bounded Expansion
+```
+
+The current tangent-bbox expansion is unsafe for formal evaluation or default
+bounded-plane construction. E0 remains the trusted exact-support evaluator.
+E2/E3 were not implemented or run, and L/G/J were not resumed. The only
+permitted next experiment is a separately preregistered E2 candidate
+bounded-footprint rule.
+
+Visual diagnostic:
+
+```text
+results/evaluator_contract_e1_visual_scene00197_20260727_v1/
+```
+
+It contains five-view RGB, GT, E0-exact, and E1 bbox/no-refit partition
+renders. Visual inspection confirms large cross-plane relabeling in E1.
+
+One initial result directory had a blank scene column only in the residual
+audit table. It was preserved without deletion at:
+
+```text
+results/evaluator_contract_e1_20260727_v1_invalid_incomplete_residual_scene_field/
+```
+
+After fixing the field mapping, the formal v1 directory was regenerated with
+identical inputs and parameters. Per-scene CSV rows and every prediction NPZ
+array were verified equal between the archived and corrected runs.
+
+Commands executed:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile evaluate_tangent_bbox_e1_contract.py tests/test_evaluate_tangent_bbox_e1_contract.py
+E:\anaconda\envs\ai\python.exe tests/test_evaluate_tangent_bbox_e1_contract.py
+E:\anaconda\envs\ai\python.exe evaluate_tangent_bbox_e1_contract.py
+E:\anaconda\envs\ai\python.exe visualize_common_point_cache_partitions.py ...
+```
+
+Final focused validation:
+
+```text
+E1 no-refit tests                              5 passed
+E0 evaluator-contract tests                    6 passed
+E0 denominator rejudgment tests                2 passed
+common-cache expansion tests                   3 passed
+oracle evaluator tests                         5 passed
+partition visualizer tests                     1 passed
+total                                          22 passed
+py_compile                                     passed
+E1 formal run                                  completed
+E1 artifact integrity                          passed
+E1 visual diagnostic                           5 views generated and inspected
+```
+
+Fixed-format return:
+
+```text
+docs/codex_returns/CODEX_RETURN_evaluator_e1_20260727.md
+```
+
+Branch remains `codex/bounded-support-head`; latest commit remains `1fa7027`.
+No E0 result, checkpoint, feature cache, or pre-existing visualization was
+overwritten.
+
+Next exact step:
+
+Send the E1 fixed-format return to GPT and request only an E2 candidate
+bounded-footprint preregistration. Do not implement E2, run E3, or resume
+L/G/J without that new preregistration.
+
+## 2026-07-27 E2 candidate bounded-footprint safety audit
+
+GPT supplied the complete preregistration:
+
+```text
+E2_PREREG_candidate_bounded_footprint_20260727_v1
+```
+
+Only the isolated evaluator-only E2 path was implemented:
+
+```text
+evaluate_candidate_bounded_footprint_e2_contract.py
+tests/test_evaluate_candidate_bounded_footprint_e2_contract.py
+```
+
+Frozen geometry behavior:
+
+```text
+E0 exact seed assignment remains immutable
+deterministic tangent basis from frozen normal
+local scale = median projected eighth-neighbour distance
+footprint = accepted Delaunay triangles union clipped local disks
+tau = min(0.03, 0.5*s, max(1e-6, q99 + 3*1.4826*MAD))
+candidate third-neighbour distance <= 2*s
+multi-candidate points rejected without reassignment
+```
+
+No bbox, convex-hull fallback, morphology, hole filling, component bridge,
+fit, refit, RANSAC, training, E1 prediction, E3, or L/G/J path was used.
+
+Before the formal run, 12 focused synthetic tests passed. A read-only
+preflight then verified all three GT/cache SHA-256 values against E0, exact
+view/pixel/point order, exact E0 join reproduction, and zero
+ambiguous/unmatched keys.
+
+Formal output:
+
+```text
+results/evaluator_contract_e2_candidate_bounded_footprint_20260727_v1/
+```
+
+The formal run was executed once. All three predictions were written and
+hashed before GT scoring:
+
+```text
+00184 f7eb3345c25878fd79ae34c2d3bc83071635d6b0a427fcf0775f94be5246f337
+00195 33209d8000dd7f9a9cc6b42a734ace3a63ce0ea1186d8701fdf99ccf2d635b3e
+00197 a91487b1a4df863804a67c481974a4215bcf3678d21fe2f07e9341fdc385fd4e
+```
+
+The freeze barrier was satisfied:
+
+```text
+prediction_frozen_before_GT_scoring = true
+```
+
+Contract validity passed. E0 matcher and metric functions were reused
+directly, and evaluating the exact seed support reproduced the frozen E0
+metrics. All forbidden call counters remained zero.
+
+Formal result:
+
+```text
+scene   verdict   F1 / TP       IoU median/min   seed retain   added   cross-seed
+00184   Failed    1.0 / 13/13   0.9916/0.9193    1.0           4000    0
+00195   Failed    1.0 / 10/10   0.9946/0.9031    1.0           3560    63
+00197   Failed    1.0 / 5/5     0.9995/0.9896    1.0           335     3224
+```
+
+E2 successfully avoided E1 seed deletion and relabeling:
+
+```text
+global/per-plane seed retention = 1.0 exactly
+seed deletion/reassignment      = 0 / 0
+plane IDs and count             unchanged
+final multi-assignment          = 0
+fragmentation/oversegmentation  = 0 / 0
+```
+
+However, because E0 exact support already contains all GT plane points, every
+accepted non-seed addition was GT nonplane/unlabelled. Total leakage fraction
+was `1.0` in all scenes. The `0.05` leakage gate failed everywhere; 00184 and
+00195 also exceeded scene leakage over GT support. Cross-seed intrusion
+failed in 00195 and 00197. Continuous median/minimum IoU gates also failed,
+despite perfect discrete F1 and TP.
+
+Mechanical verdict:
+
+```text
+Failed
+contract_valid = true
+```
+
+Visual diagnostic:
+
+```text
+results/evaluator_contract_e2_visual_scene00184_20260727_v1/
+```
+
+Five RGB/GT/E0/E2 view sets were generated and inspected. E2 retains the
+plane layout but fills narrow regions that exact E0 leaves unassigned,
+consistent with the recorded nonplane leakage.
+
+Final validation:
+
+```text
+E2 focused tests                  12 passed
+E1 no-refit tests                  5 passed
+E0 evaluator-contract tests        6 passed
+E0 denominator rejudgment tests    2 passed
+common-cache expansion tests       3 passed
+oracle evaluator tests             5 passed
+partition visualizer tests         1 passed
+total                              34 passed
+py_compile                         passed
+E2 artifact integrity              passed
+```
+
+The final read-only artifact audit recomputed the three NPZ file hashes and
+verified all required fields, immutable seeds, unique-candidate acceptance,
+multi-candidate rejection, no second reassignment, zero fit/refit/RANSAC
+counters, table row counts, valid E0 hashes/join, exact matcher/metric reuse,
+and the prediction-before-GT freeze barrier.
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_evaluator_e2_candidate_bounded_footprint_20260727.md
+```
+
+Latest repository commit remains `1fa7027`; the worktree remains dirty with
+inherited changes. E0/E1 outputs, cache files, checkpoints, and prior
+visualizations were not overwritten.
+
+Next exact step:
+
+Stop and preserve the complete E2 audit. Do not change registered constants,
+rerun E2, implement/run E3, restore L/G/J, refit, or train. Await a new
+explicit mechanical instruction.
+
+## 2026-07-27 E4 immutable-support archival gate
+
+Registration:
+
+```text
+E4_PREREG_immutable_support_rebaseline_20260727_v1
+```
+
+Post-E2 mechanical decision:
+
+* E-Bounded Expansion is stopped.
+* E0 remains only as a non-mutating evaluator sanity ceiling.
+* E1/E2/E3, evaluator-side support growth/refit, pressure-scene threshold
+  tuning, and L/G/J remain stopped.
+
+The sole planned E4 comparison was the historical 17-scene topology-logistic
+method B (`Plane F1 = 0.7087`) against the old learned split/remerge method M
+(`Plane F1 = 0.7247`) using their immutable pre-expansion support and plane
+parameters.
+
+The archival gate found both referenced input directories and all 17 NPZ files
+for both methods:
+
+```text
+local_outputs/all_fragment_identity_topology_logistic_17scene_20260725_v1/predictions/
+local_outputs/all_fragment_identity_split_val3_20260726_v2/predictions/
+```
+
+Both historical bounded summaries explicitly reference those directories as
+their `support_prediction_dir`. All 34 NPZs contain the required support IDs,
+plane IDs, plane parameters, pointmap provenance, and source points.
+
+The blocking failure is historical hash provenance. Neither the prediction
+NPZs nor their historical method summaries contain per-scene hashes, and no
+existing repository hash manifest covers these 34 files. Hashes computed now
+cannot prove identity with the files used on 2026-07-25/26.
+
+Mechanical verdict:
+
+```text
+Blocked
+contract_valid = false
+scientific_effect_interpretation_allowed = false
+```
+
+No immutable metrics or B-vs-M effect were computed. Robust/Artifact was not
+adjudicated. The current `+0.0160` historical effect remains unverified under
+the non-mutating evaluator.
+
+Formal output:
+
+```text
+results/immutable_support_rebaseline_20260727_v1/
+```
+
+It contains all ten registered files. `input_hashes.json` records current
+whole-file, support-array, and plane-parameter hashes as a new archival
+baseline while explicitly distinguishing them from missing historical
+expected hashes. `per_scene_metrics.csv` contains 34 Blocked rows with blank
+metric fields; `per_plane_metrics.csv` contains only its schema.
+
+Read-only/prohibited-action audit:
+
+```text
+current file hash stable across audit       34 / 34
+evaluation started                          false
+prediction output created                   false
+metric comparison performed                 false
+expansion calls                             0
+refit calls                                 0
+model inference calls                       0
+training calls                              0
+GT-guided prediction calls                  0
+```
+
+Changed/added:
+
+```text
+docs/codex_tasks/e4_immutable_support_rebaseline_20260727.md
+audit_immutable_support_rebaseline_e4.py
+tests/test_audit_immutable_support_rebaseline_e4.py
+results/immutable_support_rebaseline_20260727_v1/
+docs/codex_returns/CODEX_RETURN_immutable_support_rebaseline_20260727.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Validation:
+
+```text
+py_compile                              passed
+focused E4 archival-audit tests         4 passed
+formal archival gate                    Blocked as registered
+required formal artifacts               10 / 10
+artifact integrity                      passed
+```
+
+Commands executed:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile audit_immutable_support_rebaseline_e4.py tests/test_audit_immutable_support_rebaseline_e4.py
+E:\anaconda\envs\ai\python.exe tests/test_audit_immutable_support_rebaseline_e4.py
+E:\anaconda\envs\ai\python.exe audit_immutable_support_rebaseline_e4.py --output-dir results/immutable_support_rebaseline_20260727_v1
+```
+
+One module-form unittest attempt imported the unrelated installed
+`site-packages/tests` package and failed on an Ultralytics settings permission
+check. Direct execution of the repository test file passed all four tests.
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_immutable_support_rebaseline_20260727.md
+```
+
+Branch remains `codex/bounded-support-head`; current commit remains
+`1fa7027f16630069d3475e0d012affea25e91e81`. Existing worktree changes and all
+historical outputs were preserved.
+
+Next exact step:
+
+Stop the method comparison. Search only existing archives, transfer bundles,
+logs, or manifests for contemporaneously recorded hashes or independently
+immutable copies of the 34 pre-expansion NPZ files. Do not rerun inference to
+recreate historical inputs. If no such evidence exists, leave the old method
+effect `Unverified`; any prospective immutable baseline rebuild requires a new
+explicit preregistration.
+
+## 2026-07-28 E5 prospective immutable baseline gate
+
+Registration:
+
+```text
+E5_PREREG_prospective_immutable_baseline_rebuild_20260727_v1
+```
+
+E5 was registered as a new prospective baseline experiment rather than an E4
+rerun. Historical B/M predictions were prohibited as E5 inputs.
+
+The registered literature gate was completed against the original PlanarRecon,
+AirPlanes, PlaneMVS, and PolyFit papers:
+
+```text
+docs/literature/LITERATURE_GATE_immutable_evaluation_e5_20260727.md
+```
+
+The reviewed systems construct/fuse/refine their support as explicit method
+stages and evaluate the resulting predictions. Matching, nearest-neighbor
+label transfer, and surface sampling are evaluator correspondence operations;
+none reports evaluator-side support growth or plane refit. Exact byte hashes
+and forbidden-call auditing are not stated by those papers.
+
+### Method-definition result
+
+The requested M checkpoint exists, loads successfully, and contains 27,730
+state parameters:
+
+```text
+local_outputs/intra_fragment_splitter_global_pairs_20260726_v1/best.pt
+SHA-256 bd8f89bc8c457fd0b54547c775477813b4d5e3a0667f81c08ec28d4faaadfcd1
+```
+
+The prospective run was nevertheless blocked before inference for five
+registered reasons:
+
+1. M inference source was never committed.
+2. The only archived M source copy postdates the historical run and differs
+   from the current contract-fixed source; the exact run source is absent.
+3. The 27K checkpoint best step was selected using 00184/00195/00197, although
+   E5 permits them only in final evaluation.
+4. Historical learned splitting ran only on those 3 scenes. The other 14 were
+   passed through unchanged and are splitter training scenes, so there is no
+   valid `17 scenes x M` evaluation.
+5. The shared B/M topology-logistic identity source was also never committed
+   and its historical summary registered no source hash.
+
+Key source evidence:
+
+```text
+historical split completion       2026-07-26T05:49:46Z
+archived apply source timestamp   2026-07-26T08:18:48Z
+archived apply SHA-256            513f98bae42349f03bce30e3be44f9dbb8ac83563e598900809764f612a7067d
+current apply SHA-256             4d19eeed2c6739e4de1ec35e8a9df017ea8fb5bb57ece7ddbdc7bd9255c20e99
+identity source SHA-256           e10f8ba2d7c2f475526a8e1a5edaed95a77fff434215c214572c8efa071856bd
+```
+
+Mechanical verdict:
+
+```text
+Blocked
+contract_valid = false
+formal_inference_authorized = false
+scientific_effect_interpretation_allowed = false
+```
+
+No B/M prediction was produced and no GT array was loaded.
+
+### Input and freeze audit
+
+The historical 17-scene order was extracted without reading historical
+predictions. Before stopping, the read-only audit verified:
+
+```text
+scenes                                  17
+original RGB images                     85
+global caches                           17
+direct-support common inputs            17
+all files present                       yes
+all recorded cache/support hashes       match
+all original images present/hashed      yes
+```
+
+This proves the common inputs are available; it does not repair the method
+definition or data-leakage failures.
+
+Denial manifest:
+
+```text
+results/prospective_immutable_baseline_e5_20260727_v1/prerun_manifest.json
+SHA-256 9619741506aa06abf57ccda941a3ff0751bf3c15e2f835041faa45a342d958d6
+```
+
+Prediction/forbidden-call audit:
+
+```text
+B predictions                           0
+M predictions                           0
+GT evaluation loads                     0
+expansion/refit/fit/RANSAC calls        0
+support/ID/parameter mutations          0
+model inference calls                   0
+training calls                          0
+```
+
+Formal output:
+
+```text
+results/prospective_immutable_baseline_e5_20260727_v1/
+```
+
+All 21 required files and both empty prediction directories exist.
+`per_scene_metrics` contains 34 explicit Blocked rows; per-plane and effect
+metrics remain empty. No historical metric was copied into E5.
+
+Added/changed:
+
+```text
+docs/codex_tasks/e5_prospective_immutable_baseline_rebuild_20260727.md
+docs/literature/LITERATURE_GATE_immutable_evaluation_e5_20260727.md
+audit_prospective_immutable_baseline_e5.py
+tests/test_audit_prospective_immutable_baseline_e5.py
+results/prospective_immutable_baseline_e5_20260727_v1/
+docs/codex_returns/CODEX_RETURN_prospective_immutable_baseline_e5_20260727.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Validation/commands:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile audit_prospective_immutable_baseline_e5.py tests/test_audit_prospective_immutable_baseline_e5.py
+E:\anaconda\envs\ai\python.exe tests/test_audit_prospective_immutable_baseline_e5.py
+E:\anaconda\envs\ai\python.exe audit_prospective_immutable_baseline_e5.py --output-dir results/prospective_immutable_baseline_e5_20260727_v1
+
+py_compile                    passed
+focused E5 tests              4 passed
+artifact integrity            passed
+source hashes                 11 / 11 matched
+```
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_prospective_immutable_baseline_e5_20260727.md
+```
+
+Branch remains `codex/bounded-support-head`; current commit remains
+`1fa7027f16630069d3475e0d012affea25e91e81`. Existing worktree changes,
+checkpoints, caches, E0-E4 artifacts, and historical predictions were
+preserved.
+
+Next exact step:
+
+Stop E5. Do not use historical predictions, guess the missing historical
+source, run the pressure-selected checkpoint as a clean final model, evaluate
+it on its 14 training scenes, retrain inside E5, or restore expansion/E3/L/G/J.
+A future prospective comparison requires a new preregistration with committed
+and hashed B/M inference code, a checkpoint selected on scenes disjoint from
+all 17 evaluation scenes, and one complete frozen M definition applicable to
+every evaluation scene.
+
+## Session update: 2026-07-28 E6 prospective method/split freeze gate
+
+Registration:
+
+```text
+E6_PREREG_prospective_method_and_split_freeze_20260728_v1
+```
+
+Branch and commit at audit:
+
+```text
+branch  codex/bounded-support-head
+HEAD    1fa7027f16630069d3475e0d012affea25e91e81
+```
+
+Mechanical verdict:
+
+```text
+Blocked
+```
+
+E5 remains Blocked, H0/H1 remain untested, and the historical B-vs-M effect
+remains Unverified.
+
+E6 was restricted to a metadata-only candidate/provenance gate. It did not
+authorize B/M definition work, a source commit, training, checkpoint creation
+or loading, real-scene inference, GT semantic-content loading, or quality
+evaluation.
+
+Observed scene/input state:
+
+```text
+local Structured3D scene directories                200
+explicit historical 17-scene quarantine              17
+unproven-provenance default quarantine               183
+total quarantine                                     200
+scenes with RGB/global-cache/direct-support presence  17
+clean candidates                                       0
+registered requirement                                77
+```
+
+Only the historical 17 scenes have both DUSt3R global-cache and direct-support
+inputs. Every one is explicitly quarantined by E0-E5/training/pressure
+history. The remaining 183 have no affirmative repository ledger proving
+non-use, so the E6 default rule also quarantines them.
+
+No GT plane-label content, prediction result, method metric, difficulty rank,
+or plane count was read during candidate construction.
+
+The four split files are explicit empty Blocked records:
+
+```text
+training       0 / 40
+calibration    0 / 10
+selection      0 / 10
+evaluation     0 / 17
+```
+
+The registered salt was unchanged and no scene was manually substituted.
+The B/M YAML files inside the formal package are Blocked receipts with
+`scientific_method_definition: absent`; they are not runnable method configs.
+No scientific source/config freeze or clean source commit was created.
+
+Implemented audit-only files:
+
+```text
+docs/codex_tasks/e6_prospective_method_and_split_freeze_20260728.md
+audit_prospective_freeze_e6.py
+tests/test_audit_prospective_freeze_e6.py
+docs/codex_returns/CODEX_RETURN_prospective_freeze_e6_20260728.md
+```
+
+Formal package:
+
+```text
+results/prospective_freeze_e6_20260728_v1/
+```
+
+It contains all 21 registered files and contains no trained checkpoint,
+formal prediction, per-scene quality metrics, or method-effect statistics.
+
+Commands:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile audit_prospective_freeze_e6.py tests/test_audit_prospective_freeze_e6.py
+E:\anaconda\envs\ai\python.exe tests/test_audit_prospective_freeze_e6.py
+E:\anaconda\envs\ai\python.exe audit_prospective_freeze_e6.py --output-dir results/prospective_freeze_e6_20260728_v1 --synthetic-test-results tmp/e6_synthetic_test_results.json
+```
+
+Validation:
+
+```text
+py_compile                      passed
+focused E6 synthetic tests      5 passed
+formal exit                     2 (registered Blocked stop)
+required result files           21 / 21
+training/checkpoint calls       0
+B/M real-scene inference        0
+formal predictions              0
+GT semantic-content loads       0
+quality metric computations     0
+expansion/refit/fit/RANSAC       0
+prediction mutations            0
+```
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_prospective_freeze_e6_20260728.md
+```
+
+Next exact step:
+
+Stop E6 and do not amend or rerun it. A new Registration ID first needs an
+external or independently auditable scene-level provenance ledger proving at
+least 77 scenes were never used for historical training, calibration,
+checkpoint selection, oracle analysis, E0-E5, or manual debugging. Those
+scenes must also have materialized, hashable RGB, global-cache, and
+direct-support inputs. Do not relax the count/salt, infer non-use from missing
+logs, write B/M definitions, train, infer, load evaluation GT, or restore
+expansion/E3/L/G/J before that gate is repaired.
+
+## Session update: 2026-07-28 E7 clean scene acquisition gate
+
+Registration:
+
+```text
+E7_PREREG_clean_scene_acquisition_and_materialization_20260728_v1
+```
+
+Branch and commit at audit:
+
+```text
+branch  codex/bounded-support-head
+HEAD    1fa7027f16630069d3475e0d012affea25e91e81
+```
+
+Mechanical verdict:
+
+```text
+Blocked_Source_Access
+```
+
+E6 remains Blocked and was not rerun or relaxed. The historical B-vs-M effect
+remains Unverified.
+
+Official source audit:
+
+```text
+official website       https://structured3d-dataset.org/
+official repository    https://github.com/bertjiazheng/Structured3D
+official scene count   3500
+training split         scene_00000-scene_02999
+validation split       scene_03000-scene_03249
+test split             scene_03250-scene_03499
+errata blob SHA        859568c5df2af217fe6688265bc6db8058dc91d5
+```
+
+The official publisher requires the user to complete its agreement form and
+then grants download access. The E7 execution context had no authorized
+official download URL, no authority-proven official archive, and no relevant
+environment access hint. No form was submitted and no license/terms were
+accepted on the user's behalf.
+
+Pre-acquisition inventory:
+
+```text
+physical local Structured3D directories     200
+historical 17                                17
+unknown-provenance local scenes             183
+conservative scene-like reference tokens    206
+GT semantic parses                            0
+```
+
+The inventory records file-system metadata, file-type counts, byte counts, and
+metadata tree hashes. It does not parse annotations or read prediction/quality
+results.
+
+Six text-only tokens occurred beyond the physical 200:
+
+```text
+scene_02999 scene_03000 scene_03249 scene_03250 scene_03499 scene_20260
+```
+
+The first five are existing official split-boundary mentions.
+`scene_20260` is a conservative false-positive prefix from a
+`scene_202607...` date token and lies outside the E7 source range.
+`scene_02999` was conservatively excluded. Independent recomputation with only
+the 200 physical directories plus the official errata gives it rank 357, so
+the first 128 frozen candidate IDs are exactly unchanged.
+
+Candidate freeze:
+
+```text
+salt                 LightRecon3D_E7_clean_acquisition_20260728_v1
+candidate universe   2727
+frozen IDs           128 / 128 unique
+all IDs in 00200-02999  yes
+download before freeze  no
+manual replacement      no
+```
+
+Acquisition-plan SHA-256:
+
+```text
+aa9889c0aea54e59df49ea6f696531278d4ece036535ba2a525e29c02ec5528c
+```
+
+The plan hash matches the hash receipt and summary. All 21 registered files
+exist.
+
+No acquisition/materialization occurred:
+
+```text
+download attempts                     0
+archive extraction                    0
+raw scenes acquired                   0
+annotation semantic parses            0
+DUSt3R input-preparation calls         0
+Stage1 input-preparation calls         0
+global caches/direct support created  0
+B/M/training/checkpoint/evaluation     0
+expansion/refit/RANSAC                 0
+forbidden counter sum                  0
+```
+
+Added:
+
+```text
+docs/codex_tasks/e7_prospective_clean_scene_acquisition_20260728.md
+docs/codex_tasks/e7_official_structured3d_errata_snapshot.txt
+audit_clean_scene_acquisition_e7.py
+tests/test_audit_clean_scene_acquisition_e7.py
+results/clean_scene_acquisition_e7_20260728_v1/
+docs/codex_returns/CODEX_RETURN_clean_scene_acquisition_e7_20260728.md
+```
+
+Commands:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile audit_clean_scene_acquisition_e7.py tests/test_audit_clean_scene_acquisition_e7.py
+E:\anaconda\envs\ai\python.exe tests/test_audit_clean_scene_acquisition_e7.py
+E:\anaconda\envs\ai\python.exe audit_clean_scene_acquisition_e7.py --output-dir results/clean_scene_acquisition_e7_20260728_v1 --download-search-root C:\Users\admin\Downloads
+```
+
+Validation:
+
+```text
+py_compile                          passed
+focused tests                       5 passed
+formal exit                         2 (registered Blocked stop)
+required result files              21 / 21
+plan hash                           matched
+candidate IDs                      128 / 128 unique
+independent first-128 recompute     identical
+```
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_clean_scene_acquisition_e7_20260728.md
+```
+
+Next exact step:
+
+Stop E7 and do not amend or rerun it. The user must independently accept the
+official Structured3D Terms of Use and obtain an authorized official download
+link. Once access exists, create a new Registration ID and take a fresh
+pre-acquisition inventory before any download. Do not use a third-party mirror,
+the 183 unknown scenes, official validation/test scenes, B/M, training,
+checkpoint selection, evaluation, expansion, refit, RANSAC, or L/G/J.
+
+## Session update: 2026-07-28 E8 preregistration freeze
+
+Registration:
+
+```text
+E8_PREREG_official_archive_acquisition_20260728_v1
+```
+
+State:
+
+```text
+PRE_REGISTERED_NOT_AUTHORIZED
+```
+
+The supplied E8 protocol explicitly authorized preregistration only. No E8
+inventory, network probe, ZIP central-directory probe, download, extraction,
+input-preparation freeze, model call, GT parse, or evaluation was authorized.
+
+The full protocol is preserved byte-for-byte at:
+
+```text
+results/official_archive_acquisition_e8_20260728_v1/registration.md
+```
+
+Protocol SHA-256:
+
+```text
+565324e8ee8ddeb5c527fe463fb5e632b6b0b242a206d431e3e01f70df561799
+```
+
+Added:
+
+```text
+docs/codex_tasks/e8_official_archive_acquisition_prereg_20260728.md
+freeze_official_archive_acquisition_e8.py
+tests/test_freeze_official_archive_acquisition_e8.py
+results/official_archive_acquisition_e8_20260728_v1/
+docs/codex_returns/CODEX_RETURN_official_archive_acquisition_e8_20260728.md
+```
+
+The formal preregistration directory contains all 36 registered filenames.
+Execution-stage files are explicit `not_executed` receipts rather than empty
+success manifests.
+
+Frozen scanner:
+
+```regex
+scene_(\d{5})(?!\d)
+```
+
+Synthetic scanner validation passed all registered cases, including rejecting
+date strings such as `scene_20260728`.
+
+Commands:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile freeze_official_archive_acquisition_e8.py tests/test_freeze_official_archive_acquisition_e8.py
+E:\anaconda\envs\ai\python.exe tests/test_freeze_official_archive_acquisition_e8.py
+E:\anaconda\envs\ai\python.exe freeze_official_archive_acquisition_e8.py --protocol-source C:\Users\admin\.codex\attachments\9c8ec622-7496-4b88-b8fc-f4e56745f7d7\pasted-text.txt --output-dir results/official_archive_acquisition_e8_20260728_v1
+```
+
+Validation:
+
+```text
+py_compile                         passed
+focused preregistration tests      4 passed
+required result files             36 / 36
+protocol copy SHA-256              matched
+scene-scanner synthetic tests      passed
+execution verdict issued          false
+network/inventory/download         not executed
+D archive root created             false
+F clean root created               false
+forbidden counter sum              0
+```
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_official_archive_acquisition_e8_20260728.md
+```
+
+Next exact step:
+
+Stop. Wait for a separate, explicit user instruction authorizing execution of
+Registration `E8_PREREG_official_archive_acquisition_20260728_v1`. Until that
+authorization arrives, do not inventory, probe network/ZIP metadata, create
+D/F directories, download, extract, freeze input preparation, or run any model
+or evaluator.
+
+## Session update: 2026-07-29 E8 authorized execution
+
+Branch: `codex/bounded-support-head`
+
+Base commit SHA:
+
+```text
+1fa7027f16630069d3475e0d012affea25e91e81
+```
+
+Registration:
+
+```text
+E8_PREREG_official_archive_acquisition_20260728_v1
+```
+
+Final mechanical verdict:
+
+```text
+Blocked_Official_Metadata_Changed
+```
+
+Execution facts:
+
+* Separate explicit authorization was received.
+* The corrected pre-acquisition inventory completed with 53,153 records and
+  417 unique pre-existing canonical scene IDs.
+* The official README and errata were snapshotted and hashed.
+* The 128-candidate order was independently generated from the E8 inventory
+  and errata with the frozen E7 salt; no E7 candidate file was read.
+* Nineteen official remote objects were frozen.
+* The first ZIP tail Range read was interrupted and recorded as
+  `Paused_Resumable`.
+* On the mandatory same-source resume validation, the README
+  `Content-Length` differed from its frozen value (`null` versus a supplied
+  value). Under E8 section 4 this mechanically changed the final verdict to
+  `Blocked_Official_Metadata_Changed`.
+* ZIP central-directory mapping, disk preflight, archive download and
+  extraction did not execute.
+* Neither the D acquisition root nor the F clean root was created.
+* All forbidden counters remained zero.
+
+Files added or changed for E8 execution:
+
+```text
+execute_official_archive_acquisition_e8.py
+tests/test_execute_official_archive_acquisition_e8.py
+results/official_archive_acquisition_e8_20260728_v1/
+docs/codex_returns/CODEX_RETURN_official_archive_acquisition_e8_20260728.md
+docs/codex_handoff/CURRENT_STATE.md
+```
+
+Commands and checks:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile execute_official_archive_acquisition_e8.py tests\test_execute_official_archive_acquisition_e8.py
+E:\anaconda\envs\ai\python.exe -m unittest discover -s tests -p 'test_execute_official_archive_acquisition_e8.py' -v
+E:\anaconda\envs\ai\python.exe -m unittest discover -s tests -p 'test_freeze_official_archive_acquisition_e8.py' -v
+E:\anaconda\envs\ai\python.exe execute_official_archive_acquisition_e8.py
+```
+
+Validation:
+
+```text
+E8 execution tests                3 passed
+E8 preregistration regression     4 passed
+protocol SHA-256                  matched
+forbidden counter sum             0
+D acquisition root created        false
+F clean root created              false
+```
+
+Next exact step:
+
+Stop E8. Do not resume or modify its frozen manifests. A new Registration ID
+must be preregistered before official metadata can be frozen again or any ZIP
+probe, download or extraction can continue.
+
+## Session update: 2026-07-29 E9 preregistration freeze
+
+Registration:
+
+```text
+E9_PREREG_stable_official_archive_acquisition_20260729_v1
+```
+
+State:
+
+```text
+PRE_REGISTERED_NOT_AUTHORIZED
+```
+
+E8 remains:
+
+```text
+Blocked_Official_Metadata_Changed
+```
+
+The new E9 protocol explicitly identifies the E8 stop as an overly strict
+response-header identity rule, but does not alter E8's mechanical verdict.
+E9 separates text response-body identity from optional HTTP response metadata
+and introduces dual independent archive probes with canonical central
+directory plus fixed head/tail range hashes.
+
+This turn froze E9 only. It did not execute inventory, retrieve official text,
+probe an archive, create D/F directories, download, extract, parse GT, freeze
+a complete input-preparation definition, materialize inputs, or run any model
+or evaluator.
+
+Protocol:
+
+```text
+results/stable_official_archive_acquisition_e9_20260729_v1/registration.md
+SHA-256 ee0f73ded7b93389d804c319986e1aa8e7e26330ab60fc50b88363c63cf77e80
+```
+
+Files added:
+
+```text
+docs/codex_tasks/e9_stable_official_archive_acquisition_prereg_20260729.md
+freeze_stable_official_archive_acquisition_e9.py
+tests/test_freeze_stable_official_archive_acquisition_e9.py
+results/stable_official_archive_acquisition_e9_20260729_v1/
+docs/codex_returns/CODEX_RETURN_stable_official_archive_acquisition_e9_20260729.md
+```
+
+Commands:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile freeze_stable_official_archive_acquisition_e9.py tests\test_freeze_stable_official_archive_acquisition_e9.py
+E:\anaconda\envs\ai\python.exe -m unittest discover -s tests -p 'test_freeze_stable_official_archive_acquisition_e9.py' -v
+E:\anaconda\envs\ai\python.exe freeze_stable_official_archive_acquisition_e9.py --protocol-source C:\Users\admin\.codex\attachments\9a2035f3-aafa-4dbe-8aa2-250e4ca52dfd\pasted-text.txt
+```
+
+Validation:
+
+```text
+focused E9 preregistration tests  4 passed
+registered files                  31 / 31
+protocol SHA-256                  matched
+scene scanner synthetic tests     passed
+network/download/extraction       not executed
+D/F E9 directory creation         false
+forbidden counter sum             0
+```
+
+Next exact step:
+
+Stop. Wait for a separate explicit user authorization to execute Registration
+`E9_PREREG_stable_official_archive_acquisition_20260729_v1`. Until then, do
+not inventory, retrieve official text, probe remote archives, create E9 D/F
+roots, download, extract, freeze input preparation, or run models/evaluation.
+
+## Session update: 2026-07-29 E9 authorized execution
+
+Registration:
+
+```text
+E9_PREREG_stable_official_archive_acquisition_20260729_v1
+```
+
+Final mechanical verdict:
+
+```text
+Invalid
+```
+
+Execution facts:
+
+* The byte-identical frozen E9 protocol received separate execution
+  authorization.
+* E9 regenerated 58,988 inventory records and classified 208 canonical scene
+  IDs as disqualifying.
+* README and errata were freshly retrieved, hashed, stored as binary snapshots,
+  and rechecked after candidate generation.
+* E9 independently generated 128 candidates from a 2,725-scene universe using
+  the frozen salt; no E7/E8 candidate file was read as generation input.
+* Two independent probes completed for all 19 remote objects. Total length,
+  fixed head/tail hashes, central-directory canonical hashes and strong ETags
+  matched across both probes.
+* Read-only Range interruptions were saved as `Paused_Resumable`; per-object
+  checkpoint manifests enabled same-source recovery.
+* The perspective indexes uniquely mapped all 128 candidates to formal
+  archives 01–14 and none to boundary archives.
+* The executor incorrectly included the separate annotation archive in the
+  perspective-archive member-path conflict check, yielding 6,994 expected
+  perspective/annotation overlaps as false mapping conflicts.
+* This was an execution-code/frozen-contract mismatch. The explicit
+  authorization required immediate `Invalid`; the executor was not patched
+  and resumed.
+* Disk preflight, D/F E9 directory creation, archive download, extraction,
+  Clean Raw qualification, and input-preparation freeze did not execute.
+* All forbidden counters remained zero.
+
+Files added:
+
+```text
+execute_stable_official_archive_acquisition_e9.py
+tests/test_execute_stable_official_archive_acquisition_e9.py
+results/stable_official_archive_acquisition_e9_20260729_v1/implementation_contract_audit.json
+results/stable_official_archive_acquisition_e9_20260729_v1/remote_member_indexes_probe_1/
+results/stable_official_archive_acquisition_e9_20260729_v1/remote_member_indexes_probe_2/
+```
+
+Commands and validation:
+
+```text
+E:\anaconda\envs\ai\python.exe -m py_compile execute_stable_official_archive_acquisition_e9.py tests\test_execute_stable_official_archive_acquisition_e9.py
+E:\anaconda\envs\ai\python.exe -m unittest discover -s tests -p 'test_execute_stable_official_archive_acquisition_e9.py' -v
+E:\anaconda\envs\ai\python.exe -m unittest discover -s tests -p 'test_execute_official_archive_acquisition_e8.py' -v
+E:\anaconda\envs\ai\python.exe execute_stable_official_archive_acquisition_e9.py
+```
+
+```text
+E9 execution tests                4 passed
+ZIP/path regression tests         3 passed
+protocol SHA-256                  matched
+probe 1                           19 / 19
+probe 2                           19 / 19
+dual hard identity match          passed
+candidate perspective mapping     128 / 128
+forbidden counter sum             0
+D/F E9 roots created              false
+archive downloads                 0
+```
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_stable_official_archive_acquisition_e9_20260729.md
+```
+
+Next exact step:
+
+Stop E9. Do not patch and resume it. Preserve all E9 evidence. A new
+Registration must be adjudicated before any further archive acquisition
+attempt.
+## 2026-07-29 E11 member-level Range acquisition
+
+Registration:
+
+```text
+E11_PREREG_RANGE_MEMBER_ACQUISITION_20260729_v1
+```
+
+Current execution verdict:
+
+```text
+Ready_Clean_Raw_Pool
+```
+
+Completed:
+
+* authoritative E11 protocol frozen; SHA-256
+  `78bcfdf0b945d1ab8aa73ccaab4a91ccb89cb4c9d7101ceeda6263269d15f30d`;
+* all 48 adopted E9 upstream files verified;
+* 128/128 P mappings unique, 128/128 PB mappings absent, and 128/128 sealed
+  annotation mappings unique;
+* frozen member manifest contains 3,265 `rgb_rawlight.png` members,
+  4,491,349,817 compressed bytes and 4,490,111,105 uncompressed bytes;
+* reduction relative to full perspective archives is 0.972471811;
+* 15/15 involved remote objects passed fresh hard-identity verification;
+* all 3,265 selected RGB members were acquired by exact HTTP Range, verified
+  with compressed SHA-256, uncompressed size, CRC32 and uncompressed SHA-256,
+  and atomically written to F;
+* no complete perspective archive was downloaded;
+* the 39,392,097-byte annotation archive was downloaded to D and permanently
+  retained with whole-file SHA-256
+  `c3caea0861c7ca1dbdedafe3fa72994264d0d985d1f879d10158cf540bb700bc`;
+* 128/128 annotation JSON members were extracted as sealed bytes without JSON
+  deserialization;
+* RGB basic decoding and all provenance/eligibility checks passed for 128/128
+  candidates, producing 128 `Clean_Raw` scenes;
+* all forbidden call counters remain zero.
+
+Same-registration engineering repairs were committed independently:
+
+```text
+15a3ecb Harden E11 same-source Range retries
+5bfa9a7 Chunk E11 remote identity range reads
+6f58cc2 Add E11 ZIP suffix range fallback
+5b761f7 Match E11 annotation hash to frozen E9 bytes
+```
+
+The third repair was supported by a read-only compatibility probe showing
+that the official endpoint returned a correct 1 MiB ZIP suffix Range after
+repeatedly truncating an explicit EOF Range. The fourth repair corrected only
+the byte serialization used for the local recheck of an already-frozen E9
+central-directory identity. The local and remote 7,001 canonical annotation
+rows were identical.
+
+```text
+E11 tests                           5 passed
+E9 identity regression tests       4 passed
+Clean Raw scenes                   128 / 128
+complete perspective archives      0
+leftover .part files               0
+forbidden calls                    0
+```
+
+Mechanical next action:
+
+```text
+已建立不少于77个Clean Raw scenes。停止，等待新的输入物化任务。
+```
+## 2026-07-29 E12 clean input materialization
+
+Registration:
+
+```text
+E12_PREREG_clean_input_materialization_20260729_v1
+```
+
+Execution verdict:
+
+```text
+Blocked_Incomplete_Input_Materialization
+```
+
+E11 upstream verification passed:
+
+```text
+Clean Raw scene order             128 / 128
+RGB provenance hashes             3265 / 3265
+sealed annotation byte hashes     128 / 128
+GT semantic reads                 0
+```
+
+E12 stopped at the mandatory pre-inference freeze gate:
+
+* HEAD was `5b761f76f5bc2c1c08b0ddd7918216511cb767c4`;
+* the shared execution worktree had 21 tracked dirty entries and could not be
+  recorded as clean without overwriting or absorbing unrelated user changes;
+* the DUSt3R weight existed and hashed to
+  `9f194a32e34fc124ed10f64115b8e848b7da87c2d1ed131d34b4806721c19dbd`;
+* the designated stable Stage1 checkpoint
+  `local_outputs/stage1_large_80m_train2048_sharded_v1/best.pt` did not exist
+  in the repository or the E11 D/F roots;
+* alternate Stage1 checkpoints were not selected because E12 explicitly
+  forbids checkpoint selection;
+* the existing global-cache writer is embedded in a Stage2-NPZ-driven Stage3
+  CLI, and no frozen raw-scene to direct-support entry exists.
+
+No F output or staging directory was created. DUSt3R, Stage1, B/M, training,
+evaluation, GT matcher, fitting, RANSAC, and support mutation call counts all
+remain zero.
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_clean_input_materialization_e12_20260729.md
+```
+
+Do not proceed to B/M. Restore the exact Stage1 checkpoint and provide a
+clean, committed raw-scene materialization implementation before a separately
+adjudicated resume or new registration.
+
+## 2026-07-29 E13 Stage1 selection and clean input materialization
+
+Registration:
+
+```text
+E13_PREREG_stage1_selection_and_clean_input_materialization_20260729_v1
+```
+
+Frozen protocol SHA-256:
+
+```text
+3817df95447ee5b42a8d030cf6a1428f0f03aa9306feb76bac8ded988abecee0
+```
+
+Execution verdict:
+
+```text
+Blocked_Insufficient_Views
+```
+
+E13 created the required independent worktree and branch without changing the
+original dirty worktree:
+
+```text
+worktree  E:\Study\code\LightRecon3D_e13_materialization
+branch    codex/e13-clean-materialization
+HEAD      5b761f76f5bc2c1c08b0ddd7918216511cb767c4
+status    clean
+```
+
+The registered view rule was applied to the frozen E11 scene order using only
+RGB member paths. It requires the lexically first five images from the largest
+single-room group and forbids cross-room filling. Results:
+
+```text
+E11 scenes checked             128
+view-rule pass                 124
+view-rule fail                   4
+maximum room-group size = 5    124
+maximum room-group size = 4      4
+```
+
+Blocking scenes:
+
+```text
+scene_02465  selected room 2D_rendering/584  4 RGB
+scene_01698  selected room 2D_rendering/141  4 RGB
+scene_02008  selected room 2D_rendering/208  4 RGB
+scene_02208  selected room 2D_rendering/141  4 RGB
+```
+
+The stop occurred before checkpoint selection/freeze. A priority-1 compatible
+checkpoint was discovered read-only at:
+
+```text
+E:\Study\code\LightRecon3D\local_outputs\manual_transfer_bootstrap_20260718_v1_extracted\checkpoints\stage1_large_80m_train2048_sharded_v1\best.pt
+```
+
+It was not selected or frozen because the earlier mandatory view gate failed.
+No historical-scene smoke inference or new-scene inference ran. No F output or
+staging directories were created. GT semantic calls and all forbidden calls
+remain zero.
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_stage1_selection_and_clean_input_materialization_e13_20260729.md
+```
+
+Mechanical next action: stop E13. Do not patch or rerun it. A new adjudication
+is required before changing the five-view single-room rule; B/M remains
+forbidden.
+
+## 2026-07-29 E14 variable-view clean input materialization
+
+Registration:
+
+```text
+E14_PREREG_variable_view_clean_input_materialization_20260729_v1
+```
+
+Execution verdict:
+
+```text
+Ready_Clean_Input_Pool
+```
+
+E14 superseded only E13's fixed five-view input rule. E12 and E13 remain
+blocked and were not resumed or rejudged. The same frozen E11 128-scene order
+was used.
+
+The implementation was committed in an independent clean worktree:
+
+```text
+worktree  E:\Study\code\LightRecon3D_e14_materialization
+branch    codex/e14-variable-view-materialization
+commit    23ea0d520ea32fadfebb953dd4a31f5367df35d0
+status    clean
+```
+
+Frozen view selection:
+
+```text
+five-view scenes  124
+four-view scenes    4
+```
+
+The four-view scenes were exactly `scene_02465`, `scene_01698`,
+`scene_02008` and `scene_02208`. No cross-room filling or padding occurred.
+
+Upstream and formal results:
+
+```text
+E11 RGB hashes verified           3265 / 3265
+sealed annotation byte hashes      128 / 128
+global-cache                       128 / 128
+direct-support                     128 / 128
+provenance                         128 / 128
+technical retries                    0
+GT semantic calls                    0
+forbidden calls                      0
+```
+
+All 256 output NPZ whole-file hashes were recomputed after completion. All
+schemas, key arrays, scene order, path/input-hash metadata and provenance
+checks passed. The staging directory is empty.
+
+Frozen identities:
+
+```text
+DUSt3R SHA-256  9f194a32e34fc124ed10f64115b8e848b7da87c2d1ed131d34b4806721c19dbd
+Stage1 SHA-256  2edc0ec3387a9a6ebcdd8dec7d1847fb0e38f62e9fc6694a5d7d32b97e3f4ffa
+config SHA-256  885acc82bb5338f7df9235ba87170ca3868888c7dfa950d9c0913b67e70f7c07
+```
+
+Formal outputs:
+
+```text
+F:\Structured3D_clean_e11\global_cache_e14\
+F:\Structured3D_clean_e11\direct_support_e14\
+```
+
+Fixed return:
+
+```text
+docs/codex_returns/CODEX_RETURN_variable_view_clean_input_materialization_e14_20260729.md
+```
+
+Mechanical next action: stop. The next registration must directly define and
+run the independent B/M comparison. Do not reopen data acquisition, view
+selection or input-preparation auditing.
+## 2026-08-02 Stage1 DUSt3R-feature versus RGB ablation
+
+The Stage1 representation ablation is implemented but the six full training
+runs have not yet been executed. The comparison is parameter matched:
+
+```text
+DUSt3R: 768 x 32 x 32 -> 1x1 projection -> shared query-mask head
+RGB:       3 x 512 x 512 -> 16x16/16 projection -> shared query-mask head
+```
+
+Both input projections contain 196,864 parameters and both complete models
+contain 3,491,842 trainable parameters. Training data, loss, sample order,
+checkpoint selection and the frozen 80-record W3 validation set are shared.
+The preregistered primary metric is support F1, with scene-cluster bootstrap
+over the eight validation scenes and three fixed seeds.
+
+Added:
+
+```text
+models/stage1_feature_ablation_head.py
+run_stage1_feature_ablation.py
+summarize_stage1_feature_ablation.py
+tests/test_stage1_feature_ablation_head.py
+docs/research_practice/STAGE1_FEATURE_ABLATION.md
+```
+
+Validation completed:
+
+```text
+py_compile                                    passed
+Stage1 feature-ablation unit tests            3 passed
+RGB real-data 2-train/2-val one-epoch smoke   passed
+DUSt3R real-data 2-train/2-val smoke           passed
+batch-size-2 real-data training smoke          passed
+```
+
+Smoke outputs are under:
+
+```text
+results/stage1_feature_ablation_smoke_rgb_20260802/
+results/stage1_feature_ablation_smoke_dust3r_20260802/
+results/stage1_feature_ablation_smoke_rgb_batch_20260802/
+```
+
+These smoke metrics are technical checks only and must not be reported as the
+feature-ablation result. The full experiment requires both conditions for
+seeds 20260616, 20260617 and 20260618, each with 2,048 training records, 20
+epochs and all 80 frozen validation records, followed by the registered
+summarizer.
+
+Formal execution started on the local RTX 4060 Ti at
+`2026-08-02T09:48:33Z` under:
+
+```text
+results/stage1_feature_ablation_20260802_v1/
+```
+
+Launcher PID is `46368`. It runs RGB seeds first, followed by DUSt3R seeds,
+then invokes the paired summarizer. At the latest check the first RGB run was
+active and caching the 2,048 training records. No formal verdict exists yet.
