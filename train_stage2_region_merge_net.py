@@ -14,15 +14,21 @@ def fit_plane_np(points):
     if len(points) < 3:
         return np.array([0.0, 0.0, 1.0], dtype=np.float32), 0.0, np.zeros((0,), dtype=np.float32)
     centroid = points.mean(axis=0)
-    centered = points - centroid
-    _, _, vh = np.linalg.svd(centered.astype(np.float32), full_matrices=False)
-    normal = vh[-1].astype(np.float32)
-    normal /= max(float(np.linalg.norm(normal)), 1e-8)
+    centered = np.ascontiguousarray(points - centroid, dtype=np.float32)
+    # Plane fitting only needs the smallest right-singular vector.  Solving the
+    # equivalent 3x3 covariance eigensystem avoids a NumPy LAPACK deadlock seen
+    # on Windows after the local PyTorch runtime has initialized its BLAS stack.
+    centered_tensor = torch.from_numpy(centered)
+    covariance = centered_tensor.transpose(0, 1) @ centered_tensor
+    _, eigenvectors = torch.linalg.eigh(covariance)
+    normal = eigenvectors[:, 0].detach().cpu().numpy().astype(np.float32)
+    normal_norm = math.sqrt(max(float(np.sum(normal * normal)), 0.0))
+    normal /= max(normal_norm, 1e-8)
     dominant = int(np.argmax(np.abs(normal)))
     if normal[dominant] < 0:
         normal = -normal
-    offset = -float(np.dot(normal, centroid))
-    residual = np.abs(points @ normal + offset).astype(np.float32)
+    offset = -float(np.sum(normal * centroid))
+    residual = np.abs(np.sum(points * normal[None, :], axis=1) + offset).astype(np.float32)
     return normal, offset, residual
 
 
@@ -111,13 +117,14 @@ def load_regions(npz_path, min_points=64):
 def pair_features(region_a, region_b):
     normal_a = region_a["normal"]
     normal_b = region_b["normal"]
-    abs_dot = float(abs(np.dot(normal_a, normal_b)))
+    abs_dot = float(abs(np.sum(normal_a * normal_b)))
     abs_dot = min(max(abs_dot, 0.0), 1.0)
     angle = math.degrees(math.acos(abs_dot)) / 90.0
     offset = abs(abs(float(region_a["offset"])) - abs(float(region_b["offset"])))
-    centroid_dist = float(np.linalg.norm(region_a["centroid"] - region_b["centroid"]))
-    residual_ab = abs(float(region_a["centroid"] @ normal_b + region_b["offset"]))
-    residual_ba = abs(float(region_b["centroid"] @ normal_a + region_a["offset"]))
+    centroid_delta = region_a["centroid"] - region_b["centroid"]
+    centroid_dist = math.sqrt(max(float(np.sum(centroid_delta * centroid_delta)), 0.0))
+    residual_ab = abs(float(np.sum(region_a["centroid"] * normal_b) + region_b["offset"]))
+    residual_ba = abs(float(np.sum(region_b["centroid"] * normal_a) + region_a["offset"]))
     mutual_residual = 0.5 * (residual_ab + residual_ba)
     min_area = min(region_a["area_frac"], region_b["area_frac"])
     max_area = max(region_a["area_frac"], region_b["area_frac"])

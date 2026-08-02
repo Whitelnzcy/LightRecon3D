@@ -266,7 +266,13 @@ def evaluate_support_conditioned_partition(
                 np.degrees(
                     np.arccos(
                         np.clip(
-                            abs(float(pred_normals[pred_id] @ gt_normals[gt_id])),
+                            abs(
+                                float(
+                                    np.sum(
+                                        pred_normals[pred_id] * gt_normals[gt_id]
+                                    )
+                                )
+                            ),
                             0,
                             1,
                         )
@@ -374,9 +380,22 @@ def evaluate_arrays(points, pred_labels, pred_normals, pred_offsets, gt_labels,
     angular, residual, matched_iou = [], [], []
     for pid, gid, score in accepted:
         pn, gn = pred_normals[pid], gt_normals[gid]
-        angular.append(float(np.degrees(np.arccos(np.clip(abs(float(pn @ gn)), 0, 1)))))
+        angular.append(
+            float(
+                np.degrees(
+                    np.arccos(np.clip(abs(float(np.sum(pn * gn))), 0, 1))
+                )
+            )
+        )
         support = pred_labels == pid
-        residual.append(float(np.abs(points[support] @ pn + pred_offsets[pid]).mean()))
+        residual.append(
+            float(
+                np.abs(
+                    np.sum(points[support] * pn[None], axis=1)
+                    + pred_offsets[pid]
+                ).mean()
+            )
+        )
         matched_iou.append(score)
     fragments = [int((matrix[:, j] >= fragmentation_iou).sum()) for j in range(len(gt_ids))]
     overmerges = [int((matrix[i, :] >= fragmentation_iou).sum()) for i in range(len(pred_ids))]

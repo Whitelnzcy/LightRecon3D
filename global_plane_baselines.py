@@ -10,6 +10,7 @@ import json
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 PLANE_COLORS = np.asarray([[230, 57, 70], [29, 53, 87], [69, 123, 157], [42, 157, 143],
@@ -37,10 +38,18 @@ def global_cache_keep_mask(points, confidence, min_conf):
 def fit_plane(points):
     points = np.asarray(points, dtype=np.float32)
     center = points.mean(0)
-    _, _, vh = np.linalg.svd(points - center, full_matrices=False)
-    normal = vh[-1].astype(np.float32)
-    offset = -float(normal @ center)
-    return normal, offset, np.abs(points @ normal + offset).astype(np.float32)
+    centered = points - center
+    covariance = np.sum(
+        centered[:, :, None] * centered[:, None, :], axis=0, dtype=np.float64
+    )
+    ok, _, eigenvectors = cv2.eigen(covariance)
+    if not ok:
+        raise RuntimeError("OpenCV failed to solve the plane covariance eigensystem")
+    normal = eigenvectors[-1].astype(np.float32)
+    normal /= max(float(np.sqrt(np.sum(normal * normal))), 1e-8)
+    offset = -float(np.sum(normal * center))
+    residual = np.abs(np.sum(points * normal[None], axis=1) + offset)
+    return normal, offset, residual.astype(np.float32)
 
 
 def euclidean_components(points, radius, min_points):
@@ -68,7 +77,8 @@ def euclidean_components(points, radius, min_points):
                 for dy in (-1, 0, 1):
                     for dz in (-1, 0, 1):
                         for neighbor in buckets.get(tuple(cell + (dx, dy, dz)), ()):
-                            if not seen[neighbor] and np.linalg.norm(points[current] - points[neighbor]) <= radius:
+                            delta = points[current] - points[neighbor]
+                            if not seen[neighbor] and np.sqrt(np.sum(delta * delta)) <= radius:
                                 seen[neighbor] = True
                                 stack.append(neighbor)
         if len(component) >= min_points:
@@ -132,13 +142,16 @@ def sequential_plane_ransac(points, distance_threshold=0.03, iterations=1000,
         for _ in range(iterations):
             sample = score_xyz[rng.choice(len(score_xyz), 3, replace=False)]
             normal = np.cross(sample[1] - sample[0], sample[2] - sample[0])
-            norm = float(np.linalg.norm(normal))
+            norm = float(np.sqrt(np.sum(normal * normal)))
             if norm < 1e-8:
                 continue
             normal /= norm
-            offset = -float(normal @ sample[0])
+            offset = -float(np.sum(normal * sample[0]))
             count = int(
-                (np.abs(score_xyz @ normal + offset) <= distance_threshold).sum()
+                (
+                    np.abs(np.sum(score_xyz * normal[None], axis=1) + offset)
+                    <= distance_threshold
+                ).sum()
             )
             if count > best_count:
                 best_count = count
@@ -146,12 +159,18 @@ def sequential_plane_ransac(points, distance_threshold=0.03, iterations=1000,
         if best_model is None:
             break
         normal, offset = best_model
-        candidate = np.abs(xyz @ normal + offset) <= distance_threshold
+        candidate = (
+            np.abs(np.sum(xyz * normal[None], axis=1) + offset)
+            <= distance_threshold
+        )
         if int(candidate.sum()) < min_inliers:
             break
         candidate_global = remaining[candidate]
         normal, offset, _ = fit_plane(points[candidate_global])
-        refined = np.abs(xyz @ normal + offset) <= distance_threshold
+        refined = (
+            np.abs(np.sum(xyz * normal[None], axis=1) + offset)
+            <= distance_threshold
+        )
         candidate_global = remaining[refined]
         if len(candidate_global) <= int(component_exact_max_points):
             components = euclidean_components(

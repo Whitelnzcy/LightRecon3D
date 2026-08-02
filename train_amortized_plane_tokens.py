@@ -80,6 +80,13 @@ def sample_case_with_aux_planes(path, args, seed):
         for pid, target_idx in remap.items():
             labels[point_ids == pid] = int(target_idx)
         case["aux_point_labels"] = labels
+    if "gt_point_plane_ids" in raw:
+        gt_point_ids = raw["gt_point_plane_ids"].astype(np.int32)
+        rng = np.random.default_rng(seed)
+        if args.max_points_per_sample > 0 and len(gt_point_ids) > args.max_points_per_sample:
+            idx = rng.choice(len(gt_point_ids), size=args.max_points_per_sample, replace=False)
+            gt_point_ids = gt_point_ids[idx]
+        case["gt_point_plane_ids"] = gt_point_ids.astype(np.int32)
     return case
 
 

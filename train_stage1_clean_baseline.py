@@ -47,13 +47,29 @@ def parse_args():
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--match_bce_weight", type=float, default=1.0)
     parser.add_argument("--match_dice_weight", type=float, default=2.0)
+    parser.add_argument("--match_existence_weight", type=float, default=0.0)
     parser.add_argument("--mask_focal_weight", type=float, default=1.0)
     parser.add_argument("--mask_dice_weight", type=float, default=2.0)
+    parser.add_argument("--mask_tversky_fp_weight", type=float, default=0.5)
+    parser.add_argument("--mask_tversky_fn_weight", type=float, default=0.5)
     parser.add_argument("--existence_weight", type=float, default=1.0)
+    parser.add_argument("--existence_positive_weight", type=float, default=1.0)
+    parser.add_argument("--existence_negative_weight", type=float, default=1.0)
+    parser.add_argument(
+        "--class_score_weight",
+        type=float,
+        default=0.0,
+        help="Add query objectness logits to mask logits for partition loss and prediction.",
+    )
     parser.add_argument("--background_weight", type=float, default=1.0)
     parser.add_argument("--query_margin_weight", type=float, default=0.0)
     parser.add_argument("--query_margin", type=float, default=0.75)
     parser.add_argument("--unmatched_query_weight", type=float, default=0.0)
+    parser.add_argument("--query_separation_weight", type=float, default=0.0)
+    parser.add_argument("--query_separation_margin", type=float, default=0.5)
+    parser.add_argument("--ownership_loss_weight", type=float, default=0.0)
+    parser.add_argument("--ownership_overlap_threshold", type=float, default=0.08)
+    parser.add_argument("--ownership_merge_threshold", type=float, default=0.25)
     parser.add_argument("--focal_gamma", type=float, default=2.0)
     parser.add_argument("--existence_threshold", type=float, default=0.5)
     parser.add_argument("--log_every", type=int, default=20)
@@ -116,6 +132,19 @@ def dice_loss(logits, targets, eps=1e-6):
     return (1.0 - (2.0 * intersection + eps) / (denominator + eps)).mean()
 
 
+def tversky_loss(logits, targets, fp_weight=0.5, fn_weight=0.5, eps=1e-6):
+    prob = logits.sigmoid()
+    true_positive = (prob * targets).sum(dim=(1, 2))
+    false_positive = (prob * (1.0 - targets)).sum(dim=(1, 2))
+    false_negative = ((1.0 - prob) * targets).sum(dim=(1, 2))
+    denominator = (
+        true_positive
+        + float(fp_weight) * false_positive
+        + float(fn_weight) * false_negative
+    )
+    return (1.0 - (true_positive + eps) / (denominator + eps)).mean()
+
+
 def class_target_from_matches(labels, targets, query_ids, target_ids, num_queries):
     class_target = torch.full(
         labels.shape,
@@ -128,8 +157,16 @@ def class_target_from_matches(labels, targets, query_ids, target_ids, num_querie
     return class_target
 
 
+def apply_query_class_scores(mask_logits, existence_logits, args):
+    weight = float(getattr(args, "class_score_weight", 0.0))
+    if weight <= 0.0:
+        return mask_logits
+    return mask_logits + weight * existence_logits[:, None, None]
+
+
 def instance_metrics(mask_logits, background_logits, existence_logits, targets, query_ids, target_ids, labels, args):
-    class_logits = torch.cat((mask_logits, background_logits), dim=0)
+    scored_masks = apply_query_class_scores(mask_logits, existence_logits, args)
+    class_logits = torch.cat((scored_masks, background_logits), dim=0)
     predicted = class_logits.argmax(dim=0)
     gt_query = torch.full_like(predicted, -1)
     ious = []
@@ -210,6 +247,156 @@ def query_deduplication_loss(mask_logits, targets, query_ids, target_ids, args):
     return margin_loss, unmatched_loss
 
 
+def query_separation_loss(mask_logits, targets, query_ids, target_ids, args):
+    """Penalize matched queries leaking into other matched GT plane regions.
+
+    The deduplication loss makes a plane's own query win inside its support,
+    which helps split errors but can encourage stronger neighboring merges.
+    This complementary term compares every pair of matched planes: on plane A,
+    query A should beat query B, and on plane B, query B should beat query A.
+    """
+    zero = mask_logits.sum() * 0.0
+    if (
+        float(getattr(args, "query_separation_weight", 0.0)) <= 0.0
+        or len(query_ids) < 2
+        or targets.numel() == 0
+    ):
+        return zero
+
+    device = mask_logits.device
+    query_ids_t = torch.as_tensor(query_ids, device=device, dtype=torch.long)
+    target_ids_t = torch.as_tensor(target_ids, device=device, dtype=torch.long)
+    margin = float(getattr(args, "query_separation_margin", 0.5))
+    pair_losses = []
+    for first in range(len(query_ids_t)):
+        q_a = query_ids_t[first]
+        t_a = target_ids_t[first]
+        mask_a = targets[t_a] > 0.5
+        if not mask_a.any():
+            continue
+        for second in range(first + 1, len(query_ids_t)):
+            q_b = query_ids_t[second]
+            t_b = target_ids_t[second]
+            mask_b = targets[t_b] > 0.5
+            if not mask_b.any():
+                continue
+            pair_losses.append(
+                F.relu(margin + mask_logits[q_b][mask_a] - mask_logits[q_a][mask_a]).mean()
+            )
+            pair_losses.append(
+                F.relu(margin + mask_logits[q_a][mask_b] - mask_logits[q_b][mask_b]).mean()
+            )
+    if not pair_losses:
+        return zero
+    return torch.stack(pair_losses).mean()
+
+
+def query_ownership_loss_and_metrics(
+    mask_logits,
+    background_logits,
+    existence_logits,
+    targets,
+    query_ids,
+    target_ids,
+    labels,
+    args,
+):
+    """Measure and penalize wrong query ownership.
+
+    This is intentionally target-aware. Hungarian matching gives one query per
+    GT plane, but extra queries can still take chunks of that same plane, and a
+    matched query can still absorb pixels from neighboring GT planes. These two
+    cases are the current split/merge failure mode.
+    """
+    zero = mask_logits.sum() * 0.0
+    num_queries = mask_logits.shape[0]
+    metrics = {
+        "ownership_duplicate_gt_rate": 0.0,
+        "ownership_duplicate_extra_queries": 0.0,
+        "ownership_merge_query_rate": 0.0,
+        "ownership_false_active_queries": 0.0,
+    }
+    if targets.numel() == 0:
+        active = int((existence_logits.sigmoid() > args.existence_threshold).sum())
+        metrics["ownership_false_active_queries"] = float(active)
+        return zero, metrics
+
+    scored_masks = apply_query_class_scores(mask_logits, existence_logits, args)
+    class_logits = torch.cat((scored_masks, background_logits), dim=0)
+    predicted = class_logits.argmax(dim=0)
+    overlap_threshold = float(getattr(args, "ownership_overlap_threshold", 0.08))
+    merge_threshold = float(getattr(args, "ownership_merge_threshold", 0.25))
+
+    duplicate_planes = 0
+    duplicate_extra = 0
+    for target in targets:
+        gt = target > 0.5
+        area = gt.sum().clamp_min(1)
+        owners = []
+        for query_id in range(num_queries):
+            fraction = ((predicted == query_id) & gt).sum().float() / area
+            if float(fraction.detach()) >= overlap_threshold:
+                owners.append(query_id)
+        if len(owners) > 1:
+            duplicate_planes += 1
+            duplicate_extra += len(owners) - 1
+    metrics["ownership_duplicate_gt_rate"] = duplicate_planes / max(int(targets.shape[0]), 1)
+    metrics["ownership_duplicate_extra_queries"] = duplicate_extra / max(int(targets.shape[0]), 1)
+
+    gt_plane = (labels > 0) & (labels != 255)
+    merge_queries = 0
+    active_queries = 0
+    for query_id in range(num_queries):
+        pred = (predicted == query_id) & gt_plane
+        area = pred.sum()
+        if int(area.detach()) == 0:
+            continue
+        active_queries += 1
+        gt_values = labels[pred]
+        counts = []
+        for plane_id in gt_values.unique():
+            if int(plane_id.detach()) <= 0 or int(plane_id.detach()) == 255:
+                continue
+            counts.append((gt_values == plane_id).sum().float())
+        if len(counts) >= 2:
+            counts = torch.stack(counts).sort(descending=True).values
+            if float((counts[1] / counts.sum().clamp_min(1)).detach()) >= merge_threshold:
+                merge_queries += 1
+    metrics["ownership_merge_query_rate"] = merge_queries / max(active_queries, 1)
+
+    matched = set(int(query_id) for query_id in query_ids)
+    active = {
+        int(query_id)
+        for query_id in torch.nonzero(
+            existence_logits.sigmoid() > args.existence_threshold,
+            as_tuple=False,
+        ).flatten().tolist()
+    }
+    metrics["ownership_false_active_queries"] = float(len(active - matched))
+
+    if float(getattr(args, "ownership_loss_weight", 0.0)) <= 0.0 or len(query_ids) == 0:
+        return zero, metrics
+
+    device = mask_logits.device
+    query_ids_t = torch.as_tensor(query_ids, device=device, dtype=torch.long)
+    target_ids_t = torch.as_tensor(target_ids, device=device, dtype=torch.long)
+    gt_union = targets[target_ids_t].amax(dim=0) > 0.5
+    terms = []
+    for query_id, target_id in zip(query_ids_t, target_ids_t):
+        target_mask = targets[target_id] > 0.5
+        if not target_mask.any():
+            continue
+        other = torch.ones(num_queries, dtype=torch.bool, device=device)
+        other[query_id] = False
+        terms.append(F.softplus(mask_logits[other][:, target_mask]).mean())
+        outside = gt_union & (~target_mask)
+        if outside.any():
+            terms.append(F.softplus(mask_logits[query_id][outside]).mean())
+    if not terms:
+        return zero, metrics
+    return torch.stack(terms).mean(), metrics
+
+
 def sample_loss_and_metrics(output, labels, args):
     _, plane_ids = select_plane_ids(
         labels,
@@ -226,20 +413,38 @@ def sample_loss_and_metrics(output, labels, args):
     rows = []
     for batch_id in range(output["mask_logits"].shape[0]):
         targets = torch.stack(masks[batch_id]) if masks[batch_id] else output["mask_logits"].new_zeros((0, *output["mask_logits"].shape[-2:]))
-        query_ids, target_ids = match_queries(output["mask_logits"][batch_id], targets, args)
+        query_ids, target_ids = match_queries(
+            output["mask_logits"][batch_id],
+            targets,
+            args,
+            existence_logits=output["existence_logits"][batch_id],
+        )
         existence_target = torch.zeros_like(output["existence_logits"][batch_id])
         if len(query_ids):
             existence_target[torch.as_tensor(query_ids, device=existence_target.device)] = 1.0
-        existence = F.binary_cross_entropy_with_logits(
+        existence_raw = F.binary_cross_entropy_with_logits(
             output["existence_logits"][batch_id],
             existence_target,
+            reduction="none",
         )
+        existence_weight = torch.where(
+            existence_target > 0.5,
+            existence_target.new_full((), float(getattr(args, "existence_positive_weight", 1.0))),
+            existence_target.new_full((), float(getattr(args, "existence_negative_weight", 1.0))),
+        )
+        existence = (existence_raw * existence_weight).sum() / existence_weight.sum().clamp_min(1e-6)
         if len(query_ids):
             q = torch.as_tensor(query_ids, device=targets.device)
             t = torch.as_tensor(target_ids, device=targets.device)
+            shape_loss = tversky_loss(
+                output["mask_logits"][batch_id][q],
+                targets[t],
+                fp_weight=float(getattr(args, "mask_tversky_fp_weight", 0.5)),
+                fn_weight=float(getattr(args, "mask_tversky_fn_weight", 0.5)),
+            )
             mask_loss = (
                 args.mask_focal_weight * focal_bce(output["mask_logits"][batch_id][q], targets[t], args.focal_gamma)
-                + args.mask_dice_weight * dice_loss(output["mask_logits"][batch_id][q], targets[t])
+                + args.mask_dice_weight * shape_loss
             )
         else:
             mask_loss = output["mask_logits"][batch_id].sum() * 0.0
@@ -251,7 +456,17 @@ def sample_loss_and_metrics(output, labels, args):
             args.num_queries,
         )
         background = F.cross_entropy(
-            torch.cat((output["mask_logits"][batch_id], output["background_logits"][batch_id]), dim=0)[None],
+            torch.cat(
+                (
+                    apply_query_class_scores(
+                        output["mask_logits"][batch_id],
+                        output["existence_logits"][batch_id],
+                        args,
+                    ),
+                    output["background_logits"][batch_id],
+                ),
+                dim=0,
+            )[None],
             class_target[None],
         )
         query_margin, unmatched_query = query_deduplication_loss(
@@ -261,12 +476,31 @@ def sample_loss_and_metrics(output, labels, args):
             target_ids,
             args,
         )
+        query_separation = query_separation_loss(
+            output["mask_logits"][batch_id],
+            targets,
+            query_ids,
+            target_ids,
+            args,
+        )
+        ownership_loss, ownership_metrics = query_ownership_loss_and_metrics(
+            output["mask_logits"][batch_id],
+            output["background_logits"][batch_id],
+            output["existence_logits"][batch_id],
+            targets,
+            query_ids,
+            target_ids,
+            labels32[batch_id],
+            args,
+        )
         loss = (
             mask_loss
             + args.existence_weight * existence
             + args.background_weight * background
             + float(getattr(args, "query_margin_weight", 0.0)) * query_margin
             + float(getattr(args, "unmatched_query_weight", 0.0)) * unmatched_query
+            + float(getattr(args, "query_separation_weight", 0.0)) * query_separation
+            + float(getattr(args, "ownership_loss_weight", 0.0)) * ownership_loss
         )
         losses.append(loss)
         row = instance_metrics(
@@ -283,6 +517,9 @@ def sample_loss_and_metrics(output, labels, args):
         row["existence_loss"] = float(existence.detach())
         row["query_margin_loss"] = float(query_margin.detach())
         row["unmatched_query_loss"] = float(unmatched_query.detach())
+        row["query_separation_loss"] = float(query_separation.detach())
+        row["ownership_loss"] = float(ownership_loss.detach())
+        row.update(ownership_metrics)
         rows.append(row)
     mean_loss = torch.stack(losses).mean()
     totals = defaultdict(float)

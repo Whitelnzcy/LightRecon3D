@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 PROJ=${PROJ:-/gemini/code/LightRecon3D}
@@ -19,7 +19,7 @@ PYTHONUNBUFFERED=1 "$PYTHON" \
   --input_dir "$INPUT_DIR" \
   --output_dir "$OUT_DIR" \
   --pattern "*_learned_region_merge_full_pointcloud_editable_planes_data.npz" \
-  --group_by reference_view \
+  --group_by pair_group \
   --min_group_size 1 \
   --max_angle_deg 8.0 \
   --max_offset 0.06 \

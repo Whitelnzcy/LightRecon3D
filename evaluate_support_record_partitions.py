@@ -183,7 +183,14 @@ def per_plane_rows(labels, gt_labels, views, keys, normals, gt_normals):
                 np.degrees(
                     np.arccos(
                         np.clip(
-                            abs(float(normals[plane_id] @ gt_normals[dominant_gt_id])),
+                            abs(
+                                float(
+                                    np.sum(
+                                        normals[plane_id]
+                                        * gt_normals[dominant_gt_id]
+                                    )
+                                )
+                            ),
                             0,
                             1,
                         )

@@ -148,21 +148,26 @@ def parse_camera_pose(path):
     position = values[:3]
     forward = values[3:6]
     up_hint = values[6:9]
-    forward_norm = float(np.linalg.norm(forward))
+    forward_norm = float(np.sqrt(np.sum(forward * forward)))
     if forward_norm <= 1e-12:
         raise ValueError(f"Camera view direction is degenerate in {path}")
     forward = forward / forward_norm
-    up_hint = up_hint - forward * float(up_hint @ forward)
-    up_norm = float(np.linalg.norm(up_hint))
+    up_hint = up_hint - forward * float(np.sum(up_hint * forward))
+    up_norm = float(np.sqrt(np.sum(up_hint * up_hint)))
     if up_norm <= 1e-12:
         raise ValueError(f"Camera up direction is degenerate in {path}")
     up_hint /= up_norm
     right = np.cross(forward, up_hint)
-    right /= max(float(np.linalg.norm(right)), 1e-12)
+    right /= max(float(np.sqrt(np.sum(right * right))), 1e-12)
     up = np.cross(right, forward)
-    up /= max(float(np.linalg.norm(up)), 1e-12)
+    up /= max(float(np.sqrt(np.sum(up * up))), 1e-12)
     camera_to_world_basis = np.column_stack((right, up, forward))
-    determinant = float(np.linalg.det(camera_to_world_basis))
+    a, b, c = camera_to_world_basis
+    determinant = float(
+        a[0] * (b[1] * c[2] - b[2] * c[1])
+        - a[1] * (b[0] * c[2] - b[2] * c[0])
+        + a[2] * (b[0] * c[1] - b[1] * c[0])
+    )
     # Structured3D's perspective camera coordinates are left-handed
     # (+x right, +y up, +z view direction), while its world frame is
     # right-handed.  The camera-to-world basis is therefore an improper
@@ -213,7 +218,7 @@ def intersect_camera_rays_with_plane(rays, normal, offset, epsilon=1e-9):
 
     rays = np.asarray(rays, dtype=np.float64)
     normal = np.asarray(normal, dtype=np.float64).reshape(3)
-    denominator = rays @ normal
+    denominator = np.sum(rays * normal[None], axis=1)
     distance = np.full(len(rays), np.nan, dtype=np.float64)
     valid = np.abs(denominator) > float(epsilon)
     distance[valid] = -float(offset) / denominator[valid]
@@ -228,9 +233,10 @@ def camera_plane_to_world(normal, offset, camera_pose):
 
     rotation = camera_pose["camera_to_world_basis"]
     position = camera_pose["position_mm"]
-    world_normal = rotation @ np.asarray(normal, dtype=np.float64).reshape(3)
-    world_normal /= max(float(np.linalg.norm(world_normal)), 1e-12)
-    world_offset = float(offset) - float(world_normal @ position)
+    camera_normal = np.asarray(normal, dtype=np.float64).reshape(3)
+    world_normal = np.sum(rotation * camera_normal[None], axis=1)
+    world_normal /= max(float(np.sqrt(np.sum(world_normal * world_normal))), 1e-12)
+    world_offset = float(offset) - float(np.sum(world_normal * position))
     return world_normal, world_offset
 
 
@@ -268,12 +274,14 @@ def plane_consistency_row(layout_plane, world_plane, camera_pose):
         layout_plane["normal"], layout_plane["offset"], camera_pose
     )
     expected_normal = np.asarray(world_plane["normal"], dtype=np.float64)
-    expected_normal /= max(float(np.linalg.norm(expected_normal)), 1e-12)
+    expected_normal /= max(
+        float(np.sqrt(np.sum(expected_normal * expected_normal))), 1e-12
+    )
     expected_offset = float(world_plane["offset"])
-    if float(normal @ expected_normal) < 0:
+    if float(np.sum(normal * expected_normal)) < 0:
         normal = -normal
         offset = -offset
-    cosine = np.clip(float(normal @ expected_normal), -1.0, 1.0)
+    cosine = np.clip(float(np.sum(normal * expected_normal)), -1.0, 1.0)
     return {
         "plane_id": int(layout_plane["ID"]),
         "normal_error_deg": float(np.degrees(np.arccos(cosine))),
@@ -284,13 +292,23 @@ def plane_consistency_row(layout_plane, world_plane, camera_pose):
 def fit_plane(points):
     points = np.asarray(points, dtype=np.float64)
     center = points.mean(axis=0)
-    _, _, vh = np.linalg.svd(points - center, full_matrices=False)
-    normal = vh[-1]
-    normal /= max(float(np.linalg.norm(normal)), 1e-12)
+    centered = points - center
+    covariance = np.asarray(
+        [
+            [np.sum(centered[:, i] * centered[:, j]) for j in range(3)]
+            for i in range(3)
+        ],
+        dtype=np.float64,
+    )
+    ok, _, eigenvectors = cv2.eigen(covariance)
+    if not ok:
+        raise RuntimeError("OpenCV failed to solve the plane covariance eigensystem")
+    normal = eigenvectors[-1]
+    normal /= max(float(np.sqrt(np.sum(normal * normal))), 1e-12)
     dominant = int(np.argmax(np.abs(normal)))
     if normal[dominant] < 0:
         normal = -normal
-    return normal.astype(np.float32), -float(normal @ center)
+    return normal.astype(np.float32), -float(np.sum(normal * center))
 
 
 def file_sha256(path):
@@ -458,8 +476,9 @@ def build_point_aligned_gt(
             )
             selected_global = local_indices[selected_local]
             metric_points_camera_mm[selected_global] = camera_points
+            basis = camera_pose["camera_to_world_basis"]
             world_points = (
-                camera_points @ camera_pose["camera_to_world_basis"].T
+                np.sum(camera_points[:, None, :] * basis[None, :, :], axis=2)
                 + camera_pose["position_mm"]
             )
             metric_points_world_mm[selected_global] = world_points
@@ -518,7 +537,7 @@ def build_point_aligned_gt(
             raise ValueError(f"Structured3D world annotation has no plane ID {source_id}")
         plane = annotation_planes[source_id]
         normal = np.asarray(plane["normal"], dtype=np.float64)
-        normal /= max(float(np.linalg.norm(normal)), 1e-12)
+        normal /= max(float(np.sqrt(np.sum(normal * normal))), 1e-12)
         world_plane_normals.append(normal)
         world_plane_offsets_m.append(float(plane["offset"]) * 0.001)
     world_plane_normals = np.asarray(world_plane_normals, dtype=np.float32).reshape(-1, 3)

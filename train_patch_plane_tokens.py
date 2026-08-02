@@ -173,7 +173,9 @@ def build_surface_patches(case, args):
         if not np.any(own):
             continue
         u, v = plane_basis_np(aux_normals[plane_id])
-        uv = np.stack([patch_centroids @ u, patch_centroids @ v], axis=1)
+        u_coord = (patch_centroids * u[None, :]).sum(axis=1)
+        v_coord = (patch_centroids * v[None, :]).sum(axis=1)
+        uv = np.stack([u_coord, v_coord], axis=1)
         grid = np.floor(uv / max(args.support_grid_size, 1e-6)).astype(np.int64)
         occupied = grid[own]
         occupied_set = {tuple(c) for c in occupied}

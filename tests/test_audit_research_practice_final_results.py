@@ -208,6 +208,9 @@ class FinalAuditTests(unittest.TestCase):
             )
             self.assertTrue((output / "final_method_audit.md").is_file())
             self.assertTrue((output / "final_method_per_scene.csv").is_file())
+            report = (output / "final_method_audit.md").read_text(encoding="utf-8")
+            self.assertIn("With 8 scenes", report)
+            self.assertNotIn("With eight scenes", report)
             with self.assertRaises(FileExistsError):
                 audit_final_results(metrics, execution, output)
 
