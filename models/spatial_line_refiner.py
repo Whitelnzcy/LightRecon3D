@@ -8,7 +8,7 @@ from models.spatial_support_refiner import SpatialSupportRefiner,block
 class SpatialLineRefiner(SpatialSupportRefiner):
     def __init__(self, arm):
         super().__init__()
-        if arm not in ['M1','M2','M3']:raise ValueError('Unknown arm')
+        if arm not in ['M1','M2','M3','MC','MS']:raise ValueError('Unknown arm')
         self.arm=arm
         self.line_branch=block(24,24)
         self.line_score=nn.Conv2d(24,1,1)
@@ -28,9 +28,22 @@ class SpatialLineRefiner(SpatialSupportRefiner):
         # M1 computes the same branch with zero line channels, but zero
         # availability makes it observationally equivalent to the plain model.
         evidence=lines if self.arm!='M1' else torch.zeros_like(lines)
+        if self.arm=='MC':
+            # Capacity control: all six extra channels contain only existing
+            # RGB/observed/mask/residual inputs, never line availability/geometry.
+            evidence=torch.cat([common[:,None].expand(-1,k,-1,-1,-1),candidates],2)
         extra=self.line_branch(torch.cat([base,evidence.reshape(b*k,6,h,w)],1))
         availability=evidence[:,:,0]
-        gate=self.line_gate(extra).sigmoid().reshape(b,k,h,w) if self.arm=='M3' else torch.full_like(availability,.5)
+        if self.arm=='MC':
+            availability=(common[:,3:4]>0).to(common.dtype).expand(-1,k,-1,-1)
+        if self.arm in ['M3','MC']:
+            gate=self.line_gate(extra).sigmoid().reshape(b,k,h,w)
+        elif self.arm=='MS':
+            # Reuse one existing bias parameter: old checkpoint keys stay valid.
+            # No feature-dependent gate, and no gradient to line_gate.weight.
+            gate=self.line_gate.bias[0].sigmoid().expand_as(availability)
+        else:
+            gate=torch.full_like(availability,.5)
         contribution=availability*gate*self.line_score(extra).reshape(b,k,h,w)
         result=logits+contribution
         return (result,gate*availability) if return_gate else result

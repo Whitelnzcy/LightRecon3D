@@ -35,7 +35,7 @@ def main():
         mapping=frozen[item]['fixed_identity_map']
         with np.load(targets/f'{item}_eval_only.npz') as z:truth=z['raw_dense_gt'];distance=z['boundary_distance']
         with np.load(run/f'{item}_predictions.npz') as z:
-            original=z['original_ids'];predictions={a:z[a] for a in ['M1','M2','M3']}
+            original=z['original_ids'];predictions={a:z[a] for a in row['metrics']}
             assert np.array_equal(z['source_indices'],np.arange(len(original)))
         with np.load(Path('local_outputs/intersection_frozen_dev2_v1')/f'{item}_predictions.npz') as z:
             assert np.array_equal(z['original_ids'],original);previous=z['finite_support']
@@ -51,9 +51,10 @@ def main():
             top=np.argsort(-count)[:5]
             summary[arm]=dict(recomputed_exact=True,damage_distance=bins,
                               top_damage_pairs=[dict(source=int(transitions[k,0]),destination=int(transitions[k,1]),count=int(count[k])) for k in top])
-        old=convert(previous,mapping);new=convert(predictions['M3'],mapping)
-        summary['M3_vs_historical_finite']=dict(newly_correct=int((valid&(old!=truth)&(new==truth)).sum()),
-            newly_wrong=int((valid&(old==truth)&(new!=truth)).sum()))
+        if 'M3' in predictions:
+            old=convert(previous,mapping);new=convert(predictions['M3'],mapping)
+            summary['M3_vs_historical_finite']=dict(newly_correct=int((valid&(old!=truth)&(new==truth)).sum()),
+                newly_wrong=int((valid&(old==truth)&(new!=truth)).sum()))
         result['development'][item]=summary
     write_json(out,result);print(result,flush=True)
 

@@ -233,3 +233,80 @@ python -m unittest discover -s tests -p test_line_support_patches.py -v
 最终18项单元测试（8项空间/线模型＋10项坐标接口）、2项投影检查全部通过；新增模块和入口语法检查通过。
 已查看M1 scene00003/00199以及三组两个DEV视图0，均为同点域、同颜色的二维投影，不是移动点坐标的重建图。
 近邻方法机制对照、上游全部数据划分、独立测试、容量对照、全局标量门控和多seed仍未完成。
+
+## 第三轮：活动容量、全局标量及冻结门控干预
+
+基于提交`a2f562b`继续；仍是4个训练场景和2个历史开发场景，不是独立测试。本轮不改几何、损失、数据、学习率、patch或步数。
+
+### 实现与实验约束
+
+- MC：与M3完全相同的活动分支结构/参数数目，六个额外通道重复既有RGB、观测mask、候选mask、几何残差，不输入任何线特征。额外贡献在观测像素上开启，门控参与训练；测试验证对线输入任意替换不变。
+- MS：相同线特征和线分支，仅将逐位置门控换成一个sigmoid标量（复用gate bias，初始0.5），其余gate权重不参与计算。
+- M3：原逐候选、逐位置门控重跑。每组200步，batch4，64x64，seed42，相同初始化/批次/损失/优化器；未根据DEV挑选checkpoint。
+- 三组仍实例化46,107参数。MC与M3活动结构相同；MC与M3的作用mask不同，这是无线路径与线条件化方法的输入/机制差别，不宣称所有计算相同。MS只有一个活动gate参数。
+- 保留旧checkpoint结构、旧默认M1/M2/M3入口；新增`--arms`。本轮新目录，未覆盖旧结果。
+
+输出：`local_outputs/spatial_line_controls_train4_dev2_20261023_v1/`。
+
+| 历史DEV2 | 总归属错误↓ | 5px边界错误↓ | 改正↑ | 误改↓ |
+| --- | ---: | ---: | ---: | ---: |
+| 原始 | 308,558 | 63,996 | 0 | 0 |
+| MC：活动容量匹配、无交线 | 254,367 | 62,609 | 65,399 | 11,208 |
+| MS：全局可学习线权重 | 222,440 | 55,895 | 103,302 | 17,184 |
+| M3：空间线门控 | 206,657 | 51,831 | 119,319 | 17,418 |
+
+M3相对MC少10,778边界错误（17.21%）；相对MS少4,064（7.27%），误改多234。
+MS最终标量0.542879，M3均值约0.78，短训练下仍有优化速度/强度差别。因此追加下面的冻结干预，不直接把此表解释为纯粹空间作用范围增量。
+
+逐场景（总错误/边界错误/误改）：
+
+| 场景 | MC | MS | M3 |
+| --- | --- | --- | --- |
+| scene00199 | 34,832 / 17,646 / 2,984 | 22,728 / 14,278 / 2,784 | 16,848 / 12,151 / 2,899 |
+| scene00190 | 219,535 / 44,963 / 8,224 | 199,712 / 41,617 / 14,400 | 189,809 / 39,680 / 14,519 |
+
+TRAIN拟合总错误/边界错误/误改：MC695,952/152,833/23,966；MS652,250/144,010/35,740；M3633,271/139,392/49,593。
+M3两个DEV逐点指标与前轮一致；TRAIN比前轮多1错误点，未启用确定性算法，不能声称逐位复现。
+
+### 冻结门控干预：不要把均值变大误写成定位能力
+
+`diagnose_spatial_gate.py`读取冻结M3，用TRAIN4全部视图的可用线tile像素统计均值0.785677892。重叠tile重复计数，口径与推理一致；未读取TRAIN GT作标定，不使用DEV调常量。
+保持线分支与其他网络参数不变，仅将局部门控替换为此常量。预测保存后才读取DEV评价目标；原checkpoint哈希不变。
+
+| 冻结模型干预 | 总错误↓ | 边界错误↓ | 改正↑ | 误改↓ |
+| --- | ---: | ---: | ---: | ---: |
+| M3 + TRAIN平均常量门控 | 217,184 | 54,505 | 104,905 | 13,531 |
+| M3原空间门控 | 206,657 | 51,831 | 119,319 | 17,418 |
+
+空间门控少2,674边界错误（4.91%），但多3,887误改。两DEV场景边界均改善，不能据此忽略代价。
+常量版本scene00199/00190分别为总错误21,284/195,900、边界13,722/40,783、误改2,670/10,861。
+TRAIN gate标准差0.075–0.083，DEV190为0.08375，说明不是严格常数；但最小门控仍约0.47–0.48，并未显示明确的“区域外关闭”。
+这只是已训练模型的门控依赖诊断，不是从头训练到收敛的常量权重基线，也不能证明已经学到有限线段端点。
+
+### 可视化、检查和运行成本
+
+六张对比图保持同点域/相机/颜色，局部窗口来自预测边界而非GT错误。已查看两个DEV视图0：scene199的天花板交界更接近GT但仍不平滑；scene190仍有明显内部错分及碎片，不能仅用总指标掩盖。
+`visualize_spatial_projection_audit.py`额外生成两个DEV视图0的全局XYZ投影图（合为一张），显式源索引/像素坐标对齐、来源SHA检查。互斥DLT验证点的P95为0.1230/0.1085px；这是坐标一致性，不是真实三维精度改善。
+
+三组训练循环共39.520秒（不含准备/评价）；峰值allocated292,832,256字节=279.27MiB，reserved520,093,696字节=496MiB；不是总显卡占用，不是大规模训练。
+新增两项单元测试后，空间相关10项、坐标/patch10项和投影2项通过；本轮6个Python文件语法检查通过。
+`postrun_audit.json`再次复核230条训练线来源、所有DEV指标、未分配点及行索引，全部通过。没有运行因旧归档删除而不完整的全仓测试集。
+
+本轮checkpoint SHA-256：
+
+- MC：`a489c388b7e99ca3e9442ca22a0825e077dc4183a6ea2bbb0dbd08fd482c292b`
+- MS：`2d1d9275003981b71dae6ab35f29bb6b78e08d462c2b8f768795bf3bfe3b9702`
+- M3：`2d60d7406173376789cff67409696e3be583dd0a468b9c803fbf2fbbc31e036e`
+
+执行命令（均exit0）：
+
+```text
+python train_spatial_line_ablation.py --output local_outputs/spatial_line_controls_train4_dev2_20261023_v1 --steps 200 --arms MC MS M3
+python audit_spatial_line_pilot.py --run local_outputs/spatial_line_controls_train4_dev2_20261023_v1 --output local_outputs/spatial_line_controls_train4_dev2_20261023_v1/postrun_audit.json
+python visualize_spatial_projection_audit.py --run local_outputs/spatial_line_controls_train4_dev2_20261023_v1 --output local_outputs/spatial_line_controls_train4_dev2_20261023_v1/projection_check
+python diagnose_spatial_gate.py --run local_outputs/spatial_line_controls_train4_dev2_20261023_v1 --output local_outputs/spatial_line_controls_train4_dev2_20261023_v1/gate_intervention
+python -m unittest discover -s tests -p "test_spatial*.py" -v
+python -m unittest discover -s tests -p test_line_support_patches.py -v
+```
+
+结论：本轮初步支持线条件化分支及空间门控有增量，但误改明显多于历史finite（17,418 vs 8,087），不替换主线。下一步先做64/128上下文单因素对照，并在TRAIN定位保护失败；不因显存空闲而同时加网络、数据、训练步数。独立数据、上游划分、最近邻比较及多seed仍待完成。

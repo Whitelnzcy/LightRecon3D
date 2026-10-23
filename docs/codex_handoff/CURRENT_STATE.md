@@ -1,5 +1,39 @@
 # LightRecon3D Current State
 
+## 2026-10-23 active-capacity and scalar controls completed
+
+Base HEAD a2f562b on codex/line-support-refinement-20261023. Scoped continuation;
+prior archival deletions/modifications untouched. No large training or recache.
+Extended spatial_line_refiner with MC (same active architecture as M3, no line
+input) and MS (single learned scalar line gate). Same TRAIN4/1920 patches,
+64px/batch4/seed42, 200steps each MC/MS/M3. All inference frozen before DEV2.
+Output: local_outputs/spatial_line_controls_train4_dev2_20261023_v1.
+
+Historical DEV total/boundary/damage: MC254367/62609/11208,
+MS222440/55895/17184, M3206657/51831/17418. MS scalar0.542879.
+MC is genuinely line-independent and trains the extra branch; applicability
+mask differs intentionally (observed pixels vs predicted line-pair mask).
+M3 DEV predictions reproduce earlier metrics; TRAIN differs by1 point due to
+non-deterministic CUDA floating paths. Do not claim bitwise determinism.
+
+Frozen M3 gate intervention in gate_intervention/: calibrate a constant ONLY
+on TRAIN available tiled pixels (0.785678), replace gate without retraining.
+Constant total/boundary/damage217184/54505/13531 vs spatial206657/51831/17418.
+Spatial gate reduces2674 boundary errors but introduces3887 extra damages.
+This supports gate-dependent behavior, not proof of learned finite endpoints,
+causal optimality, independent generalization, or superiority to Plane-DUSt3R.
+Historical finite still has lower damage8087; do not replace mainline.
+
+Execution: three-arm training39.520s (excludes prep/eval), allocated279.27MiB,
+reserved496MiB (not whole GPU usage). 20 unit tests +2 projection checks pass;
+syntax checks pass. Independent audit recomputes all DEV metrics and230 TRAIN
+line provenance records exactly. Generated6 comparison figures and1 two-view
+global XYZ projection diagnostic; viewed both DEV comparisons and diagnostic.
+Projection disjoint P95s0.1230/0.1085px: coordinate consistency, NOT depth accuracy.
+Commands, hashes and per-scene results: LINE_SUPPORT_PROGRESS_20261023.md.
+Next: controlled64/128 context comparison and TRAIN-based protection analysis;
+change one factor per experiment. Independent split/nearest-work/multiseed pending.
+
 ## 2026-10-23 spatial M1 and first M1/M2/M3 pilot completed
 
 Base commit 16836b104fda0ee68632ce72fb3adb66c4cbbad5; same scoped GitHub branch.
