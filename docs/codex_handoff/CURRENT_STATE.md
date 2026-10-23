@@ -1,5 +1,38 @@
 # LightRecon3D Current State
 
+## 2026-10-23 spatial M1 and first M1/M2/M3 pilot completed
+
+Base commit 16836b104fda0ee68632ce72fb3adb66c4cbbad5; same scoped GitHub branch.
+Implemented spatial_support_data.py, spatial_support_refiner.py and plain M1
+training/evaluation, then spatial_line_features.py, spatial_line_refiner.py,
+train_spatial_line_ablation.py and audit_spatial_line_pilot.py. See task and
+docs/research_practice/LINE_SUPPORT_PROGRESS_20261023.md for commands/details.
+
+Actually ran TRAIN4/20views/1,920 GT-free64px patches, 200steps/batch4. Plain
+M1 fit errors829570->748464, fixed-probe loss2.393909->1.369852. Then ran all
+M1/M2/M3 arms with same initialization, batches/loss/budget, each200steps.
+M2 fixed line weight0.5; M3 learned local weight initialized0.5; gates affect
+candidate logits and receive nonzero gradients. XYZ and candidates unchanged.
+
+Frozen historical DEV2 totals (total/boundary/damage):
+M1 268232/62705/6261; M2 224857/56362/17231; M3 206657/51831/17418.
+Historical finite 213028/52014/8087. M3 gives a pilot increment over M2, but
+only183 fewer boundary errors than historical finite and9331 extra damages.
+DO NOT replace old mainline or claim independent generalization/publication.
+M1 has disabled extra branch: effective capacity is not fully matched.
+M3 mean gate~0.78 could partly be global strength adjustment: scalar-gate
+control is required before claiming learned finite spatial applicability.
+
+Outputs: local_outputs/spatial_support_m1_train4_20261023_v1,
+spatial_support_m1_dev2_20261023_v1, spatial_line_m123_train4_dev2_20261023_v1.
+All execution entries exited0; 12comparison images generated, sampled4 viewed.
+Final checks:18 unit tests plus2 projection checks passed; syntax passed.
+Postrun audit verifies230 TRAIN line records and all DEV metrics/source order.
+Scene190 M3 has6126 damages >20px from GT boundary, concentrated in few pairs.
+Next: capacity-matched no-line and scalar-gate controls; TRAIN damage diagnosis,
+then targeted protection supervision. No parameter sweep or big retraining yet.
+Independent split/full upstream audit and nearest-work comparison still pending.
+
 ## 2026-10-23 line-conditioned support refinement: P0/P1 pilot
 
 User authorized implementation and GitHub progress synchronization. New branch:
