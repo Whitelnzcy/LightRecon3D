@@ -1,5 +1,35 @@
 # LightRecon3D Current State
 
+## 2026-10-23 line-conditioned support refinement: P0/P1 pilot
+
+User authorized implementation and GitHub progress synchronization. New branch:
+codex/line-support-refinement-20261023, base HEAD e2c058f. No new training yet.
+Task: docs/codex_tasks/line_conditioned_support_refinement_20261023.md.
+Detailed execution record: docs/research_practice/LINE_SUPPORT_PROGRESS_20261023.md.
+
+Added audit_line_support_refinement.py, models/line_support_patches.py and
+tests/test_line_support_patches.py. Ten interface tests, two projection checks
+and syntax compilation pass. Executed audit into
+local_outputs/line_support_audit_20261023_v1 (exit 0): both DEV scenes' saved
+control/support metrics exactly reproduced; all ten view transforms, point
+registries, dense GT and 5px boundary distances verified. DLT from predicted
+XYZ/pixels gives disjoint-check P95 0.1085-0.1316px. Generated 10 diagnostic
+figures and 80 prediction-only patch indices; inspected both view0 figures.
+No GT labels/camera/layout paths in exported prediction input metadata.
+
+Old scene199 residual errors are nearly all within20px of GT boundary (5 outside).
+Scene190 retains65,592 fixed-map-unrepresented points,1,390 preserved unassigned,
+31,707 represented errors within5px and95,398 beyond5px (21,940 beyond32px).
+Missing matched identity is NOT evidence of physically missing geometry.
+All21 available guided item caches are in frozen boundary model's historical
+train/dev/test protocol (4/8/9). Independent final test remains unresolved;
+Stage1/full upstream split audit is pending. No fresh model gain claimed.
+
+Next: upstream split/nearest-work audit, TRAIN4 patch dataset and spatial M1
+fit/profile, then controlled M2/M3; no automatic large recache/training.
+Original dirty worktree/outputs preserved. Sync only scoped code/tests/task/
+progress documentation, not datasets, checkpoints or unrelated archival changes.
+
 Last updated: 2026-07-15
 
 ## 1. Current project state
