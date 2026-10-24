@@ -25,8 +25,9 @@ class NoPropagation(SpatialDirectionRefiner):
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--output',required=True);ap.add_argument('--steps',type=int,default=200)
-    ap.add_argument('--experiment',choices=['control','reach','replay','bias'],default='control');ap.add_argument('--seed',type=int,default=42)
-    ap.add_argument('--deterministic',action='store_true');args=ap.parse_args()
+    ap.add_argument('--experiment',choices=['control','reach','replay','bias','budget'],default='control');ap.add_argument('--seed',type=int,default=42)
+    ap.add_argument('--deterministic',action='store_true')
+    ap.add_argument('--control-arms',nargs='+',choices=['none','spatial','learned','oracle'],default=['none','spatial','learned','oracle']);args=ap.parse_args()
     if args.deterministic:
         os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
         torch.use_deterministic_algorithms(True)
@@ -41,13 +42,20 @@ def main():
         write_json(out/f'{s["name"]}_inputs.json',input_receipt(s))
         attach_supervision(s);attach_direction_supervision(s);scenes.append(s);print('PREPARED',s['name'],flush=True)
     torch.manual_seed(args.seed);base=SpatialDirectionRefiner('DS').cuda()
-    arms=['none','spatial','learned','oracle'] if args.experiment=='control' else ['reach1','repeat1'] if args.experiment=='replay' else ['reach1','reach4','reach8']
+    arms=args.control_arms if args.experiment=='control' else ['reach1','repeat1'] if args.experiment=='replay' else ['reach1','reach4','reach8']
     if args.experiment=='bias':arms=['bias0','bias1','bias2','bias2repeat']
+    if args.experiment=='budget':
+        if args.steps!=800:raise ValueError('Budget protocol fixes maximum800 steps')
+        arms=['none200','learned200','none800','learned800']
     models={a:copy.deepcopy(base) for a in arms}
     if args.experiment=='control':
-        models['none'].__class__=NoPropagation;models['spatial'].arm='D0'
+        if 'none' in models:models['none'].__class__=NoPropagation
+        if 'spatial' in models:models['spatial'].arm='D0'
     elif args.experiment=='bias':
         for a,m in models.items():m.support_bias=float(a[4])
+    elif args.experiment=='budget':
+        for a,m in models.items():
+            if a.startswith('none'):m.__class__=NoPropagation
     else:
         for a,m in models.items():m.grid_step=1 if a=='repeat1' else int(a.removeprefix('reach'))
     opts={a:torch.optim.AdamW(m.parameters(),lr=.001,weight_decay=1e-4) for a,m in models.items()}
@@ -65,12 +73,15 @@ def main():
     if args.experiment=='replay':protocol['fixed']='Two identical reach1 arms; assert bitwise equal parameters after EVERY update. Not an efficacy experiment.'
     if args.experiment=='bias':protocol.update(fixed='Only output support bias0/1/2 changes; grid1/radius.02/loss/candidate inputs unchanged. bias2repeat asserts bitwise replay each step.',
         initialization='identical state_dict, different nonparameter output bias; candidate original-support input remains present')
+    if args.experiment=='budget':protocol.update(fixed='Grid1,bias2, same weights/loss/batches. None vs learned direction, each at200/800 updates. All frozen before DEV.',
+        initialization='identical state_dict; shorter arms stop at200, longer arms share exact first200updates',budgets={a:200 if a.endswith('200') else 800 for a in arms})
     write_json(out/'protocol.json',protocol);rng=np.random.default_rng(args.seed);views=[v for s in scenes for v in s['views']];history=[]
     for step in range(args.steps):
         v=views[int(rng.integers(len(views)))];q=rng.choice(len(v['patches']),4,replace=len(v['patches'])<4)
         boxes=[v['patches'][i]['box_xyxy'] for i in q];c,k,e,y,o=context_batch(v,boxes,'cuda');t=direction_batch(v,boxes,'cuda')
         row=dict(step=step+1)
         for a,m in models.items():
+            if args.experiment=='budget' and a.endswith('200') and step>=200:continue
             m.train();opts[a].zero_grad();kw={}
             if a=='oracle':kw['direction_override']=t[:,None].expand(-1,k.shape[1],-1,-1,-1).detach()
             logits,d=m(c,k,e,return_details=True,**kw);seg=ownership_loss(logits,y,o);aux=direction_loss(d,t,y);loss=seg+.3*aux
@@ -84,6 +95,10 @@ def main():
         if args.experiment=='bias':
             for key,value in models['bias2'].state_dict().items():
                 if not torch.equal(value,models['bias2repeat'].state_dict()[key]):raise AssertionError(f'Bias replay diverged at step {step+1}: {key}')
+        if args.experiment=='budget' and step<200:
+            for prefix in ['none','learned']:
+                for key,value in models[prefix+'200'].state_dict().items():
+                    if not torch.equal(value,models[prefix+'800'].state_dict()[key]):raise AssertionError(f'Budget prefix diverged at step {step+1}: {key}')
         if step%25==0 or step+1==args.steps:history.append(row);write_json(out/'history.json',history);print('TRAIN',row,flush=True)
     for a,m in models.items():m.eval();torch.save(dict(schema_version=2,model=m.state_dict(),protocol=protocol,arm=a,grid_step=m.grid_step,support_bias=m.support_bias),out/f'{a}.pt')
     del scenes,views,c,k,e,y,o,t
@@ -109,6 +124,7 @@ def main():
         draw_comparison(s,predictions,out/'figures'/f'{name}.png',protocol['scope'],
             'Same initialization/batches/budget. Oracle uses GT; diagnostic only.' if args.experiment=='control' else
             'Only support bias0/1/2 changes. Fixed grid1, XYZ, loss. bias2repeat exact replay.' if args.experiment=='bias' else
+            'None vs learned direction at200/800 steps; same grid1,bias2,inputs. No GT in prediction.' if args.experiment=='budget' else
             'Only grid reach1/4/8 changes (replay uses identical grid1). No GT in prediction.')
         print('EVAL',name,row,flush=True)
     aggregate={a:{key:sum(r[a][key] for r in report.values()) for key in next(iter(report.values()))[a]} for a in models}

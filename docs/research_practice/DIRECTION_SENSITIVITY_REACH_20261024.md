@@ -52,11 +52,35 @@ Every parameter equal after EVERY update; full predictions equal on both scenes.
 Independent audit passed. At30steps both predictions remain original: this is a
 reproducibility check, NOT efficacy. Does not establish cross-device reproducibility.
 
-## Bias experiment in progress
+## Bias experiment completed
 
-`local_outputs/direction_bias_20261024_s42`: deterministic200steps, output bias
-0/1/2, grid1 unchanged. Candidate original-support input retained. Duplicate bias2
-asserts bitwise equality each step. Results pending at this progress checkpoint.
+`local_outputs/direction_bias_20261024_s42` and `_s43`: deterministic200steps,
+output bias0/1/2, grid1 unchanged. Original-support candidate input retained.
+Duplicate bias2 asserted bitwise equality EACH step and equal full predictions
+in both runs. Independently recomputed eight scene/arm metrics per run.
+
+| Seed | Bias | Total errors | Boundary errors | Damage |
+|---|---:|---:|---:|---:|
+| 42 | 0 | 258655 | 63535 | 27916 |
+| 42 | 1 | 267383 | 63325 | 7760 |
+| 42 | 2 | 239788 | 61509 | 19152 |
+| 43 | 0 | 283402 | 63268 | 2415 |
+| 43 | 1 | 256712 | 61256 | 4137 |
+| 43 | 2 | 266935 | 64034 | 6729 |
+
+Bias1 has lower damage than bias2 in both seeds, but boundary ranking reverses.
+Do not claim a universal best bias. Removing bias entirely is not supported.
+Fixed view0 RGB/error/change maps generated with corrected green/damaged magenta;
+scene190 seed42 and scene199 seed43 inspected. Error maps expose remaining
+large support errors, not just boundary appearance. Projection audit for seed42.
+
+## Training budget diagnostic active
+
+Restored grid1,bias2. `local_outputs/direction_budget_20261024_s42`: paired none
+and learned propagation, each200/800updates, strict deterministic. Each200 model
+must equal its800 counterpart during the first200updates. All models frozen
+before DEV. No direction change; this isolates training duration and propagation.
+Full TRAIN-fit evaluation is prepared, not yet executed at this checkpoint.
 
 ## Commands and files
 

@@ -1,5 +1,20 @@
 # LightRecon3D Current State
 
+## 2026-10-24 deterministic bias and budget trials completed; oracle800 active
+
+Base HEAD6b0bcc3. Fixed direction-propagation line. Bias0/1/2 seed42 and43
+completed/audited; bias1 lowers damage vsbias2 but boundary ranking reverses.
+No universal bias winner. Both200step duplicates exact each step/full predictions.
+Budget trial grid1,bias2,seed42: DEV total/boundary/damage none200255502/62047/6936;
+learned200239788/61509/19152; none800229797/55926/12620;
+learned800237959/58456/19762. Longer training helps but direction800 loses to
+none800. TRAIN800 totals621495vs621444, damage20424vs30032. Direction problem
+not only DEV generalization. Cross-process learned200 matches bias2 bitwise.
+Independent DEV audit8results passed;15tests pass. Error/change figures generated.
+Oracle800 same protocol currently RUNNING in direction_oracle800_20261024_s42.
+GT-assisted diagnostic only, not deployable/upper bound; no mainline replacement.
+See docs/research_practice/DIRECTION_BUDGET_20261024.md and prior sensitivity report.
+
 ## 2026-10-24 direction sensitivity and reach trials; bias run active
 
 Base HEADb540791. User requests continuous progress on SAME direction line.
