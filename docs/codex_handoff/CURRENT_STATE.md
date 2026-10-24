@@ -1,5 +1,29 @@
 # LightRecon3D Current State
 
+## 2026-10-24 independent boundary / raw geometry ablation completed
+
+Base HEAD0186271. User questioned circular plane-derived constraints; prioritize
+independent RGB-prior experiment over proposed keep/reassign head (not added).
+Old M3 lines already included RGB refinement, NOT a pure geometry control.
+New N/B/G/BG: neither/RGB boundary/raw intersections/both; same active architecture,
+TRAIN4,200steps,batch4,seed42,64px,loss and observed-pixel application.
+Frozen RGB-only model inferred all30 views; raw lines contain no RGB correction.
+Additive evidence over repeated baseline channels is an explicit pilot limitation.
+Output local_outputs/independent_evidence_train4_dev2_20261024_v1.
+DEV total/boundary/damage:
+N254364/62609/11205; B257236/62344/9208;
+G243255/60413/10525; BG241555/60051/11244.
+BG boundary4.09% below N, but not uniform per-scene gain and worse than historical
+RGB-refined M3 boundary51831. No mainline replacement or broad efficacy claim.
+Upstream TRAIN4=train_scenes; DEV199/190=historical test_scenes, already repeatedly
+inspected downstream; NOT independent evaluation. 32 tests pass;305 rawlines and
+all DEV metrics verified; source/row/candidate invariants pass. Input/output and
+global projection figures generated and viewed. Training exited0,43.154s loop.
+See docs/research_practice/INDEPENDENT_BOUNDARY_GEOMETRY_20261024.md and task
+docs/codex_tasks/independent_boundary_geometry_20261024.md for commands/caveats.
+Next: separate evidence representation and learn finite pair-specific ownership;
+not more geometric self-confirmation, not yet implemented. No long training.
+
 ## 2026-10-24 context audit and gate-supervision trial completed
 
 Base HEAD05df388, same scoped branch. Continued interrupted 2026-10-23 run;

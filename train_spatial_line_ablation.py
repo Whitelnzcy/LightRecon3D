@@ -61,7 +61,11 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--output',required=True);ap.add_argument('--steps',type=int,default=200)
     ap.add_argument('--arms',nargs='+',choices=['M1','M2','M3','MC','MS'],default=['M1','M2','M3'])
     ap.add_argument('--context-margins',nargs='+',type=int,choices=[0,32],default=[0])
+    ap.add_argument('--independent-evidence',action='store_true')
     args=ap.parse_args()
+    if args.independent_evidence:
+        if args.context_margins!=[0]: raise ValueError('Protocol fixes64 context')
+        args.arms=['N','B','G','BG']
     if args.steps<3:raise ValueError('At least three steps required')
     if len(set(args.arms))!=len(args.arms):raise ValueError('Duplicate arms')
     if len(set(args.context_margins))!=len(args.context_margins):raise ValueError('Duplicate margins')
@@ -69,15 +73,21 @@ def main():
     threadpool_limits(1);torch.set_num_threads(4);cv2.setNumThreads(1);torch.manual_seed(42)
     roots=[Path('local_outputs/gct3/items')/f'train_{i:03d}_scene_{i:05d}' for i in range(3)]+[Path('local_outputs/gct4/items/train_003_scene_00003')]
     scenes=[];receipts=[]
+    attach=attach_predicted_lines; model_class=SpatialLineRefiner
+    if args.independent_evidence:
+        from independent_boundary_evidence import IndependentEvidence
+        from models.independent_evidence_refiner import IndependentEvidenceRefiner
+        evidence_provider=IndependentEvidence(out); attach=evidence_provider.attach; model_class=IndependentEvidenceRefiner
     for root in roots:
-        s=load_prediction_scene(root);path=attach_predicted_lines(s)
+        s=load_prediction_scene(root);path=attach(s)
         receipts.append(dict(**input_receipt(s),lines_path=str(path),lines_sha256=sha(path)))
         write_json(out/'prediction_inputs.json',dict(schema_version=1,scenes=receipts))
         attach_supervision(s);scenes.append(s);print('PREPARED',s['name'],flush=True)
     views=[v for s in scenes for v in s['views']];rng=np.random.default_rng(42)
     specs={(f'{a}_c{64+2*margin}' if args.context_margins!=[0] else a):(a,margin)
            for margin in args.context_margins for a in args.arms}
-    base=SpatialLineRefiner('M1').cuda();models={a:copy.deepcopy(base) for a in specs}
+    torch.manual_seed(42)
+    base=model_class('N' if args.independent_evidence else 'M1').cuda();models={a:copy.deepcopy(base) for a in specs}
     for a,m in models.items():m.arm=specs[a][0]
     opts={a:torch.optim.AdamW(m.parameters(),lr=1e-3,weight_decay=1e-4) for a,m in models.items()}
     protocol=dict(schema_version=1,steps=args.steps,seed=42,batch=4,arms=list(models),
@@ -93,6 +103,12 @@ def main():
         parameters=sum(p.numel() for p in base.parameters()),git_head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
         code_sha256={p:sha(p) for p in ['train_spatial_line_ablation.py','models/spatial_line_refiner.py','spatial_line_features.py',
                     'models/spatial_support_refiner.py','spatial_support_data.py','spatial_context_data.py','models/line_support_patches.py','models/ownership_supervision.py']})
+    if args.independent_evidence:
+        protocol.update(line_input='N neither; B RGB boundary; G RAW intersections; BG both. Repeated baseline channels + additive evidence (5 geometry,1 boundary).',
+            gate='Identical observed-pixel sigmoid for all arms, no line application mask',
+            capacity_note='Same active layers; all channels active via repeated baseline. Additive fusion is a pilot limitation.',boundary_checkpoint=evidence_provider.checkpoint_hash)
+        for p in ['independent_boundary_evidence.py','models/independent_evidence_refiner.py','train_rgb_structure_boundary.py','recover_cache_projection.py']:
+            protocol['code_sha256'][p]=sha(p)
     write_json(out/'protocol.json',protocol);history=[];start=time.perf_counter();gradient={};torch.cuda.reset_peak_memory_stats()
     for step in range(args.steps):
         v=views[int(rng.integers(len(views)))];q=rng.choice(len(v['patches']),4,replace=len(v['patches'])<4)
@@ -128,7 +144,7 @@ def main():
     items=[(s,'TRAIN_fit') for s in scenes]+[(name,'historical_DEV') for name in ['final_016_scene_00199','final_008_scene_00190']]
     for item,split in items:
         if isinstance(item,str):
-            s=load_prediction_scene(Path('local_outputs/b12r2/items')/item);path=attach_predicted_lines(s)
+            s=load_prediction_scene(Path('local_outputs/b12r2/items')/item);path=attach(s)
             write_json(out/f'{item}_prediction_inputs.json',dict(**input_receipt(s),lines_path=str(path),lines_sha256=sha(path)))
         else:s=item
         predictions={};gates={}
@@ -148,7 +164,8 @@ def main():
             rows[arm]['changed']=int((pred!=s['old']['point_plane_ids']).sum())
         report[s['name']]=dict(split=split,metrics=rows,mean_gate_on_available_tiled_pixels=gates,
                                mapping=s['mapping'],source_sha256=s['source_sha256'])
-        write_json(out/'report.json',report);draw_comparison(s,predictions,out/'figures'/f'{s["name"]}_view0.png',split)
+        write_json(out/'report.json',report);draw_comparison(s,predictions,out/'figures'/f'{s["name"]}_view0.png',split,
+            'N: neither; B: RGB boundary; G: RAW intersections; BG: both. Same XYZ/candidates.' if args.independent_evidence else None)
         print('EVAL',s['name'],rows,flush=True)
     aggregate={split:{arm:{k:sum(v['metrics'][arm][k] for v in report.values() if v['split']==split)
                           for k in next(iter(report.values()))['metrics'][arm]} for arm in models}
