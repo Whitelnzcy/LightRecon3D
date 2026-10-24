@@ -1,5 +1,20 @@
 # LightRecon3D Current State
 
+## 2026-10-24 direction sensitivity and reach trials; bias run active
+
+Base HEADb540791. User requests continuous progress on SAME direction line.
+Frozen sensitivity: boundary feature relative change1.98/2.25%; zero-direction
+label flips0.067/0.048%; removing support bias flips52.9/62.2% (NOT accuracy).
+Reach1/4/8 seed42 boundary62788/63405/63238; seed43 64070/63632/63884.
+No consistent wider-reach benefit; keep grid1. Both full-domain runs audited.
+Strict deterministic replay30steps passed per-step parameter and full prediction
+equality; no efficacy claim at30steps. 15 related tests passed. Bias0/1/2 200step
+deterministic seed42 experiment RUNNING with duplicate bias2 equality assertions.
+Outputs direction_sensitivity_20261024_v1, direction_reach_20261024_s42/s43,
+direction_replay_20261024_v1, direction_bias_20261024_s42 under local_outputs.
+See docs/research_practice/DIRECTION_SENSITIVITY_REACH_20261024.md.
+Next audit bias results and repeat evidence; no mainline promotion yet.
+
 ## 2026-10-24 matched direction propagation control completed
 
 Base HEAD268c5e3. User explicitly fixed direction-propagation research line.

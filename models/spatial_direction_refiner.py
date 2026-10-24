@@ -10,13 +10,16 @@ from models.spatial_support_refiner import SpatialSupportRefiner,block
 
 
 def neighbor(t,dy,dx):
-    h,w=t.shape[-2:];p=F.pad(t,(1,1,1,1))
-    return p[...,1+dy:1+dy+h,1+dx:1+dx+w]
+    h,w=t.shape[-2:];pad=max(1,abs(dy),abs(dx));p=F.pad(t,(pad,pad,pad,pad))
+    return p[...,pad+dy:pad+dy+h,pad+dx:pad+dx+w]
 
 
 class SpatialDirectionRefiner(SpatialSupportRefiner):
-    def __init__(self,arm='D0',include_xyz=True):
+    def __init__(self,arm='D0',include_xyz=True,grid_step=1,support_bias=2.):
         super().__init__();self.arm=arm
+        if not isinstance(grid_step,int) or grid_step<1:raise ValueError('grid_step must be positive integer')
+        self.grid_step=grid_step
+        self.support_bias=float(support_bias)
         self.include_xyz=include_xyz
         self.line_direction=nn.Sequential(block(22 if include_xyz else 19,16),nn.Conv2d(16,3,1),nn.Tanh())
         self.line_fuse=block(48,24)
@@ -38,7 +41,8 @@ class SpatialDirectionRefiner(SpatialSupportRefiner):
         unit=F.normalize(d if direction_override is None else direction_override,dim=2);xyz=lines[0:,:,1:4];observed=lines[:,:,0];prob=lines[:,:,4]
         total=torch.zeros_like(features);denom=features.new_zeros((b*k,1,h,w))
         # Center included: nonzero weight whenever the center is observed.
-        for dy,dx in [(0,0),(0,1),(0,-1),(1,0),(-1,0)]:
+        step=self.grid_step
+        for dy,dx in [(0,0),(0,step),(0,-step),(step,0),(-step,0)]:
             offset=neighbor(xyz,dy,dx)-xyz
             spatial=torch.exp(-torch.linalg.vector_norm(offset,dim=2)/.02)
             cosine=(F.normalize(offset,dim=2)*unit).sum(2)
@@ -47,6 +51,6 @@ class SpatialDirectionRefiner(SpatialSupportRefiner):
             total=total+weight*neighbor(features,dy,dx);denom=denom+weight
         propagated=total/denom.clamp_min(1e-12)
         if propagation=='none':propagated=features
-        logits=self.score(self.line_fuse(torch.cat([features,propagated],1))).reshape(b,k,h,w)+2*candidates[:,:,0]
+        logits=self.score(self.line_fuse(torch.cat([features,propagated],1))).reshape(b,k,h,w)+self.support_bias*candidates[:,:,0]
         if return_details:return logits,d
         return (logits,torch.zeros_like(logits)) if return_gate else logits

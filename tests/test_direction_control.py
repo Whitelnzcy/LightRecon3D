@@ -1,6 +1,6 @@
 import unittest
 import torch
-from models.spatial_direction_refiner import SpatialDirectionRefiner
+from models.spatial_direction_refiner import SpatialDirectionRefiner,neighbor
 from train_direction_control import NoPropagation
 
 
@@ -31,6 +31,24 @@ class ControlTests(unittest.TestCase):
 
     def test_override_shape_checked(self):
         with self.assertRaises(ValueError):self.m(self.c,self.k,self.e,direction_override=torch.zeros(1,3,8,8))
+
+    def test_dilated_neighbor_no_wrap(self):
+        x=torch.arange(25).reshape(1,1,5,5).float()
+        shifted=neighbor(x,0,3)
+        torch.testing.assert_close(shifted[...,:2],x[...,3:])
+        self.assertEqual(float(shifted[...,2:].abs().sum()),0)
+        self.assertEqual(float(neighbor(x,8,0).abs().sum()),0)
+
+    def test_reach_shape_finite_and_candidate_order(self):
+        m=SpatialDirectionRefiner('DS',grid_step=4).eval();m.load_state_dict(self.m.state_dict())
+        result=m(self.c,self.k,self.e)
+        self.assertTrue(torch.isfinite(result).all())
+        torch.testing.assert_close(result[:,[1,0]],m(self.c,self.k[:,[1,0]],self.e[:,[1,0]]))
+
+    def test_support_bias_is_only_additive(self):
+        old=self.m(self.c,self.k,self.e)
+        self.m.support_bias=0.
+        torch.testing.assert_close(old-self.m(self.c,self.k,self.e),2*self.k[:,:,0])
 
 
 if __name__=='__main__':unittest.main()
