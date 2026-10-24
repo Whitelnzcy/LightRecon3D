@@ -1,0 +1,47 @@
+"""Small PushBoundary-inspired 3D directional propagation on registered grids.
+
+Not full PointNet++/KPConv reproduction: local grid neighbors, same-resolution
+features, frozen RGB prior. No point movement; no GT in forward.
+"""
+import torch
+from torch import nn
+import torch.nn.functional as F
+from models.spatial_support_refiner import SpatialSupportRefiner,block
+
+
+def neighbor(t,dy,dx):
+    h,w=t.shape[-2:];p=F.pad(t,(1,1,1,1))
+    return p[...,1+dy:1+dy+h,1+dx:1+dx+w]
+
+
+class SpatialDirectionRefiner(SpatialSupportRefiner):
+    def __init__(self,arm='D0',include_xyz=True):
+        super().__init__();self.arm=arm
+        self.include_xyz=include_xyz
+        self.line_direction=nn.Sequential(block(22 if include_xyz else 19,16),nn.Conv2d(16,3,1),nn.Tanh())
+        self.line_fuse=block(48,24)
+
+    def forward(self,common,candidates,lines,return_gate=False,return_details=False):
+        if self.arm not in ['D0','DS','DC']:raise ValueError('Unknown direction arm')
+        b,k,_,h,w=candidates.shape
+        fine=self.image(common);context=F.interpolate(self.context(F.avg_pool2d(fine,2)),size=(h,w),mode='bilinear',align_corners=False)
+        shared=self.decode(torch.cat([fine,context],1))[:,None].expand(-1,k,-1,-1,-1)
+        features=self.candidate(torch.cat([shared,candidates],2).reshape(b*k,18,h,w))
+        condition=candidates if self.arm=='DC' else candidates.mean(1,keepdim=True).expand_as(candidates)
+        direction_inputs=[shared,condition,lines[:,:,4:5]]
+        if self.include_xyz:direction_inputs.append(lines[:,:,1:4])
+        d=self.line_direction(torch.cat(direction_inputs,2).reshape(b*k,22 if self.include_xyz else 19,h,w)).reshape(b,k,3,h,w)
+        unit=F.normalize(d,dim=2);xyz=lines[0:,:,1:4];observed=lines[:,:,0];prob=lines[:,:,4]
+        total=torch.zeros_like(features);denom=features.new_zeros((b*k,1,h,w))
+        # Center included: nonzero weight whenever the center is observed.
+        for dy,dx in [(0,0),(0,1),(0,-1),(1,0),(-1,0)]:
+            offset=neighbor(xyz,dy,dx)-xyz
+            spatial=torch.exp(-torch.linalg.vector_norm(offset,dim=2)/.02)
+            cosine=(F.normalize(offset,dim=2)*unit).sum(2)
+            weight=spatial if self.arm=='D0' else (spatial+torch.exp(prob-1)*cosine).clamp_min(0)
+            weight=(weight*observed*neighbor(observed,dy,dx)).reshape(b*k,1,h,w)
+            total=total+weight*neighbor(features,dy,dx);denom=denom+weight
+        propagated=total/denom.clamp_min(1e-12)
+        logits=self.score(self.line_fuse(torch.cat([features,propagated],1))).reshape(b,k,h,w)+2*candidates[:,:,0]
+        if return_details:return logits,d
+        return (logits,torch.zeros_like(logits)) if return_gate else logits

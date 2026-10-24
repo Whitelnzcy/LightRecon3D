@@ -1,5 +1,23 @@
 # LightRecon3D Current State
 
+## 2026-10-24 learned3D direction pilot completed, no conditioning gain
+
+Base HEAD5352564. Added direction inputs/supervision, D0/DS/DC spatial decoder,
+runner --direction-pilot and audits. FixedTRAIN4,200steps,seed42,64px,batch4;
+same ownership loss+.3directionMSE, frozen RGB boundary. Prediction uses noGT.
+PushBoundary-inspired grid propagation with3D offsets, NOT original reproduction.
+v1 lackedXYZ at direction head; preserved. v2 addsXYZ3 all arms, same budget.
+Global basis not rotation-equivariant; v1/v2 layer RNGs differ due width change.
+Output local_outputs/direction_train4_dev2_20261024_v2 (v1 diagnostic retained).
+DEV total/boundary/damage: D0299427/63845/2026; DS271025/62900/2714;
+DC273264/62889/3988. DC saves11 boundary errors vsDS but adds1274damages: no
+useful gain demonstrated. Do not replace mainline. TRAIN0 fixed80patch direction
+median errors69.65/71.97/64.99deg; weak fit, norms0.1285/0.1264/0.1925.
+Both runs exit0,42 tests pass; mappings/sources/fullDEV metrics audited. Six
+figures/run; bothv2DEV comparisons viewed; projection audit generated. Details
+docs/research_practice/DIRECTION_PILOT_20261024.md. No independent test claim.
+Next small overfit + oracle direction diagnostic before scaleup; not run yet.
+
 ## 2026-10-24 PushBoundary target audit and propagation operator
 
 Base HEAD5e2cd7f. User approved borrowing method and testing a small change.

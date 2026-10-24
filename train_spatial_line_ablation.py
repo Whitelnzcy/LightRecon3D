@@ -62,7 +62,11 @@ def main():
     ap.add_argument('--arms',nargs='+',choices=['M1','M2','M3','MC','MS'],default=['M1','M2','M3'])
     ap.add_argument('--context-margins',nargs='+',type=int,choices=[0,32],default=[0])
     ap.add_argument('--independent-evidence',action='store_true')
+    ap.add_argument('--direction-pilot',action='store_true')
     args=ap.parse_args()
+    if args.direction_pilot:
+        if args.independent_evidence or args.context_margins!=[0]:raise ValueError('Direction protocol is separate,64px only')
+        args.arms=['D0','DS','DC']
     if args.independent_evidence:
         if args.context_margins!=[0]: raise ValueError('Protocol fixes64 context')
         args.arms=['N','B','G','BG']
@@ -78,16 +82,22 @@ def main():
         from independent_boundary_evidence import IndependentEvidence
         from models.independent_evidence_refiner import IndependentEvidenceRefiner
         evidence_provider=IndependentEvidence(out); attach=evidence_provider.attach; model_class=IndependentEvidenceRefiner
+    if args.direction_pilot:
+        from spatial_direction_data import DirectionInputs,attach_direction_supervision,direction_batch,direction_loss
+        from models.spatial_direction_refiner import SpatialDirectionRefiner
+        evidence_provider=DirectionInputs(out);attach=evidence_provider.attach;model_class=SpatialDirectionRefiner
     for root in roots:
         s=load_prediction_scene(root);path=attach(s)
         receipts.append(dict(**input_receipt(s),lines_path=str(path),lines_sha256=sha(path)))
         write_json(out/'prediction_inputs.json',dict(schema_version=1,scenes=receipts))
-        attach_supervision(s);scenes.append(s);print('PREPARED',s['name'],flush=True)
+        attach_supervision(s)
+        if args.direction_pilot:attach_direction_supervision(s)
+        scenes.append(s);print('PREPARED',s['name'],flush=True)
     views=[v for s in scenes for v in s['views']];rng=np.random.default_rng(42)
     specs={(f'{a}_c{64+2*margin}' if args.context_margins!=[0] else a):(a,margin)
            for margin in args.context_margins for a in args.arms}
     torch.manual_seed(42)
-    base=model_class('N' if args.independent_evidence else 'M1').cuda();models={a:copy.deepcopy(base) for a in specs}
+    base=model_class('D0' if args.direction_pilot else 'N' if args.independent_evidence else 'M1').cuda();models={a:copy.deepcopy(base) for a in specs}
     for a,m in models.items():m.arm=specs[a][0]
     opts={a:torch.optim.AdamW(m.parameters(),lr=1e-3,weight_decay=1e-4) for a,m in models.items()}
     protocol=dict(schema_version=1,steps=args.steps,seed=42,batch=4,arms=list(models),
@@ -109,6 +119,17 @@ def main():
             capacity_note='Same active layers; all channels active via repeated baseline. Additive fusion is a pilot limitation.',boundary_checkpoint=evidence_provider.checkpoint_hash)
         for p in ['independent_boundary_evidence.py','models/independent_evidence_refiner.py','train_rgb_structure_boundary.py','recover_cache_projection.py']:
             protocol['code_sha256'][p]=sha(p)
+    if args.direction_pilot:
+        protocol.update(line_input='normalized global XYZ + frozen RGB boundary probability; NO plane intersections',
+            direction_head_coordinates='normalized globalXYZ explicitly encoded; include_xyz=True; old diagnostic v1 usedFalse',
+            loss='same ownership CE+.5Dice plus .3 direction MSE on GT-correct candidate, all arms',
+            gate='none; D0 distance only; DS shared direction; DC candidate-conditioned direction',
+            capacity_note='Same instantiated parameters; all direction heads auxiliary-supervised. D0 removes directional weights; DS repeats candidate-mean context, DC uses individual candidate. Equal updates not equal FLOPs.',
+            propagation='same-resolution 4 grid neighbors+center, weights use3D offsets, radius.02 normalized scene diagonal; PushBoundary-inspired, NOT original reproduction',
+            direction_target='global nearest GT boundary in full scene k4 predictedXYZ; zero at boundary, TRAIN only',
+            direction_supervision={s['name']:s['direction_supervision_summary'] for s in scenes})
+        for p in ['spatial_direction_data.py','models/spatial_direction_refiner.py','audit_pushboundary_targets.py']:
+            protocol['code_sha256'][p]=sha(p)
     write_json(out/'protocol.json',protocol);history=[];start=time.perf_counter();gradient={};torch.cuda.reset_peak_memory_stats()
     for step in range(args.steps):
         v=views[int(rng.integers(len(views)))];q=rng.choice(len(v['patches']),4,replace=len(v['patches'])<4)
@@ -119,8 +140,14 @@ def main():
         row=dict(step=step+1)
         for arm,m in models.items():
             margin=specs[arm][1];common,candidates,lines,target,original=batches[margin]
-            m.train();opts[arm].zero_grad();logits=center_crop(m(common,candidates,lines),margin)
+            m.train();opts[arm].zero_grad()
+            if args.direction_pilot:
+                logits,d=m(common,candidates,lines,return_details=True)
+            else:logits=center_crop(m(common,candidates,lines),margin)
             loss=ownership_loss(logits,target,original)
+            if args.direction_pilot:
+                auxiliary=direction_loss(d,direction_batch(v,boxes,'cuda'),target)
+                loss=loss+.3*auxiliary;row[arm+'_direction_mse']=float(auxiliary.detach().cpu())
             if not torch.isfinite(loss):raise ValueError('Non-finite loss')
             loss.backward()
             if step==2:gradient[arm]={n:float(p.grad.norm().cpu()) for n,p in m.named_parameters() if p.grad is not None and n.startswith('line_')}
@@ -165,7 +192,7 @@ def main():
         report[s['name']]=dict(split=split,metrics=rows,mean_gate_on_available_tiled_pixels=gates,
                                mapping=s['mapping'],source_sha256=s['source_sha256'])
         write_json(out/'report.json',report);draw_comparison(s,predictions,out/'figures'/f'{s["name"]}_view0.png',split,
-            'N: neither; B: RGB boundary; G: RAW intersections; BG: both. Same XYZ/candidates.' if args.independent_evidence else None)
+            'D0: distance; DS: shared3D direction; DC: candidate-conditioned3D direction. Fixed XYZ.' if args.direction_pilot else 'N: neither; B: RGB boundary; G: RAW intersections; BG: both. Same XYZ/candidates.' if args.independent_evidence else None)
         print('EVAL',s['name'],rows,flush=True)
     aggregate={split:{arm:{k:sum(v['metrics'][arm][k] for v in report.values() if v['split']==split)
                           for k in next(iter(report.values()))['metrics'][arm]} for arm in models}
