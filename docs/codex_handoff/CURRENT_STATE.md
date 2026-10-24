@@ -1,5 +1,20 @@
 # LightRecon3D Current State
 
+## 2026-10-24 direction memorization and frozen intervention completed
+
+Base HEAD70c9639. Four TRAIN patches, 200 direction-only updates on copied DS/DC
+weights: median angle 76.75->3.92 / 59.58->3.33 degrees. Memorization only;
+overfit weights never used on DEV. Original frozen models tested with learned,
+GT-oracle, zero and random directions on historical DEV2. Boundary errors:
+DS62900/62884/62916/62910; DC62889/62863/62887/62887. Weak dependence on
+direction; do not scale training or promote to mainline on this evidence.
+Oracle is GT-assisted diagnostic, NOT an upper bound or deployable result.
+Run complete; 2 focused tests passed; independent audit verified all16 full-domain
+results and mappings. Comparison figures and global XYZ projection generated.
+Outputs local_outputs/direction_mechanism_diagnostic_20261024_v1. Details:
+docs/research_practice/DIRECTION_MECHANISM_DIAGNOSTIC_20261024.md.
+Next: controlled no/spatial/oracle-trained propagation comparison; not run yet.
+
 ## 2026-10-24 learned3D direction pilot completed, no conditioning gain
 
 Base HEAD5352564. Added direction inputs/supervision, D0/DS/DC spatial decoder,
