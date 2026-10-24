@@ -1,5 +1,22 @@
 # LightRecon3D Current State
 
+## 2026-10-24 finite 3D support diagnostic completed
+
+Base HEADd4bc48b. User says learned RGB boundaries look accurate; inspected3D
+correspondence before further training. New diagnose_finite_structure_lines.py
+keeps global p+t*v, clips t by support overlap, records continuous distances.
+No GT/XYZ/ownership edits. Outputs finite_3d_line_diagnostic_20261024_v1/v2.
+Two historicalDEV scenes:8+37 sampled lines; fixed2% scene-diagonal BOTH-support
+radius rejects ALL. This heuristic is NOT suitable as a mandatory repair gate;
+does not disprove RGB prior or true contacts. Pair0/1 on199: one support0.00056
+away, other0.02913(model units), bandwidth0.01032; equations consistent. Gap
+cause (ownership/visibility/geometry/noncontact) not yet resolved. No threshold
+widening or successful extraction claim.3 tests+syntax pass; runs exit0;3D and
+projection diagnostics generated. See FINITE_3D_LINE_DIAGNOSTIC_20261024.md in
+docs/research_practice and task finite_line_diagnostic_20261024.md.
+Next: independent RGB evidence + continuous pair-conditioned geometry, learn
+finite ownership without requiring existing supports already touch. Not trained.
+
 ## 2026-10-24 independent boundary / raw geometry ablation completed
 
 Base HEAD0186271. User questioned circular plane-derived constraints; prioritize
