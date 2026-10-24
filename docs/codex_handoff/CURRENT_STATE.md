@@ -1,5 +1,20 @@
 # LightRecon3D Current State
 
+## 2026-10-24 PushBoundary target audit and propagation operator
+
+Base HEAD5e2cd7f. User approved borrowing method and testing a small change.
+Read paper/official preprocessing: semantic k4 boundary; boundary direction zero.
+Added evaluation-only instance-target audit (global vs same-plane nearest
+boundary) and differentiable direction-weighted propagation operator; NOT yet
+integrated/trained. FullDEV1361282 points: wrong-near-boundary eligible52825,
+5040(9.54%) differ>30deg; no proof same-plane target improves reconstruction.
+00190:65592 wrong points missing matched candidate; fixed pool cannot repair.
+Six tests pass, audit exit0; target diagnostic figure generated/viewed. Sources,
+caveats/commands in docs/research_practice/PUSHBOUNDARY_TARGET_AUDIT_20261024.md.
+Output local_outputs/pushboundary_target_audit_20261024_v1. No XYZ/ID changes.
+Next same-target/same-capacity shared vs candidate-conditioned direction pilot,
+plus no-direction baseline; change target definition separately, no GT inference.
+
 ## 2026-10-24 finite 3D support diagnostic completed
 
 Base HEADd4bc48b. User says learned RGB boundaries look accurate; inspected3D
