@@ -1,5 +1,46 @@
 # LightRecon3D Current State
 
+## 2026-10-24 context audit and gate-supervision trial completed
+
+Base HEAD05df388, same scoped branch. Continued interrupted 2026-10-23 run;
+completion.json/checkpoints/predictions verified, did NOT repeat context training.
+Old process session expired; original context exit code is no longer retrievable.
+See docs/research_practice/LINE_SUPPORT_CONTEXT_PERMISSION_20261024.md.
+Added spatial_context_data.py, TRAIN damage diagnosis, permission auxiliary
+loss/runner/tests; extended existing runner with context-margins. Defaults
+preserve old64 behavior. Original241 deletions/7 modifications left alone.
+
+Context: MC/M3 x64/128 input, same64 supervised/output centers and batch sequence,
+TRAIN4,200steps each. Zero halo padding outside image; explicit registry unchanged.
+Larger input also changes GroupNorm/padding behavior; NOT equal FLOPs.
+Historical DEV total/boundary/damage:
+MC64 254366/62610/11209; M364 206658/51831/17418;
+MC128 258927/62045/12994; M3128 196868/51886/16394.
+128 improves total/damage but NOT aggregate boundary. Scene199 boundary improves
+12151->11441 while190 worsens39680->40445. No universal improvement claim.
+Output local_outputs/spatial_context_train4_dev2_20261023_v1.
+Train86.061s,allocated955.84MiB,reserved1276MiB; excludes prep/eval/CUDA overhead.
+
+TRAIN diagnosis: M364 damages49592, of which41447 agree with predicted line side,
+42124 lie in proposed training centers,23589 are>20px from GT boundary. Line-side
+agreement is insufficient, but these associations do not prove causal attribution.
+Second pre-specified modification: M3P adds0.1 balanced candidate gate BCE only;
+same64 model/inputs/batches/200steps, no sweep or inference GT. DEV M3P
+212455/53355/18645 vs matched M3206657/51831/17418: REJECT, no mainline update.
+Output local_outputs/spatial_permission_train4_dev2_20261024_v1; train12.174s.
+
+Both run audits exactly reproduce full DEV metrics and230 TRAIN line records.
+TRAIN diagnosis recomputes all TRAIN metrics. Final29 unit tests+2 projection
+checks and8-file syntax checks pass.12 comparison figures+1 projection figure
+generated; viewed4 DEV comparisons and projection diagnostic. Original XYZ,
+row order,unassigned labels and source hashes preserved. Two targeted tweaks
+(context,auxiliary gate loss) now closed; no further loss-weight/context sweep.
+Next proposal: explicitly normalized keep-versus-reassign decision, not calling
+a multiplier on signed logits an edit probability. Needs a separately frozen
+mechanism experiment with matched no-line control; NOT implemented or proven.
+Independent split,nearest-work comparison,multiseed and17-scene current-model
+comparison remain pending. No claim of completed goal or Plane-DUSt3R parity.
+
 ## 2026-10-23 active-capacity and scalar controls completed
 
 Base HEAD a2f562b on codex/line-support-refinement-20261023. Scoped continuation;
