@@ -16,7 +16,9 @@ def main():
     out.mkdir(parents=True,exist_ok=False)
     records=[];panels=[];font=ImageFont.truetype('C:/Windows/Fonts/arial.ttf',18)
     for name in ['final_016_scene_00199','final_008_scene_00190']:
-        r=read_json(run/f'{name}_prediction_inputs.json');assert sha(r['source'])==r['source_sha256']
+        receipt=run/f'{name}_prediction_inputs.json'
+        if not receipt.exists():receipt=run/f'{name}_inputs.json'
+        r=read_json(receipt);assert sha(r['source'])==r['source_sha256']
         v=r['views'][0];t=v['transform'];p=np.asarray(v['projection_from_predicted_xyz'])
         with np.load(r['source']) as z:
             ix=np.flatnonzero(z['source_views']==t['alignment_view_index'])

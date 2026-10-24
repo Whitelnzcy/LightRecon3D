@@ -9,7 +9,9 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--run',required=True);args=ap.parse_args();run=Path(args.run)
     report=read_json(run/'interventions.json');gtroot=Path('local_outputs/dense_boundary_competition_20260918_v1');checked={}
     for name,row in report.items():
-        r=read_json(run/f'{name}_prediction_inputs.json');assert sha(r['source'])==r['source_sha256']
+        receipt=run/f'{name}_prediction_inputs.json'
+        if not receipt.exists():receipt=run/f'{name}_inputs.json'
+        r=read_json(receipt);assert sha(r['source'])==r['source_sha256']
         with np.load(r['source']) as z:original=z['point_plane_ids'];ids=z['plane_ids'];xy=z['pixel_xy'];views=z['source_views']
         with np.load(gtroot/f'{name}_eval_only.npz') as z:
             truth=z['raw_dense_gt'];dist=z['boundary_distance'];np.testing.assert_array_equal(z['pixel_xy'],xy);np.testing.assert_array_equal(z['view_indices'],views)

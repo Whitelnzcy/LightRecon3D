@@ -21,7 +21,9 @@ class SpatialDirectionRefiner(SpatialSupportRefiner):
         self.line_direction=nn.Sequential(block(22 if include_xyz else 19,16),nn.Conv2d(16,3,1),nn.Tanh())
         self.line_fuse=block(48,24)
 
-    def forward(self,common,candidates,lines,return_gate=False,return_details=False):
+    def forward(self,common,candidates,lines,return_gate=False,return_details=False,
+                propagation='default',direction_override=None):
+        if propagation not in ['default','none']:raise ValueError('Unknown propagation mode')
         if self.arm not in ['D0','DS','DC']:raise ValueError('Unknown direction arm')
         b,k,_,h,w=candidates.shape
         fine=self.image(common);context=F.interpolate(self.context(F.avg_pool2d(fine,2)),size=(h,w),mode='bilinear',align_corners=False)
@@ -31,7 +33,9 @@ class SpatialDirectionRefiner(SpatialSupportRefiner):
         direction_inputs=[shared,condition,lines[:,:,4:5]]
         if self.include_xyz:direction_inputs.append(lines[:,:,1:4])
         d=self.line_direction(torch.cat(direction_inputs,2).reshape(b*k,22 if self.include_xyz else 19,h,w)).reshape(b,k,3,h,w)
-        unit=F.normalize(d,dim=2);xyz=lines[0:,:,1:4];observed=lines[:,:,0];prob=lines[:,:,4]
+        if direction_override is not None:
+            if direction_override.shape!=d.shape:raise ValueError('Direction override shape mismatch')
+        unit=F.normalize(d if direction_override is None else direction_override,dim=2);xyz=lines[0:,:,1:4];observed=lines[:,:,0];prob=lines[:,:,4]
         total=torch.zeros_like(features);denom=features.new_zeros((b*k,1,h,w))
         # Center included: nonzero weight whenever the center is observed.
         for dy,dx in [(0,0),(0,1),(0,-1),(1,0),(-1,0)]:
@@ -42,6 +46,7 @@ class SpatialDirectionRefiner(SpatialSupportRefiner):
             weight=(weight*observed*neighbor(observed,dy,dx)).reshape(b*k,1,h,w)
             total=total+weight*neighbor(features,dy,dx);denom=denom+weight
         propagated=total/denom.clamp_min(1e-12)
+        if propagation=='none':propagated=features
         logits=self.score(self.line_fuse(torch.cat([features,propagated],1))).reshape(b,k,h,w)+2*candidates[:,:,0]
         if return_details:return logits,d
         return (logits,torch.zeros_like(logits)) if return_gate else logits

@@ -1,5 +1,20 @@
 # LightRecon3D Current State
 
+## 2026-10-24 matched direction propagation control completed
+
+Base HEAD268c5e3. User explicitly fixed direction-propagation research line.
+TRAIN4,DEV2,seed42,200steps,identical initialization/batches; none/spatial/learned/
+oracle-trained direction. Total/boundary/damage: none270929/63883/4293,
+spatial299439/63847/2023, learned263904/62676/5392, oracle301963/63729/1554.
+Learned saves1207 boundary errors vsnone but adds1099 damages. Oracle is GT-only
+diagnostic, not deployable/upper bound. No mainline replacement or robust claim.
+12 direction tests pass; independent audit verifies all8 scene/arm metrics and
+source mappings. Both figures inspected; fragmented/ragged boundaries remain.
+Global XYZ projection audit generated. Outputs direction_control_20261024_v1
+under local_outputs; details docs/research_practice/DIRECTION_CONTROL_20261024.md.
+Next within SAME line: feature/logit sensitivity diagnostics, then one-factor
+neighborhood/bias ablation; not yet executed. Preserve all historical outputs.
+
 ## 2026-10-24 direction memorization and frozen intervention completed
 
 Base HEAD70c9639. Four TRAIN patches, 200 direction-only updates on copied DS/DC
