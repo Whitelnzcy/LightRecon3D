@@ -1,5 +1,20 @@
 # LightRecon3D Current State
 
+## 2026-10-25 learned inward supervision completed and audited
+
+Implementation checkpoint e0df056. Same direction propagation route. Inward TRAIN
+targets,none/learned,800steps,seed42,grid1,bias2,agreementOFF,strict deterministic.
+Full DEV total/boundary/damage: inward-none227704/55735/8768;
+inward-learned227458/56066/8940. Prior zero-none229797/55926/12620;
+zero-learned237959/58456/19762. Target change helps learned vsold, but propagation
+still adds331 boundary errors vsmatched inward-none. No mainline promotion.
+19tests pass; full audit4results passes, including pre-GT prediction equality.
+Four-way figures,error maps,global XYZ projection generated; figures inspected.
+Run local_outputs/direction_inward_learned_20261025_s42. All training stopped
+normally; no active job. Details docs/research_practice/DIRECTION_INWARD_LEARNED_20261025.md.
+Next boundary-vs-interior direction quality and second-seed paired replication;
+not executed. Preserve fixed research direction and historical artifacts.
+
 ## 2026-10-25 inward oracle audited; learned supervision control active
 
 Base HEADb8422c9. Quota interruption left boundary-target work local; user resumed.
