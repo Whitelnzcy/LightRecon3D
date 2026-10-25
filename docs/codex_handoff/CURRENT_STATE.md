@@ -1,5 +1,20 @@
 # LightRecon3D Current State
 
+## 2026-10-25 interrupted training round closed and audited
+
+Implementation HEAD75e1922. Both pending runs completed; resumed audits now PASS.
+inward3200 seed42 none/learned total219621/219772, boundary54080/53476,
+damage22799/17864. learned vs800 improves boundary2590, but vsnone3200 adds151
+total errors; scene199 boundary worsens522,scene190 improves1126. No promotion.
+grid_inward800 seed42 none/learned total239161/223889,boundary58596/56768,
+damage4674/12494. Grid learned boundary worse702 than old inward learned800.
+Both full-domain/pre-GT/input audits pass, error/projection figures complete.
+Direction-quality diagnostics complete; different target definitions explicitly
+recorded. 27tests pass; paired summary PNG inspected. No unfinished training from
+this round; no reruns or overwritten checkpoints. Details and paths:
+docs/research_practice/DIRECTION_TRAINING_CLOSEOUT_20261025.md.
+Next planned (not executed): seed43 long-budget replication before stability claim.
+
 ## 2026-10-25 registered-grid target control active
 
 Base HEADb85e34f. Actual TRAIN0 view1 diagnostic shows 3D-kNN GT boundary cloud
