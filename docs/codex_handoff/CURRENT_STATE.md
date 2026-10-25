@@ -1,5 +1,19 @@
 # LightRecon3D Current State
 
+## 2026-10-25 balanced loss audited; fixed longer training active
+
+Base HEADf8ad9ca. Balanced800 paired none/learned: seed42 total239463/231373,
+boundary57971/56817,damage7693/11010; seed43 total232208/227359,
+boundary59417/58058,damage12365/23919. Both independently audited, projected
+globalXYZ checked, error figures generated. Balanced does NOT beat uniform
+learned; no promotion. Target topology audit completed TRAIN4/DEV2: true inward
+directions usually rank same-plane neighbors above cross-plane, but kNN boundary
+and image boundary disagree in some scenes; details DIRECTION_BALANCED_20261025.md.
+24direction tests pass. Fixed uniform inward3200steps paired none/learned seed42
+RUNNING local_outputs/direction_inward_long_20261025_s42. Task direction_long_20261025.md.
+No direction switch, no GT in inference, no XYZ changes. Next audit longer run,
+compare800 prefix, full metrics and boundary direction quality; then seed43.
+
 ## 2026-10-25 seed43 replicated; boundary-balanced loss trial active
 
 Base HEAD113a94a. Same fixed direction propagation route. Seed43 zero-none
