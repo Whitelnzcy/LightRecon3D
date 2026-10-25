@@ -10,7 +10,7 @@ from threadpoolctl import threadpool_limits
 from models.spatial_direction_refiner import SpatialDirectionRefiner
 from models.spatial_support_refiner import ownership_loss
 from spatial_support_data import load_prediction_scene,attach_supervision
-from spatial_direction_data import DirectionInputs,attach_direction_supervision,direction_batch,direction_loss
+from spatial_direction_data import DirectionInputs,attach_direction_supervision,direction_batch,direction_loss,boundary_direction_batch,balanced_direction_loss
 from spatial_context_data import context_batch
 from train_spatial_line_ablation import predict,draw_comparison
 from diagnose_direction_mechanism import intervened
@@ -28,7 +28,9 @@ def main():
     ap.add_argument('--experiment',choices=['control','reach','replay','bias','budget'],default='control');ap.add_argument('--seed',type=int,default=42)
     ap.add_argument('--deterministic',action='store_true')
     ap.add_argument('--control-arms',nargs='+',choices=['none','spatial','learned','oracle','agreement','oracle_agreement'],default=['none','spatial','learned','oracle'])
-    ap.add_argument('--boundary-target',choices=['zero','inward'],default='zero');args=ap.parse_args()
+    ap.add_argument('--boundary-target',choices=['zero','inward'],default='zero')
+    ap.add_argument('--direction-balance',choices=['uniform','boundary'],default='uniform');args=ap.parse_args()
+    if args.direction_balance=='boundary' and args.boundary_target!='inward':raise ValueError('Boundary balance protocol requires inward targets')
     if args.deterministic:
         os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
         torch.use_deterministic_algorithms(True)
@@ -76,6 +78,8 @@ def main():
         protocol['scope']='TRAIN4 historicalDEV2, one seed; NO GT in prediction; GT used for TRAIN supervision and evaluation only'
     protocol['direction_agreement']={a:m.direction_agreement for a,m in models.items()}
     protocol['boundary_target']=args.boundary_target
+    protocol['direction_balance']=args.direction_balance
+    if args.direction_balance=='boundary':protocol['loss']='same ownership + .3 * equal-mean boundary/interior direction MSE; absent strata omitted'
     protocol['target_summaries']={s['name']:s['direction_supervision_summary'] for s in scenes}
     if any(m.direction_agreement for m in models.values()):protocol['agreement_rule']='Multiply propagation weight by (1+dot(unit_direction_i,unit_direction_j))/2; zero directions neutral; no extra parameters. Other settings unchanged.'
     if args.experiment=='replay':protocol['fixed']='Two identical reach1 arms; assert bitwise equal parameters after EVERY update. Not an efficacy experiment.'
@@ -92,7 +96,9 @@ def main():
             if args.experiment=='budget' and a.endswith('200') and step>=200:continue
             m.train();opts[a].zero_grad();kw={}
             if a.startswith('oracle'):kw['direction_override']=t[:,None].expand(-1,k.shape[1],-1,-1,-1).detach()
-            logits,d=m(c,k,e,return_details=True,**kw);seg=ownership_loss(logits,y,o);aux=direction_loss(d,t,y);loss=seg+.3*aux
+            logits,d=m(c,k,e,return_details=True,**kw);seg=ownership_loss(logits,y,o)
+            aux=balanced_direction_loss(d,t,y,boundary_direction_batch(v,boxes,'cuda')) if args.direction_balance=='boundary' else direction_loss(d,t,y)
+            loss=seg+.3*aux
             if not torch.isfinite(loss):raise ValueError('Nonfinite loss')
             loss.backward();row[a]=dict(ownership=float(seg.detach()),direction=float(aux.detach()),
                 fusion_grad=sum(float(p.grad.norm()) for p in m.line_fuse.parameters() if p.grad is not None))

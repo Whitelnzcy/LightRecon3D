@@ -54,10 +54,13 @@ def attach_direction_supervision(s,boundary_mode='zero'):
     filled=0
     if boundary_mode=='inward':target,filled=extend_boundary_directions(points,labels,boundary,target)
     full=np.zeros((len(valid),3),np.float32);full[valid]=target
+    full_boundary=np.zeros(len(valid),bool);full_boundary[valid]=boundary
     for v in s['views']:
         registry=v['registry'];observed=registry>=0
         grid=np.zeros((3,*registry.shape),np.float32);grid[:,observed]=full[registry[observed]].T
         v['direction_target']=grid
+        mask=np.zeros(registry.shape,bool);mask[observed]=full_boundary[registry[observed]]
+        v['direction_boundary']=mask
     s['direction_supervision_summary']=dict(valid=int(valid.sum()),boundary=int(boundary.sum()),
         scope='GT supervision/explicit oracle diagnostic only: k4 boundary; global nearest boundary for interior',boundary_mode=boundary_mode,boundary_filled=filled)
 
@@ -72,3 +75,17 @@ def direction_loss(prediction,target,ownership):
     if not valid.any():return prediction.sum()*0
     selected=prediction.gather(1,ownership.clamp_min(0)[:,None,None].expand(-1,1,3,-1,-1)).squeeze(1)
     return (selected-target).square().mean(1)[valid].mean()
+
+
+def boundary_direction_batch(v,boxes,device):
+    return torch.from_numpy(np.stack([v['direction_boundary'][y0:y1,x0:x1] for x0,y0,x1,y1 in boxes])).to(device)
+
+
+def balanced_direction_loss(prediction,target,ownership,boundary):
+    """Equal means for present boundary/interior strata; GT TRAIN mask only."""
+    valid=ownership>=0
+    if not valid.any():return prediction.sum()*0
+    selected=prediction.gather(1,ownership.clamp_min(0)[:,None,None].expand(-1,1,3,-1,-1)).squeeze(1)
+    error=(selected-target).square().mean(1)
+    groups=[valid&boundary,valid&~boundary]
+    return torch.stack([error[g].mean() for g in groups if g.any()]).mean()

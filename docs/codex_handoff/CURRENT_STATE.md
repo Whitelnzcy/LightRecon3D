@@ -1,5 +1,20 @@
 # LightRecon3D Current State
 
+## 2026-10-25 seed43 replicated; boundary-balanced loss trial active
+
+Base HEAD113a94a. Same fixed direction propagation route. Seed43 zero-none
+227819/56999/18583,total/boundary/damage; zero-learned226239/59132/14156;
+inward-none224366/55922/16699; inward-learned224373/56758/17965.
+Inward target boundary benefit repeats, but damage benefit does NOT; propagation
+still worse than matched inward-none. Both seed43 runs independently audited.
+Represented/editable boundary direction median TRAIN0=88.42deg, DEV19980.60,
+DEV19089.25 after inward training (fixed GT-free overlapping tile sample).
+New single-factor equal-mean boundary/interior direction loss, coefficient.3,
+same everything else, none/learned800steps seed42 RUNNING:
+local_outputs/direction_balanced_20261025_s42. 22direction tests passed.
+Details docs/research_practice/DIRECTION_REPLICATION_20261025.md. No mainline
+promotion; no GT in prediction. Next audit balanced result and boundary quality.
+
 ## 2026-10-25 learned inward supervision completed and audited
 
 Implementation checkpoint e0df056. Same direction propagation route. Inward TRAIN
