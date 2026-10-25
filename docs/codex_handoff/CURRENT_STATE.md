@@ -1,5 +1,18 @@
 # LightRecon3D Current State
 
+## 2026-10-25 unit-direction control closed; negative result
+
+Base HEAD8d4f718. Both unit width2 seeds3200steps complete and independently
+audited. seed42 none/learned total217371/216559,boundary55530/56222;
+seed43 total215534/224540,boundary51275/54943. Unit learned adds3679/3600
+boundary errors vsraw learned. No promotion; raw default unchanged.
+Direction medians improve in only1/4 DEV seed/scene cases; norms larger but
+directions not consistently better. FullTRAIN4 fit complete for both; unit42
+learned worse than raw42 on TRAIN boundary too. Figures/projection diagnostics
+complete. Summary direction_unit_comparison_20261025_v2/paired_controls.png
+inspected. Details docs/research_practice/DIRECTION_UNIT_LOSS_20261025.md.
+No unfinished job from this round; no new experimental direction launched.
+
 ## 2026-10-25 unit-direction loss two-seed control running
 
 Base HEADd4abeec. Capacity seed43 now COMPLETE/audited: width1 none/learned

@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from audit_line_support_refinement import read_json,write_json,sha
 
 
@@ -16,9 +17,9 @@ def main():
         assert completion['status']=='complete' and set(completion['aggregate'])=={'none','learned'}
         assert len(audit)==2 and all(r['source_and_indices_verified'] for r in audit.values())
         rows.append(dict(run=str(run),seed=protocol['seed'],steps=protocol['steps'],boundary_target=protocol['boundary_target'],
-            balance=protocol.get('direction_balance','uniform'),aggregate=completion['aggregate'],completion_sha256=sha(run/'completion.json')))
+            balance=protocol.get('direction_balance','uniform'),width=protocol.get('width',1),normalization=protocol.get('direction_normalization','raw'),aggregate=completion['aggregate'],completion_sha256=sha(run/'completion.json')))
     fig,axes=plt.subplots(1,3,figsize=(15,max(4,len(rows)*.62)),sharey=True)
-    labels=[f'{r["boundary_target"]} / {r["balance"]}\n{r["steps"]} steps, seed {r["seed"]}' for r in rows]
+    labels=[f'w{r["width"]} / {r["boundary_target"]} / {r["normalization"]}\n{r["balance"]}, {r["steps"]} steps, seed {r["seed"]}' for r in rows]
     for ax,key,title in zip(axes,['after_errors','boundary_after','damaged'],['Total wrong points','Boundary wrong points (<=5px)','Newly damaged correct points']):
         for y,r in enumerate(rows):
             a,b=[r['aggregate'][arm][key] for arm in ['none','learned']]
@@ -27,6 +28,7 @@ def main():
             ax.scatter(b,y,color='#2375bb',s=40,label='Learned propagation' if y==0 else None,zorder=3)
             ax.annotate(f'{b-a:+,}',(max(a,b),y),xytext=(8,-4),textcoords='offset points',fontsize=9)
         ax.set_title(title+' | lower is better',fontsize=11);ax.grid(axis='x',alpha=.2)
+        ax.xaxis.set_major_locator(MaxNLocator(4))
         ax.spines[['top','right','left']].set_visible(False);ax.tick_params(axis='y',length=0);ax.margins(x=.35)
     axes[0].set_yticks(np.arange(len(rows)),labels,fontsize=9);axes[0].invert_yaxis();axes[0].legend(loc='best',fontsize=8)
     fig.suptitle('Fixed TRAIN4 / historical DEV2 | paired controls, not independent test results',fontsize=13)
