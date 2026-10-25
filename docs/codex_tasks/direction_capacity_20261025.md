@@ -9,3 +9,9 @@ identical tensors; within each width the two arms share identical initialization
 and batches. Do not claim independent-test or stability from a single seed.
 Checkpoint schema4 explicitly records width; old checkpoints default width1.
 Audit metrics/coordinates, direction quality and training fit before promotion.
+
+Follow-up authorized: replicate full width1/width2 x none/learned at seed43,
+same3200 steps and all other settings. Outputs direction_inward_long_20261025_s43
+and direction_capacity_w2_20261025_s43. No loss tuning or target changes.
+Also evaluate seed42 TRAIN4 fit and boundary-specific direction quality to avoid
+equating better ownership classification with better direction prediction.

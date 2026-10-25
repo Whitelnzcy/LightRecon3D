@@ -1,5 +1,19 @@
 # LightRecon3D Current State
 
+## 2026-10-25 capacity seed42 diagnosed; seed43 replication running
+
+Base HEADbe0b708. Width2 seed42 complete/audited: none/learned total220057/211331,
+boundary53250/52543,damage14809/19475. Compared to width1 learned: total-8441,
+boundary-933,damage+1611. Boundary direction sampled DEV medians worsen with
+width2 (19978.47->84.58deg,19080.05->81.92deg); do not claim directions learned
+better. Figures/projection diagnostic generated. User authorized replication:
+seed43 width1 and width2 BOTH3200steps none/learned RUNNING, unchanged loss.
+Outputs direction_inward_long_20261025_s43 and direction_capacity_w2_20261025_s43.
+TRAIN-fit evaluator now reads checkpoint width; seed42 two-width TRAIN4 fit
+running. Details docs/research_practice/DIRECTION_CAPACITY_REPLICATION_20261025.md.
+Next full audits/figures/direction checks for seed43 and eight-arm comparison.
+No promotion, no direction change, no XYZ updates or GT inference.
+
 ## 2026-10-25 capacity width2 training launched
 
 Base HEAD262a202. User requested capacity test and loss provenance explanation.

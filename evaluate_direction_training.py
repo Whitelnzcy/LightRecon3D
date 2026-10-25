@@ -23,7 +23,7 @@ def main():
         checkpoint=torch.load(run/f'{a}.pt',map_location='cpu',weights_only=False)
         cls=NoPropagation if a.startswith('none') else SpatialDirectionRefiner
         if a.startswith('oracle'):raise ValueError('This TRAIN-fit evaluator excludes oracle arms')
-        m=cls('DS',grid_step=checkpoint.get('grid_step',1),support_bias=checkpoint.get('support_bias',2.),direction_agreement=checkpoint.get('direction_agreement',False)).cuda().eval()
+        m=cls('DS',grid_step=checkpoint.get('grid_step',1),support_bias=checkpoint.get('support_bias',2.),direction_agreement=checkpoint.get('direction_agreement',False),width=checkpoint.get('width',1)).cuda().eval()
         m.load_state_dict(checkpoint['model']);models[a]=m
     roots=[Path('local_outputs/gct3/items')/f'train_{i:03d}_scene_{i:05d}' for i in range(3)]+[Path('local_outputs/gct4/items/train_003_scene_00003')]
     provider=DirectionInputs(out);report={}
