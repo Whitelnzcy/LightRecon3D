@@ -44,13 +44,15 @@ Independent DEV audit recomputed all8 scene/arm results and verified mappings.
 change figures generated using saved predictions, no visual point displacement.
 Original sources and previous results preserved. No mainline replacement.
 
-## Active next diagnostic
+## Oracle800 diagnostic completed
 
 `local_outputs/direction_oracle800_20261024_s42`: matched800step oracle-direction
 training/evaluation, seed42, deterministic, same architecture/loss/bias/grid.
 GT direction broadcast to ALL candidates. Diagnostic only, not deployable or a
-mathematical upper bound. Running at this progress checkpoint. It separates weak
-direction prediction from limited utility of this current propagation operator.
+mathematical upper bound. Completed: total224727,boundary57896,damage14991.
+Independent audit passed both scenes. Better total error than none800, but1970
+MORE boundary errors and2371 more damaged points. Thus an accurate direction
+input alone does not establish boundary benefit for the current operator.
 
 Commands use E:/anaconda/envs/ai/python.exe:
 `train_direction_control.py --output local_outputs/direction_budget_20261024_s42 --experiment budget --seed 42 --steps 800 --deterministic`

@@ -32,17 +32,34 @@ class DirectionInputs:
         return receipt
 
 
-def attach_direction_supervision(s):
+def extend_boundary_directions(points,labels,boundary,target):
+    """GT supervision only: boundary points point toward same-instance interior.
+
+    Retain all nonboundary targets. Missing same-instance interiors stay zero.
+    """
+    result=target.copy();filled=0
+    for pid in np.unique(labels):
+        selected=boundary&(labels==pid);interior=~boundary&(labels==pid)
+        if not selected.any() or not interior.any():continue
+        away,ok=directions(points[selected],points[interior])
+        result[selected]=-away;filled+=int(ok.sum())
+    return result,filled
+
+
+def attach_direction_supervision(s,boundary_mode='zero'):
+    if boundary_mode not in ['zero','inward']:raise ValueError('Unknown boundary direction target')
     valid=s['truth']>=0;points=s['old']['points'][valid];labels=s['truth'][valid]
     boundary=boundary_targets(points,labels)
     target,ok=directions(points,points[boundary]);target[boundary]=0
+    filled=0
+    if boundary_mode=='inward':target,filled=extend_boundary_directions(points,labels,boundary,target)
     full=np.zeros((len(valid),3),np.float32);full[valid]=target
     for v in s['views']:
         registry=v['registry'];observed=registry>=0
         grid=np.zeros((3,*registry.shape),np.float32);grid[:,observed]=full[registry[observed]].T
         v['direction_target']=grid
     s['direction_supervision_summary']=dict(valid=int(valid.sum()),boundary=int(boundary.sum()),
-        scope='TRAIN only: k4 GT instance transition in predicted globalXYZ; global nearest boundary, zero at boundary')
+        scope='GT supervision/explicit oracle diagnostic only: k4 boundary; global nearest boundary for interior',boundary_mode=boundary_mode,boundary_filled=filled)
 
 
 def direction_batch(v,boxes,device):

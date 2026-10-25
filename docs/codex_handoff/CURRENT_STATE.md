@@ -1,5 +1,21 @@
 # LightRecon3D Current State
 
+## 2026-10-25 inward oracle audited; learned supervision control active
+
+Base HEADb8422c9. Quota interruption left boundary-target work local; user resumed.
+Oracle800 zero target224727/57896/14991 total/boundary/damage; agreement oracle
+230721/56994/17785. Edge audit:90.75%/88.40% cross-plane grid edges have a zero
+endpoint target. Inward completion only at GT boundary preserves interior targets;
+cross-edge raw weights0.791/0.773 ->0.424/0.466, same-plane~0.927/0.931.
+Inward oracle800 complete232596/56312/10421, independent audit passed today.
+Not deployable, not superior overall to no-propagation800. 19direction tests pass.
+New paired none/learned inward TRAIN supervision,800steps,seed42,strict deterministic
+RUNNING: local_outputs/direction_inward_learned_20261025_s42. No GT in prediction.
+Compare with saved zero-target none800/learned800, same inputs/budget/candidates.
+Audit now checks ordinary predictions exactly match pre-GT saved arrays. All prior
+outputs preserved; no Stage2/3/XYZ edits. Details DIRECTION_BOUNDARY_ZERO_20261024.md
+under docs/research_practice; task direction_inward_learned_20261025.md.
+
 ## 2026-10-24 deterministic bias and budget trials completed; oracle800 active
 
 Base HEAD6b0bcc3. Fixed direction-propagation line. Bias0/1/2 seed42 and43

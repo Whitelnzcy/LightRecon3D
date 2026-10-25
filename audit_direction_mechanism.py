@@ -18,6 +18,12 @@ def main():
         mapping=read_json(gtroot/'report.json')[name]['fixed_identity_map'];before=convert(original,mapping)
         with np.load(run/f'{name}_GT_DIAGNOSTIC.npz') as z:
             np.testing.assert_array_equal(z['original_ids'],original);np.testing.assert_array_equal(z['source_indices'],np.arange(len(original)))
+            prediction_only=run/f'{name}_before_GT.npz'
+            if prediction_only.exists():
+                with np.load(prediction_only) as saved:
+                    for key in row:
+                        if not key.startswith('oracle'):
+                            np.testing.assert_array_equal(saved[key],z[key])
             for key,value in row.items():
                 p=z[key];assert metrics(before,convert(p,mapping),truth,dist)==value
                 np.testing.assert_array_equal(p[original<0],original[original<0]);assert np.isin(p[p>=0],ids).all()

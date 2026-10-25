@@ -14,12 +14,19 @@ def neighbor(t,dy,dx):
     return p[...,pad+dy:pad+dy+h,pad+dx:pad+dx+w]
 
 
+def direction_agreement_weight(unit,other):
+    agreement=(1+(unit*other).sum(2)).clamp(0,2)*.5
+    reliable=(torch.linalg.vector_norm(unit,dim=2)>.5)&(torch.linalg.vector_norm(other,dim=2)>.5)
+    return torch.where(reliable,agreement,torch.ones_like(agreement))
+
+
 class SpatialDirectionRefiner(SpatialSupportRefiner):
-    def __init__(self,arm='D0',include_xyz=True,grid_step=1,support_bias=2.):
+    def __init__(self,arm='D0',include_xyz=True,grid_step=1,support_bias=2.,direction_agreement=False):
         super().__init__();self.arm=arm
         if not isinstance(grid_step,int) or grid_step<1:raise ValueError('grid_step must be positive integer')
         self.grid_step=grid_step
         self.support_bias=float(support_bias)
+        self.direction_agreement=bool(direction_agreement)
         self.include_xyz=include_xyz
         self.line_direction=nn.Sequential(block(22 if include_xyz else 19,16),nn.Conv2d(16,3,1),nn.Tanh())
         self.line_fuse=block(48,24)
@@ -47,6 +54,9 @@ class SpatialDirectionRefiner(SpatialSupportRefiner):
             spatial=torch.exp(-torch.linalg.vector_norm(offset,dim=2)/.02)
             cosine=(F.normalize(offset,dim=2)*unit).sum(2)
             weight=spatial if self.arm=='D0' else (spatial+torch.exp(prob-1)*cosine).clamp_min(0)
+            if self.direction_agreement:
+                other=neighbor(unit,dy,dx)
+                weight=weight*direction_agreement_weight(unit,other)
             weight=(weight*observed*neighbor(observed,dy,dx)).reshape(b*k,1,h,w)
             total=total+weight*neighbor(features,dy,dx);denom=denom+weight
         propagated=total/denom.clamp_min(1e-12)

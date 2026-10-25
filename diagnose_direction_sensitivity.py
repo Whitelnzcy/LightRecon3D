@@ -18,7 +18,7 @@ def main():
     out=Path(args.output);out.mkdir(parents=True,exist_ok=False)
     threadpool_limits(1);torch.set_num_threads(4)
     checkpoint=Path(args.checkpoint);saved=torch.load(checkpoint,weights_only=False,map_location='cpu')
-    model=SpatialDirectionRefiner('DS',grid_step=saved.get('grid_step',1),support_bias=saved.get('support_bias',2.)).cuda().eval();model.load_state_dict(saved['model'])
+    model=SpatialDirectionRefiner('DS',grid_step=saved.get('grid_step',1),support_bias=saved.get('support_bias',2.),direction_agreement=saved.get('direction_agreement',False)).cuda().eval();model.load_state_dict(saved['model'])
     provider=DirectionInputs(out);results={};root=Path('local_outputs/dense_boundary_competition_20260918_v1')
     for name in ['final_016_scene_00199','final_008_scene_00190']:
         s=load_prediction_scene(Path('local_outputs/b12r2/items')/name);provider.attach(s)

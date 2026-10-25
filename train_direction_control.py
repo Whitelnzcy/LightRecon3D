@@ -27,7 +27,8 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--output',required=True);ap.add_argument('--steps',type=int,default=200)
     ap.add_argument('--experiment',choices=['control','reach','replay','bias','budget'],default='control');ap.add_argument('--seed',type=int,default=42)
     ap.add_argument('--deterministic',action='store_true')
-    ap.add_argument('--control-arms',nargs='+',choices=['none','spatial','learned','oracle'],default=['none','spatial','learned','oracle']);args=ap.parse_args()
+    ap.add_argument('--control-arms',nargs='+',choices=['none','spatial','learned','oracle','agreement','oracle_agreement'],default=['none','spatial','learned','oracle'])
+    ap.add_argument('--boundary-target',choices=['zero','inward'],default='zero');args=ap.parse_args()
     if args.deterministic:
         os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
         torch.use_deterministic_algorithms(True)
@@ -40,7 +41,7 @@ def main():
     for root in roots:
         s=load_prediction_scene(root);provider.attach(s)
         write_json(out/f'{s["name"]}_inputs.json',input_receipt(s))
-        attach_supervision(s);attach_direction_supervision(s);scenes.append(s);print('PREPARED',s['name'],flush=True)
+        attach_supervision(s);attach_direction_supervision(s,args.boundary_target);scenes.append(s);print('PREPARED',s['name'],flush=True)
     torch.manual_seed(args.seed);base=SpatialDirectionRefiner('DS').cuda()
     arms=args.control_arms if args.experiment=='control' else ['reach1','repeat1'] if args.experiment=='replay' else ['reach1','reach4','reach8']
     if args.experiment=='bias':arms=['bias0','bias1','bias2','bias2repeat']
@@ -51,6 +52,7 @@ def main():
     if args.experiment=='control':
         if 'none' in models:models['none'].__class__=NoPropagation
         if 'spatial' in models:models['spatial'].arm='D0'
+        for a,m in models.items():m.direction_agreement=a.endswith('agreement')
     elif args.experiment=='bias':
         for a,m in models.items():m.support_bias=float(a[4])
     elif args.experiment=='budget':
@@ -70,6 +72,12 @@ def main():
         fixed='Only grid step changes 1/4/8; four neighbors+center, same 3D radius.02, bias+2, shared direction, loss, initialization and batches',
         initialization='identical state_dict; grid step has no parameters',loss='same ownership+.3 directionMSE; no oracle override')
     protocol.update(deterministic=args.deterministic,experiment=args.experiment,torch_version=torch.__version__)
+    if not any(a.startswith('oracle') for a in arms):
+        protocol['scope']='TRAIN4 historicalDEV2, one seed; NO GT in prediction; GT used for TRAIN supervision and evaluation only'
+    protocol['direction_agreement']={a:m.direction_agreement for a,m in models.items()}
+    protocol['boundary_target']=args.boundary_target
+    protocol['target_summaries']={s['name']:s['direction_supervision_summary'] for s in scenes}
+    if any(m.direction_agreement for m in models.values()):protocol['agreement_rule']='Multiply propagation weight by (1+dot(unit_direction_i,unit_direction_j))/2; zero directions neutral; no extra parameters. Other settings unchanged.'
     if args.experiment=='replay':protocol['fixed']='Two identical reach1 arms; assert bitwise equal parameters after EVERY update. Not an efficacy experiment.'
     if args.experiment=='bias':protocol.update(fixed='Only output support bias0/1/2 changes; grid1/radius.02/loss/candidate inputs unchanged. bias2repeat asserts bitwise replay each step.',
         initialization='identical state_dict, different nonparameter output bias; candidate original-support input remains present')
@@ -83,7 +91,7 @@ def main():
         for a,m in models.items():
             if args.experiment=='budget' and a.endswith('200') and step>=200:continue
             m.train();opts[a].zero_grad();kw={}
-            if a=='oracle':kw['direction_override']=t[:,None].expand(-1,k.shape[1],-1,-1,-1).detach()
+            if a.startswith('oracle'):kw['direction_override']=t[:,None].expand(-1,k.shape[1],-1,-1,-1).detach()
             logits,d=m(c,k,e,return_details=True,**kw);seg=ownership_loss(logits,y,o);aux=direction_loss(d,t,y);loss=seg+.3*aux
             if not torch.isfinite(loss):raise ValueError('Nonfinite loss')
             loss.backward();row[a]=dict(ownership=float(seg.detach()),direction=float(aux.detach()),
@@ -100,20 +108,22 @@ def main():
                 for key,value in models[prefix+'200'].state_dict().items():
                     if not torch.equal(value,models[prefix+'800'].state_dict()[key]):raise AssertionError(f'Budget prefix diverged at step {step+1}: {key}')
         if step%25==0 or step+1==args.steps:history.append(row);write_json(out/'history.json',history);print('TRAIN',row,flush=True)
-    for a,m in models.items():m.eval();torch.save(dict(schema_version=2,model=m.state_dict(),protocol=protocol,arm=a,grid_step=m.grid_step,support_bias=m.support_bias),out/f'{a}.pt')
+    for a,m in models.items():m.eval();torch.save(dict(schema_version=3,model=m.state_dict(),protocol=protocol,arm=a,grid_step=m.grid_step,support_bias=m.support_bias,direction_agreement=m.direction_agreement),out/f'{a}.pt')
     del scenes,views,c,k,e,y,o,t
     report={};gtroot=Path('local_outputs/dense_boundary_competition_20260918_v1')
     for name in ['final_016_scene_00199','final_008_scene_00190']:
         s=load_prediction_scene(Path('local_outputs/b12r2/items')/name);provider.attach(s);write_json(out/f'{name}_inputs.json',input_receipt(s))
-        predictions={a:predict(m,s)[0] for a,m in models.items() if a!='oracle'}
+        predictions={a:predict(m,s)[0] for a,m in models.items() if not a.startswith('oracle')}
         if args.experiment=='replay':np.testing.assert_array_equal(predictions['reach1'],predictions['repeat1'])
         if args.experiment=='bias':np.testing.assert_array_equal(predictions['bias2'],predictions['bias2repeat'])
         np.savez_compressed(out/f'{name}_before_GT.npz',schema_version=1,**predictions)
         with np.load(gtroot/f'{name}_eval_only.npz') as z:
             np.testing.assert_array_equal(z['pixel_xy'],s['old']['pixel_xy']);np.testing.assert_array_equal(z['view_indices'],s['old']['source_views'])
             s.update(truth=z['raw_dense_gt'],distance=z['boundary_distance'],mapping=read_json(gtroot/'report.json')[name]['fixed_identity_map'])
-        if 'oracle' in models:
-            attach_direction_supervision(s);predictions['oracle']=intervened(models['oracle'],s,'oracle')
+        if any(a.startswith('oracle') for a in models):
+            attach_direction_supervision(s,args.boundary_target)
+            for a,m in models.items():
+                if a.startswith('oracle'):predictions[a]=intervened(m,s,'oracle')
         assert sha(s['source'])==s['source_sha256'];before=convert(s['old']['point_plane_ids'],s['mapping']);row={}
         for a,p in predictions.items():
             assert np.isin(p[p>=0],s['old']['plane_ids']).all()
@@ -122,7 +132,8 @@ def main():
         np.savez_compressed(out/f'{name}_GT_DIAGNOSTIC.npz',schema_version=1,source_indices=np.arange(len(before)),original_ids=s['old']['point_plane_ids'],**predictions)
         report[name]=row;write_json(out/'interventions.json',report)
         draw_comparison(s,predictions,out/'figures'/f'{name}.png',protocol['scope'],
-            'Same initialization/batches/budget. Oracle uses GT; diagnostic only.' if args.experiment=='control' else
+            ('Same initialization/batches/budget. Oracle uses GT; diagnostic only.' if any(a.startswith('oracle') for a in arms) else
+             'Same initialization/batches/budget. Predicted directions only; GT evaluation only. Target: '+args.boundary_target) if args.experiment=='control' else
             'Only support bias0/1/2 changes. Fixed grid1, XYZ, loss. bias2repeat exact replay.' if args.experiment=='bias' else
             'None vs learned direction at200/800 steps; same grid1,bias2,inputs. No GT in prediction.' if args.experiment=='budget' else
             'Only grid reach1/4/8 changes (replay uses identical grid1). No GT in prediction.')

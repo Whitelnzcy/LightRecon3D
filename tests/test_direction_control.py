@@ -1,6 +1,6 @@
 import unittest
 import torch
-from models.spatial_direction_refiner import SpatialDirectionRefiner,neighbor
+from models.spatial_direction_refiner import SpatialDirectionRefiner,neighbor,direction_agreement_weight
 from train_direction_control import NoPropagation
 
 
@@ -49,6 +49,21 @@ class ControlTests(unittest.TestCase):
         old=self.m(self.c,self.k,self.e)
         self.m.support_bias=0.
         torch.testing.assert_close(old-self.m(self.c,self.k,self.e),2*self.k[:,:,0])
+
+    def test_direction_agreement_geometry(self):
+        x=torch.tensor([1.,0.,0.]).reshape(1,1,3,1,1)
+        y=torch.tensor([0.,1.,0.]).reshape(1,1,3,1,1)
+        self.assertEqual(float(direction_agreement_weight(x,x)),1.)
+        self.assertEqual(float(direction_agreement_weight(x,-x)),0.)
+        self.assertEqual(float(direction_agreement_weight(x,y)),.5)
+        self.assertEqual(float(direction_agreement_weight(x,torch.zeros_like(x))),1.)
+
+    def test_constant_direction_agreement_matches_original(self):
+        direction=torch.zeros(1,2,3,8,8);direction[:,:,0]=1
+        a=self.m(self.c,self.k,self.e,direction_override=direction)
+        self.m.direction_agreement=True
+        b=self.m(self.c,self.k,self.e,direction_override=direction)
+        torch.testing.assert_close(a,b)
 
 
 if __name__=='__main__':unittest.main()
