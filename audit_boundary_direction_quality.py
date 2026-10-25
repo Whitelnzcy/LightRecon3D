@@ -23,7 +23,7 @@ def main():
     models={}
     for a,path in checkpoints.items():
         saved=torch.load(path,map_location='cpu',weights_only=False)
-        model=SpatialDirectionRefiner('DS',grid_step=saved.get('grid_step',1),support_bias=saved.get('support_bias',2.),direction_agreement=saved.get('direction_agreement',False)).cuda().eval()
+        model=SpatialDirectionRefiner('DS',grid_step=saved.get('grid_step',1),support_bias=saved.get('support_bias',2.),direction_agreement=saved.get('direction_agreement',False),width=saved.get('width',1)).cuda().eval()
         model.load_state_dict(saved['model']);models[a]=model
     roots=[Path('local_outputs/gct3/items/train_000_scene_00000')]+[Path('local_outputs/b12r2/items')/n for n in ['final_016_scene_00199','final_008_scene_00190']]
     provider=DirectionInputs(out);report={};gtroot=Path('local_outputs/dense_boundary_competition_20260918_v1')

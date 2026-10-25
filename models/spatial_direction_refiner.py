@@ -21,15 +21,23 @@ def direction_agreement_weight(unit,other):
 
 
 class SpatialDirectionRefiner(SpatialSupportRefiner):
-    def __init__(self,arm='D0',include_xyz=True,grid_step=1,support_bias=2.,direction_agreement=False):
+    def __init__(self,arm='D0',include_xyz=True,grid_step=1,support_bias=2.,direction_agreement=False,width=1):
         super().__init__();self.arm=arm
+        if width not in (1,2):raise ValueError('Supported capacity widths are 1 and 2')
+        self.width=width;self.shared_channels=16*width;self.feature_channels=24*width
+        if width!=1:
+            self.image=block(4,16*width);self.context=block(16*width,32*width)
+            self.decode=block(48*width,16*width);self.candidate=block(16*width+2,24*width)
+            self.score=nn.Conv2d(24*width,1,1)
+            nn.init.zeros_(self.score.weight);nn.init.zeros_(self.score.bias)
         if not isinstance(grid_step,int) or grid_step<1:raise ValueError('grid_step must be positive integer')
         self.grid_step=grid_step
         self.support_bias=float(support_bias)
         self.direction_agreement=bool(direction_agreement)
         self.include_xyz=include_xyz
-        self.line_direction=nn.Sequential(block(22 if include_xyz else 19,16),nn.Conv2d(16,3,1),nn.Tanh())
-        self.line_fuse=block(48,24)
+        self.direction_channels=self.shared_channels+(6 if include_xyz else 3)
+        self.line_direction=nn.Sequential(block(self.direction_channels,16*width),nn.Conv2d(16*width,3,1),nn.Tanh())
+        self.line_fuse=block(48*width,24*width)
 
     def forward(self,common,candidates,lines,return_gate=False,return_details=False,
                 propagation='default',direction_override=None):
@@ -38,11 +46,11 @@ class SpatialDirectionRefiner(SpatialSupportRefiner):
         b,k,_,h,w=candidates.shape
         fine=self.image(common);context=F.interpolate(self.context(F.avg_pool2d(fine,2)),size=(h,w),mode='bilinear',align_corners=False)
         shared=self.decode(torch.cat([fine,context],1))[:,None].expand(-1,k,-1,-1,-1)
-        features=self.candidate(torch.cat([shared,candidates],2).reshape(b*k,18,h,w))
+        features=self.candidate(torch.cat([shared,candidates],2).reshape(b*k,self.shared_channels+2,h,w))
         condition=candidates if self.arm=='DC' else candidates.mean(1,keepdim=True).expand_as(candidates)
         direction_inputs=[shared,condition,lines[:,:,4:5]]
         if self.include_xyz:direction_inputs.append(lines[:,:,1:4])
-        d=self.line_direction(torch.cat(direction_inputs,2).reshape(b*k,22 if self.include_xyz else 19,h,w)).reshape(b,k,3,h,w)
+        d=self.line_direction(torch.cat(direction_inputs,2).reshape(b*k,self.direction_channels,h,w)).reshape(b,k,3,h,w)
         if direction_override is not None:
             if direction_override.shape!=d.shape:raise ValueError('Direction override shape mismatch')
         unit=F.normalize(d if direction_override is None else direction_override,dim=2);xyz=lines[0:,:,1:4];observed=lines[:,:,0];prob=lines[:,:,4]

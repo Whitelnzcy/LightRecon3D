@@ -1,5 +1,18 @@
 # LightRecon3D Current State
 
+## 2026-10-25 capacity width2 training launched
+
+Base HEAD262a202. User requested capacity test and loss provenance explanation.
+Width2 hidden channels implemented; default1/old checkpoints preserved, schema4
+stores width. 29direction tests pass. Same inward uniform objective and data,
+seed42,3200steps,none/learned pair RUNNING direction_capacity_w2_20261025_s42.
+Width1 reference is audited direction_inward_long_20261025_s42. Do not mix loss
+changes into capacity test. Task direction_capacity_20261025.md, provenance
+docs/research_practice/DIRECTION_LOSS_CAPACITY_20261025.md. Paper MSE/.3 reference
+confirmed, but Dice/.5 and CE correct-point2 are our engineering choices; raw
+Tanh MSE vs paper-described unit directions is explicitly noted. No result yet.
+Next finish train, full audit, direction quality/training fit, figures and compare.
+
 ## 2026-10-25 interrupted training round closed and audited
 
 Implementation HEAD75e1922. Both pending runs completed; resumed audits now PASS.

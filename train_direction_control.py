@@ -27,6 +27,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--output',required=True);ap.add_argument('--steps',type=int,default=200)
     ap.add_argument('--experiment',choices=['control','reach','replay','bias','budget'],default='control');ap.add_argument('--seed',type=int,default=42)
     ap.add_argument('--deterministic',action='store_true')
+    ap.add_argument('--width',type=int,choices=[1,2],default=1)
     ap.add_argument('--control-arms',nargs='+',choices=['none','spatial','learned','oracle','agreement','oracle_agreement'],default=['none','spatial','learned','oracle'])
     ap.add_argument('--boundary-target',choices=['zero','inward','grid_inward'],default='zero')
     ap.add_argument('--direction-balance',choices=['uniform','boundary'],default='uniform');args=ap.parse_args()
@@ -44,7 +45,7 @@ def main():
         s=load_prediction_scene(root);provider.attach(s)
         write_json(out/f'{s["name"]}_inputs.json',input_receipt(s))
         attach_supervision(s);attach_direction_supervision(s,args.boundary_target);scenes.append(s);print('PREPARED',s['name'],flush=True)
-    torch.manual_seed(args.seed);base=SpatialDirectionRefiner('DS').cuda()
+    torch.manual_seed(args.seed);base=SpatialDirectionRefiner('DS',width=args.width).cuda()
     arms=args.control_arms if args.experiment=='control' else ['reach1','repeat1'] if args.experiment=='replay' else ['reach1','reach4','reach8']
     if args.experiment=='bias':arms=['bias0','bias1','bias2','bias2repeat']
     if args.experiment=='budget':
@@ -73,7 +74,7 @@ def main():
     if args.experiment!='control':protocol.update(scope='TRAIN4 historicalDEV2, one seed, NO GT in prediction',
         fixed='Only grid step changes 1/4/8; four neighbors+center, same 3D radius.02, bias+2, shared direction, loss, initialization and batches',
         initialization='identical state_dict; grid step has no parameters',loss='same ownership+.3 directionMSE; no oracle override')
-    protocol.update(deterministic=args.deterministic,experiment=args.experiment,torch_version=torch.__version__)
+    protocol.update(deterministic=args.deterministic,experiment=args.experiment,torch_version=torch.__version__,width=args.width,parameters=sum(p.numel() for p in base.parameters()))
     if not any(a.startswith('oracle') for a in arms):
         protocol['scope']='TRAIN4 historicalDEV2, one seed; NO GT in prediction; GT used for TRAIN supervision and evaluation only'
     protocol['direction_agreement']={a:m.direction_agreement for a,m in models.items()}
@@ -114,7 +115,7 @@ def main():
                 for key,value in models[prefix+'200'].state_dict().items():
                     if not torch.equal(value,models[prefix+'800'].state_dict()[key]):raise AssertionError(f'Budget prefix diverged at step {step+1}: {key}')
         if step%25==0 or step+1==args.steps:history.append(row);write_json(out/'history.json',history);print('TRAIN',row,flush=True)
-    for a,m in models.items():m.eval();torch.save(dict(schema_version=3,model=m.state_dict(),protocol=protocol,arm=a,grid_step=m.grid_step,support_bias=m.support_bias,direction_agreement=m.direction_agreement),out/f'{a}.pt')
+    for a,m in models.items():m.eval();torch.save(dict(schema_version=4,model=m.state_dict(),protocol=protocol,arm=a,grid_step=m.grid_step,support_bias=m.support_bias,direction_agreement=m.direction_agreement,width=m.width),out/f'{a}.pt')
     del scenes,views,c,k,e,y,o,t
     report={};gtroot=Path('local_outputs/dense_boundary_competition_20260918_v1')
     for name in ['final_016_scene_00199','final_008_scene_00190']:
