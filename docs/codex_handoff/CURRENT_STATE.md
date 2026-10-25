@@ -1,5 +1,19 @@
 # LightRecon3D Current State
 
+## 2026-10-25 registered-grid target control active
+
+Base HEADb85e34f. Actual TRAIN0 view1 diagnostic shows 3D-kNN GT boundary cloud
+at cabinet while per-view GT pixel transitions remain narrow. Figure inspected:
+local_outputs/direction_target_topology_20261025_v1/figures/train0_boundary_targets.png.
+New optional grid_inward TRAIN target changes ONLY boundary definition to
+registered valid-label four-neighbor transitions. Directions remain global3D,
+same nearest-anchor rule. All old modes/default preserved. 27direction tests pass.
+800step paired none/learned seed42 RUNNING direction_grid_inward_20261025_s42;
+uniform inward3200step seed42 also running. Long-run first32 common logged rows
+exactly match prior800step run (steps1..776); not a full-weight replay audit.
+Task direction_grid_target_20261025.md. No GT inference, no research route change.
+Next audit both results; no claimed benefit yet.
+
 ## 2026-10-25 balanced loss audited; fixed longer training active
 
 Base HEADf8ad9ca. Balanced800 paired none/learned: seed42 total239463/231373,

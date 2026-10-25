@@ -28,7 +28,7 @@ def main():
     ap.add_argument('--experiment',choices=['control','reach','replay','bias','budget'],default='control');ap.add_argument('--seed',type=int,default=42)
     ap.add_argument('--deterministic',action='store_true')
     ap.add_argument('--control-arms',nargs='+',choices=['none','spatial','learned','oracle','agreement','oracle_agreement'],default=['none','spatial','learned','oracle'])
-    ap.add_argument('--boundary-target',choices=['zero','inward'],default='zero')
+    ap.add_argument('--boundary-target',choices=['zero','inward','grid_inward'],default='zero')
     ap.add_argument('--direction-balance',choices=['uniform','boundary'],default='uniform');args=ap.parse_args()
     if args.direction_balance=='boundary' and args.boundary_target!='inward':raise ValueError('Boundary balance protocol requires inward targets')
     if args.deterministic:

@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from audit_line_support_refinement import read_json,sha,write_json
 from audit_pushboundary_targets import boundary_targets,directions
+from models.line_support_patches import valid_transitions
 
 
 class DirectionInputs:
@@ -46,13 +47,23 @@ def extend_boundary_directions(points,labels,boundary,target):
     return result,filled
 
 
+def registered_grid_boundaries(registries,labels):
+    """TRAIN/diagnostic only: differing valid labels on each registered 4-grid."""
+    result=np.zeros(len(labels),bool)
+    for registry in registries:
+        ok=registry>=0;grid=np.full(registry.shape,-1,int);grid[ok]=labels[registry[ok]]
+        mask=valid_transitions(grid);result[registry[ok]]=mask[ok]
+    return result
+
+
 def attach_direction_supervision(s,boundary_mode='zero'):
-    if boundary_mode not in ['zero','inward']:raise ValueError('Unknown boundary direction target')
+    if boundary_mode not in ['zero','inward','grid_inward']:raise ValueError('Unknown boundary direction target')
     valid=s['truth']>=0;points=s['old']['points'][valid];labels=s['truth'][valid]
-    boundary=boundary_targets(points,labels)
+    boundary=(registered_grid_boundaries([v['registry'] for v in s['views']],s['truth'])[valid]
+              if boundary_mode=='grid_inward' else boundary_targets(points,labels))
     target,ok=directions(points,points[boundary]);target[boundary]=0
     filled=0
-    if boundary_mode=='inward':target,filled=extend_boundary_directions(points,labels,boundary,target)
+    if boundary_mode in ['inward','grid_inward']:target,filled=extend_boundary_directions(points,labels,boundary,target)
     full=np.zeros((len(valid),3),np.float32);full[valid]=target
     full_boundary=np.zeros(len(valid),bool);full_boundary[valid]=boundary
     for v in s['views']:
@@ -62,7 +73,7 @@ def attach_direction_supervision(s,boundary_mode='zero'):
         mask=np.zeros(registry.shape,bool);mask[observed]=full_boundary[registry[observed]]
         v['direction_boundary']=mask
     s['direction_supervision_summary']=dict(valid=int(valid.sum()),boundary=int(boundary.sum()),
-        scope='GT supervision/explicit oracle diagnostic only: k4 boundary; global nearest boundary for interior',boundary_mode=boundary_mode,boundary_filled=filled)
+        scope='GT supervision/explicit oracle diagnostic only; global nearest boundary for interior',boundary_definition='registered 2D four-neighbor GT label transitions' if boundary_mode=='grid_inward' else 'global 3D k4 GT label transitions',boundary_mode=boundary_mode,boundary_filled=filled)
 
 
 def direction_batch(v,boxes,device):
