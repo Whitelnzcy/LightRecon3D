@@ -1,5 +1,19 @@
 # LightRecon3D Current State
 
+## 2026-10-25 unit-direction loss two-seed control running
+
+Base HEADd4abeec. Capacity seed43 now COMPLETE/audited: width1 none/learned
+total205883/235761,boundary50354/58641; width2 total217795/215710,
+boundary51729/51343. Width2 propagation small boundary gains repeat, but not
+better than all baselines. No promotion. Seed42 training-fit evaluation complete.
+User approved next single-factor normalized direction MSE, width2 fixed.
+Implemented --direction-normalization raw(default)|unit; nonzero target predicts
+unit direction (eps1e-6), zero target retains raw penalty; same coefficient.3.
+32tests pass. Seeds42/43 paired none/learned3200steps RUNNING:
+local_outputs/direction_unit_w2_20261025_s42 and_s43. No XYZ/inference changes.
+Task direction_unit_loss_20261025.md; report DIRECTION_UNIT_LOSS_20261025.md.
+Next wait for completion, audit, angle/training-fit metrics and visual comparisons.
+
 ## 2026-10-25 capacity seed42 diagnosed; seed43 replication running
 
 Base HEADbe0b708. Width2 seed42 complete/audited: none/learned total220057/211331,

@@ -30,7 +30,9 @@ def main():
     ap.add_argument('--width',type=int,choices=[1,2],default=1)
     ap.add_argument('--control-arms',nargs='+',choices=['none','spatial','learned','oracle','agreement','oracle_agreement'],default=['none','spatial','learned','oracle'])
     ap.add_argument('--boundary-target',choices=['zero','inward','grid_inward'],default='zero')
-    ap.add_argument('--direction-balance',choices=['uniform','boundary'],default='uniform');args=ap.parse_args()
+    ap.add_argument('--direction-balance',choices=['uniform','boundary'],default='uniform')
+    ap.add_argument('--direction-normalization',choices=['raw','unit'],default='raw');args=ap.parse_args()
+    if args.direction_normalization=='unit' and args.direction_balance!='uniform':raise ValueError('Unit direction control requires uniform averaging')
     if args.direction_balance=='boundary' and args.boundary_target!='inward':raise ValueError('Boundary balance protocol requires inward targets')
     if args.deterministic:
         os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
@@ -80,6 +82,8 @@ def main():
     protocol['direction_agreement']={a:m.direction_agreement for a,m in models.items()}
     protocol['boundary_target']=args.boundary_target
     protocol['direction_balance']=args.direction_balance
+    protocol['direction_normalization']=args.direction_normalization
+    if args.direction_normalization=='unit':protocol['loss']='same ownership + .3 MSE of unit prediction vs nonzero unit target; zero targets retain raw MSE; eps1e-6, uniform valid-point mean'
     if args.direction_balance=='boundary':protocol['loss']='same ownership + .3 * equal-mean boundary/interior direction MSE; absent strata omitted'
     protocol['target_summaries']={s['name']:s['direction_supervision_summary'] for s in scenes}
     if any(m.direction_agreement for m in models.values()):protocol['agreement_rule']='Multiply propagation weight by (1+dot(unit_direction_i,unit_direction_j))/2; zero directions neutral; no extra parameters. Other settings unchanged.'
@@ -98,7 +102,7 @@ def main():
             m.train();opts[a].zero_grad();kw={}
             if a.startswith('oracle'):kw['direction_override']=t[:,None].expand(-1,k.shape[1],-1,-1,-1).detach()
             logits,d=m(c,k,e,return_details=True,**kw);seg=ownership_loss(logits,y,o)
-            aux=balanced_direction_loss(d,t,y,boundary_direction_batch(v,boxes,'cuda')) if args.direction_balance=='boundary' else direction_loss(d,t,y)
+            aux=balanced_direction_loss(d,t,y,boundary_direction_batch(v,boxes,'cuda')) if args.direction_balance=='boundary' else direction_loss(d,t,y,normalize=args.direction_normalization=='unit')
             loss=seg+.3*aux
             if not torch.isfinite(loss):raise ValueError('Nonfinite loss')
             loss.backward();row[a]=dict(ownership=float(seg.detach()),direction=float(aux.detach()),

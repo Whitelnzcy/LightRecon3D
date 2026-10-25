@@ -1,5 +1,19 @@
 # Capacity replication in progress
 
+## Completed seed43 update
+
+Both3200step runs finished and independently audited. Width1 none/learned:
+total205883/235761,boundary50354/58641,damage13741/20295.
+Width2 none/learned:total217795/215710,boundary51729/51343,
+damage19703/14298. Width2 propagation boundary benefit repeats (-386 vs-707
+in seed42), but width1-none remains best on seed43. Width1 propagation is
+unstable. Width2 damage effect reverses across seeds, not consistently better.
+Seed42 TRAIN4 fit also complete: width1 learned total554334,boundary130769;
+width2 learned540025/124893. Training fit improvement is not independent test
+evidence. Next authorized experiment isolates direction-loss normalization.
+
+## Earlier launch record
+
 Implementation be0b708. Seed42 width2 complete, independent full-domain audit
 passed. Fixed3200 updates,TRAIN4/historicalDEV2, inward uniform loss.
 

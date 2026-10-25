@@ -80,11 +80,17 @@ def direction_batch(v,boxes,device):
     return torch.from_numpy(np.stack([v['direction_target'][:,y0:y1,x0:x1] for x0,y0,x1,y1 in boxes])).to(device)
 
 
-def direction_loss(prediction,target,ownership):
+def direction_loss(prediction,target,ownership,normalize=False):
     # Correct candidate selection is supervision only; never used in forward.
     valid=ownership>=0
     if not valid.any():return prediction.sum()*0
     selected=prediction.gather(1,ownership.clamp_min(0)[:,None,None].expand(-1,1,3,-1,-1)).squeeze(1)
+    if normalize:
+        # Nonzero unit targets compare direction, not magnitude. Keep existing
+        # zero-target penalty for points with no defined direction.
+        nonzero=torch.linalg.vector_norm(target,dim=1,keepdim=True)>.5
+        unit=torch.nn.functional.normalize(selected,dim=1,eps=1e-6)
+        selected=torch.where(nonzero,unit,selected)
     return (selected-target).square().mean(1)[valid].mean()
 
 
